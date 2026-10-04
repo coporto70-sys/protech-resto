@@ -68,7 +68,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
-let S = { user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '', busy: false };
+let S = { user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false };
 const L = () => D;
 
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
@@ -99,22 +99,39 @@ function suscribir() {
   ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
   rt.subscribe();
 }
+const _h = location.hash || '';
+if (/type=(invite|recovery)/.test(_h)) S.setpass = true;
+sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') { S.setpass = true; render(); } });
 async function inicio() {
   const { data } = await sb.auth.getSession();
   S.user = data.session ? data.session.user : null;
-  if (S.user) { await cargar(); suscribir(); }
+  if (S.user && !S.setpass) { await cargar(); suscribir(); }
   S.loading = false; render();
 }
 
 /* ---------- Vistas ---------- */
 function loginHTML() {
   if (S.loading) return `<div class="login"><div class="card"><div class="mut">Cargando…</div></div></div>`;
+  if (S.setpass) return `<div class="login"><div class="card">
+    <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Crea tu clave para entrar</div></div>
+    <label class="mut">Clave nueva (mínimo 8 caracteres)<input id="np1" type="password" autocomplete="new-password"></label>
+    <label class="mut">Repite la clave<input id="np2" type="password" autocomplete="new-password"></label>
+    ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
+    <button class="btn" data-act="guardarclave" ${S.busy ? 'disabled' : ''}>Guardar clave y entrar</button></div></div>`;
+  if (S.olvide) return `<div class="login"><div class="card">
+    <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Crear o recuperar mi clave</div></div>
+    <label class="mut">Correo del local<input id="rmail" type="email" autocomplete="username" placeholder="local@correo.cl"></label>
+    ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
+    ${S.ok ? `<div style="color:var(--ok);font-size:.9rem">${esc(S.ok)}</div>` : ''}
+    <button class="btn" data-act="enviarlink" ${S.busy ? 'disabled' : ''}>Enviarme un enlace al correo</button>
+    <button class="btn-line" data-act="volverlogin">Volver</button></div></div>`;
   return `<div class="login"><div class="card">
     <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Pedidos y comandas para restaurantes y cafeterías</div></div>
     <label class="mut">Correo del local<input id="lmail" type="email" autocomplete="username" placeholder="local@correo.cl"></label>
     <label class="mut">Clave<input id="lpass" type="password" autocomplete="current-password" placeholder="••••••••"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
     <button class="btn" data-act="login" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Entrando…' : 'Entrar'}</button>
+    <button class="btn-line" data-act="olvide">Primera vez o olvidé mi clave</button>
     <div class="hint">¿No tienes cuenta? Pídela a Protech: <a href="https://wa.me/56939473588" target="_blank" rel="noopener">WhatsApp +56 9 3947 3588</a>. Cada local ve solo sus propios datos.</div>
   </div></div>`;
 }
@@ -196,7 +213,7 @@ function cartaHTML() {
 }
 function render() {
   const app = $('#app');
-  if (!S.user || !D) { app.innerHTML = loginHTML(); return; }
+  if (S.setpass || !S.user || !D) { app.innerHTML = loginHTML(); return; }
   const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, carta: cartaHTML }[S.view];
   app.innerHTML = shell(v());
 }
@@ -222,6 +239,26 @@ document.addEventListener('click', async e => {
       const { data, error } = await sb.auth.signInWithPassword({ email, password });
       if (error) { S.busy = false; S.err = 'Correo o clave incorrectos'; render(); return; }
       S.user = data.user; await cargar(); suscribir(); S.view = 'mesas'; S.busy = false; render(); return;
+    }
+    if (a === 'olvide') { S.olvide = true; S.err = ''; S.ok = ''; render(); return; }
+    if (a === 'volverlogin') { S.olvide = false; S.err = ''; S.ok = ''; render(); return; }
+    if (a === 'enviarlink') {
+      const email = $('#rmail').value.trim(); if (!email) { S.err = 'Escribe tu correo'; render(); return; }
+      S.busy = true; S.err = ''; render();
+      await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      S.busy = false; S.ok = 'Si el correo está registrado, te enviamos un enlace. Revisa tu bandeja (y spam).'; render(); return;
+    }
+    if (a === 'guardarclave') {
+      const p1 = $('#np1').value, p2 = $('#np2').value;
+      if (p1.length < 8) { S.err = 'La clave debe tener al menos 8 caracteres'; render(); return; }
+      if (p1 !== p2) { S.err = 'Las claves no coinciden'; render(); return; }
+      S.busy = true; S.err = ''; render();
+      const { error } = await sb.auth.updateUser({ password: p1 });
+      if (error) { S.busy = false; S.err = 'No se pudo guardar: ' + error.message; render(); return; }
+      history.replaceState(null, '', location.pathname); S.setpass = false;
+      const { data } = await sb.auth.getSession(); S.user = data.session ? data.session.user : null;
+      if (S.user) { await cargar(); suscribir(); }
+      S.busy = false; render(); return;
     }
     if (a === 'logout') { if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; render(); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; }
