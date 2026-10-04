@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Protech Resto · Pedidos y comandas</title>
+<meta name="theme-color" content="#0284c7">
+<style>
+:root{--bg:#f1f5f9;--ink:#0f172a;--mut:#64748b;--line:#e2e8f0;--brand:#0284c7;--brand-d:#0369a1;--ok:#16a34a;--warn:#f59e0b;--bad:#dc2626;--card:#fff}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:16px;min-height:100vh}
+button{font:inherit;cursor:pointer;border:0;border-radius:10px;padding:10px 14px;font-weight:600}
+input,select{font:inherit;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:#fff;width:100%}
+input:focus,select:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px rgba(2,132,199,.15)}
+.btn{background:var(--brand);color:#fff}.btn:hover{background:var(--brand-d)}
+.btn-ok{background:var(--ok);color:#fff}.btn-bad{background:#fee2e2;color:var(--bad)}.btn-line{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
+.btn:disabled,.btn-ok:disabled{opacity:.45;cursor:not-allowed}
+header{background:#0b1a2b;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
+header b{font-size:1.05rem}header small{color:#93c5fd;display:block;font-size:.75rem}
+nav{display:flex;gap:6px;flex:1;overflow-x:auto}
+nav button{background:transparent;color:#cbd5e1;padding:8px 12px}
+nav button.on{background:var(--brand);color:#fff}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h2{font-size:1.25rem;margin-bottom:12px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+.mesa{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:16px 10px;text-align:center}
+.mesa b{display:block;font-size:1.5rem}.mesa span{font-size:.8rem;color:var(--mut)}
+.mesa.ocu{border-color:var(--warn);background:#fffbeb}.mesa.lis{border-color:var(--ok);background:#f0fdf4}
+.card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.cols{display:grid;gap:16px;grid-template-columns:1fr 340px}
+@media(max-width:820px){.cols{grid-template-columns:1fr}}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.q{display:flex;align-items:center;gap:8px}.q button{width:34px;height:34px;padding:0;background:var(--line)}.q span{min-width:20px;text-align:center;font-weight:700}
+.cat{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);margin:14px 0 4px;font-weight:700}
+.kan{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.col h3{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.tk{background:#fff;border-left:5px solid var(--warn);border-radius:10px;padding:12px;margin-bottom:10px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.tk.p2{border-color:var(--brand)}.tk.p3{border-color:var(--ok)}
+.tk h4{display:flex;justify-content:space-between}.tk ul{margin:8px 0 10px 18px;font-size:.95rem}
+.tk em{display:block;color:var(--bad);font-size:.85rem;margin-bottom:8px}
+.pill{font-size:.72rem;padding:2px 8px;border-radius:99px;background:var(--line);color:var(--mut);font-weight:700}
+.total{display:flex;justify-content:space-between;font-weight:800;font-size:1.15rem;padding-top:10px}
+.mut{color:var(--mut);font-size:.9rem}
+.login{max-width:380px;margin:12vh auto;padding:0 16px}
+.login .card{display:grid;gap:12px}
+.stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:16px}
+.stat b{display:block;font-size:1.6rem}
+.hint{font-size:.8rem;color:var(--mut);background:#f8fafc;border-radius:10px;padding:10px}
+.off{opacity:.45}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* =====================================================
+   PROTECH RESTO — prototipo (datos en este navegador)
+   Multi-local: cada local tiene su carta, mesas y ventas.
+   Siguiente paso: pasar los datos a Supabase.
+   ===================================================== */
+const KEY = 'protech-resto.v1';
+const $ = s => document.querySelector(s);
+const money = n => '$' + Math.round(n).toLocaleString('es-CL');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => Math.random().toString(36).slice(2, 9);
+const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
+
+function seed() {
+  const m = (n, c, p) => ({ id: uid(), n, c, p, on: true });
+  return { locales: {
+    aroma: { name: 'Café Aroma (demo)', pin: '1111', mesas: 6, comandas: [], cuentas: [], menu: [
+      m('Café americano', 'Café', 1800), m('Capuchino', 'Café', 2500), m('Latte', 'Café', 2700),
+      m('Té / infusión', 'Café', 1600), m('Croissant', 'Pastelería', 2200), m('Torta del día', 'Pastelería', 3500),
+      m('Sándwich de pollo', 'Salado', 4500), m('Tostadas con palta', 'Salado', 4200), m('Jugo natural', 'Bebidas', 2800) ] },
+    sabor: { name: 'Restaurante Sabor Local (demo)', pin: '2222', mesas: 8, comandas: [], cuentas: [], menu: [
+      m('Empanada de pino', 'Entradas', 2200), m('Ensalada chilena', 'Entradas', 3000),
+      m('Pastel de choclo', 'Platos', 8500), m('Lomo a lo pobre', 'Platos', 10500), m('Cazuela de vacuno', 'Platos', 8000),
+      m('Pescado frito', 'Platos', 9500), m('Flan casero', 'Postres', 3000), m('Bebida 500cc', 'Bebidas', 2000), m('Cerveza', 'Bebidas', 3200) ] }
+  } };
+}
+function load() { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.locales) return d; } catch (e) {} const d = seed(); try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) {} return d; }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} }
+
+let DB = load();
+let S = { local: null, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '' };
+try { S.local = sessionStorage.getItem('pr-local'); if (S.local && !DB.locales[S.local]) S.local = null; } catch (e) {}
+const L = () => DB.locales[S.local];
+
+const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
+const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) => s + i.q * i.p, 0), 0);
+const hoy = t => new Date(t).toDateString() === new Date().toDateString();
+
+/* ---------- Vistas ---------- */
+function loginHTML() {
+  const opts = Object.entries(DB.locales).map(([id, l]) => `<option value="${id}">${esc(l.name)}</option>`).join('');
+  return `<div class="login"><div class="card">
+    <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Pedidos y comandas para restaurantes y cafeterías</div></div>
+    <label class="mut">Local<select id="lsel">${opts}</select></label>
+    <label class="mut">Clave del local<input id="lpin" type="password" inputmode="numeric" placeholder="••••" autocomplete="off"></label>
+    ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
+    <button class="btn" data-act="login">Entrar</button>
+    <div class="hint">Modo demostración. Claves de prueba: Café Aroma <b>1111</b> · Restaurante Sabor <b>2222</b>. Cada local ve solo sus propios datos.</div>
+  </div></div>`;
+}
+function shell(inner) {
+  const tabs = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['caja', 'Ventas'], ['carta', 'Carta y mesas']];
+  return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
+    <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
+    <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${inner}</main>`;
+}
+function mesasHTML() {
+  if (S.mesa !== null) return mesaDetalle();
+  const l = L(); let g = '';
+  for (let n = 1; n <= l.mesas; n++) {
+    const a = abiertas(n); const lis = a.some(c => c.estado === 'listo');
+    g += `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" data-act="mesa" data-n="${n}"><b>${n}</b>
+      <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) : 'Libre'}</span></button>`;
+  }
+  return `<h2>Mesas</h2><div class="grid">${g}</div><p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+}
+function mesaDetalle() {
+  const l = L(), n = S.mesa;
+  const cats = [...new Set(l.menu.filter(i => i.on).map(i => i.c))];
+  const carta = cats.map(c => `<div class="cat">${esc(c)}</div>` + l.menu.filter(i => i.on && i.c === c).map(i => `
+    <div class="row"><div>${esc(i.n)}<div class="mut">${money(i.p)}</div></div>
+    <div class="q"><button data-act="dec" data-id="${i.id}">−</button><span>${S.cart[i.id] || 0}</span><button data-act="inc" data-id="${i.id}">+</button></div></div>`).join('')).join('');
+  const sel = l.menu.filter(i => S.cart[i.id]);
+  const subt = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
+  const ab = abiertas(n), tot = totalMesa(n);
+  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span> ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div></div>`).join('');
+  const prop = S.propina ? Math.round(tot * 0.1) : 0;
+  const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · Mesa ${n}</b>
+    <div class="row"><span>Consumo</span><b>${money(tot)}</b></div>
+    <label class="row" style="cursor:pointer"><span>Propina sugerida 10%</span><input type="checkbox" style="width:auto" data-act="propina" ${S.propina ? 'checked' : ''}></label>
+    <div class="total"><span>Total a pagar</span><span>${money(tot + prop)}</span></div>
+    <label class="mut">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option></select></label>
+    <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-ok" data-act="pagar">Confirmar pago</button><button class="btn-line" data-act="nocerrar">Volver</button></div></div>` : '';
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">Mesa ${n}</h2></div>
+  <div class="cols"><div class="card"><b>Carta</b>${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
+  <div><div class="card"><b>Nuevo pedido</b>
+    ${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega platos desde la carta.</p>'}
+    <input id="nota" placeholder="Nota para cocina (sin cebolla, etc.)" value="${esc(S.note)}" style="margin-top:8px">
+    <div class="total"><span>Subtotal</span><span>${money(subt)}</span></div>
+    <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length ? '' : 'disabled'}>Enviar a cocina</button></div>
+  <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
+    <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
+    <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length ? '' : 'disabled'}>Cerrar cuenta</button></div>${cierre}</div></div>`;
+}
+function cocinaHTML() {
+  const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado').sort((a, b) => a.t - b.t);
+  const col = (est, titulo, cls, btn, next) => `<div class="col"><h3>${titulo} (${cs.filter(c => c.estado === est).length})</h3>` +
+    (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>Mesa ${c.mesa}</span><span class="pill">${mins(c.t)} min</span></h4>
+      <ul>${c.items.map(i => `<li>${i.q}× ${esc(i.n)}</li>`).join('')}</ul>${c.note ? `<em>Nota: ${esc(c.note)}</em>` : ''}
+      <button class="btn" style="width:100%" data-act="avanzar" data-id="${c.id}" data-to="${next}">${btn}</button></div>`).join('') || '<p class="mut">Sin comandas</p>') + '</div>';
+  return `<h2>Cocina</h2><div class="kan">${col('pendiente', 'Pendientes', '', 'Empezar a preparar', 'preparando')}${col('preparando', 'Preparando', 'p2', 'Marcar listo', 'listo')}${col('listo', 'Listos para servir', 'p3', 'Entregado en mesa', 'entregado')}</div>`;
+}
+function cajaHTML() {
+  const cu = L().cuentas.filter(c => hoy(c.t)); const sum = k => cu.reduce((a, c) => a + c[k], 0);
+  const por = {}; cu.forEach(c => por[c.metodo] = (por[c.metodo] || 0) + c.total + c.propina);
+  const pop = {}; cu.forEach(c => c.items.forEach(i => pop[i.n] = (pop[i.n] || 0) + i.q));
+  const top = Object.entries(pop).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  return `<h2>Ventas de hoy</h2><div class="stats">
+    <div class="card stat"><span class="mut">Ventas</span><b>${money(sum('total'))}</b></div>
+    <div class="card stat"><span class="mut">Propinas</span><b>${money(sum('propina'))}</b></div>
+    <div class="card stat"><span class="mut">Cuentas cerradas</span><b>${cu.length}</b></div>
+    <div class="card stat"><span class="mut">Ticket promedio</span><b>${money(cu.length ? sum('total') / cu.length : 0)}</b></div></div>
+  <div class="cols"><div class="card"><b>Por forma de pago</b>${Object.entries(por).map(([k, v]) => `<div class="row"><span>${k}</span><b>${money(v)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay ventas hoy.</p>'}</div>
+  <div class="card"><b>Más vendidos</b>${top.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><b>${v}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin datos.</p>'}</div></div>
+  <p class="mut" style="margin-top:12px">Este sistema no emite boletas ni facturas; solo controla pedidos, cuentas y ventas internas.</p>`;
+}
+function cartaHTML() {
+  const l = L();
+  return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
+    ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)}</div></div>
+      <div style="display:flex;gap:6px"><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
+  <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b>
+    <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+    <input id="ap" type="number" inputmode="numeric" placeholder="Precio"><button class="btn" data-act="add">Agregar</button></div>
+  <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b><input id="nm" type="number" min="1" max="60" value="${l.mesas}"><button class="btn-line" data-act="mesas">Guardar</button></div></div></div>`;
+}
+function render() {
+  const app = $('#app');
+  if (!S.local) { app.innerHTML = loginHTML(); return; }
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, carta: cartaHTML }[S.view];
+  app.innerHTML = shell(v());
+}
+
+/* ---------- Acciones ---------- */
+document.addEventListener('input', e => { if (e.target.id === 'nota') S.note = e.target.value; });
+document.addEventListener('change', e => {
+  if (e.target.id === 'metodo') S.metodo = e.target.value;
+  if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
+  const a = b.dataset.act, d = b.dataset;
+  if (a === 'login') {
+    const id = $('#lsel').value, pin = $('#lpin').value.trim();
+    if (DB.locales[id].pin !== pin) { S.err = 'Clave incorrecta'; render(); return; }
+    S.err = ''; S.local = id; S.view = 'mesas'; try { sessionStorage.setItem('pr-local', id); } catch (x) {}
+  } else if (a === 'logout') { S.local = null; S.mesa = null; try { sessionStorage.removeItem('pr-local'); } catch (x) {} }
+  else if (a === 'tab') { S.view = d.v; S.mesa = null; }
+  else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; }
+  else if (a === 'volver') { S.mesa = null; S.cerrando = false; }
+  else if (a === 'inc') S.cart[d.id] = (S.cart[d.id] || 0) + 1;
+  else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
+  else if (a === 'enviar') {
+    const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p }));
+    if (!items.length) return;
+    L().comandas.push({ id: uid(), mesa: S.mesa, items, note: S.note.trim(), estado: 'pendiente', t: Date.now(), cerrada: false });
+    S.cart = {}; S.note = ''; save();
+  }
+  else if (a === 'cerrar') S.cerrando = true;
+  else if (a === 'nocerrar') S.cerrando = false;
+  else if (a === 'pagar') {
+    const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
+    L().cuentas.push({ id: uid(), mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, t: Date.now(), items: ab.flatMap(c => c.items) });
+    ab.forEach(c => c.cerrada = true); S.cerrando = false; S.mesa = null; save();
+  }
+  else if (a === 'avanzar') { const c = L().comandas.find(x => x.id === d.id); if (c) { c.estado = d.to; save(); } }
+  else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) { i.on = !i.on; save(); } }
+  else if (a === 'del') { L().menu = L().menu.filter(x => x.id !== d.id); save(); }
+  else if (a === 'add') {
+    const n = $('#an').value.trim(), c = $('#ac').value.trim() || 'General', p = +$('#ap').value;
+    if (!n || !(p > 0)) return; L().menu.push({ id: uid(), n, c, p, on: true }); save();
+  }
+  else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)); L().mesas = n; save(); }
+  render();
+});
+/* Sincroniza entre pestañas del mismo equipo (ej. garzón y cocina) */
+window.addEventListener('storage', e => { if (e.key === KEY) { DB = load(); if (S.local && !DB.locales[S.local]) S.local = null; render(); } });
+setInterval(() => { if (S.local && S.view === 'cocina') render(); }, 30000);
+render();
+</script>
+</body>
+</html>
