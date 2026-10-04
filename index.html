@@ -52,54 +52,70 @@ h2{font-size:1.25rem;margin-bottom:12px}
 </head>
 <body>
 <div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* =====================================================
-   PROTECH RESTO — prototipo (datos en este navegador)
-   Multi-local: cada local tiene su carta, mesas y ventas.
-   Siguiente paso: pasar los datos a Supabase.
+   PROTECH RESTO — conectado a Supabase
+   Cada local entra con su correo y clave (cuentas creadas por Protech)
+   y solo ve sus propios datos (seguridad RLS en la base).
    ===================================================== */
-const KEY = 'protech-resto.v1';
+const SB_URL = 'https://fchqqtdapyrgpkyxiful.supabase.co';
+const SB_KEY = 'sb_publishable_7jjHrGLPJ51aP0BKwcIizg_bakLNqiY';
+const sb = supabase.createClient(SB_URL, SB_KEY);
 const $ = s => document.querySelector(s);
 const money = n => '$' + Math.round(n).toLocaleString('es-CL');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const uid = () => Math.random().toString(36).slice(2, 9);
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
-function seed() {
-  const m = (n, c, p) => ({ id: uid(), n, c, p, on: true });
-  return { locales: {
-    aroma: { name: 'Café Aroma (demo)', pin: '1111', mesas: 6, comandas: [], cuentas: [], menu: [
-      m('Café americano', 'Café', 1800), m('Capuchino', 'Café', 2500), m('Latte', 'Café', 2700),
-      m('Té / infusión', 'Café', 1600), m('Croissant', 'Pastelería', 2200), m('Torta del día', 'Pastelería', 3500),
-      m('Sándwich de pollo', 'Salado', 4500), m('Tostadas con palta', 'Salado', 4200), m('Jugo natural', 'Bebidas', 2800) ] },
-    sabor: { name: 'Restaurante Sabor Local (demo)', pin: '2222', mesas: 8, comandas: [], cuentas: [], menu: [
-      m('Empanada de pino', 'Entradas', 2200), m('Ensalada chilena', 'Entradas', 3000),
-      m('Pastel de choclo', 'Platos', 8500), m('Lomo a lo pobre', 'Platos', 10500), m('Cazuela de vacuno', 'Platos', 8000),
-      m('Pescado frito', 'Platos', 9500), m('Flan casero', 'Postres', 3000), m('Bebida 500cc', 'Bebidas', 2000), m('Cerveza', 'Bebidas', 3200) ] }
-  } };
-}
-function load() { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.locales) return d; } catch (e) {} const d = seed(); try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) {} return d; }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} }
-
-let DB = load();
-let S = { local: null, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '' };
-try { S.local = sessionStorage.getItem('pr-local'); if (S.local && !DB.locales[S.local]) S.local = null; } catch (e) {}
-const L = () => DB.locales[S.local];
+let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
+let S = { user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '', busy: false };
+const L = () => D;
 
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
 const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) => s + i.q * i.p, 0), 0);
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
 
+async function cargar() {
+  const { data: mi } = await sb.from('resto_miembros').select('local_id').maybeSingle();
+  if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
+  const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0);
+  const [loc, menu, com, cue] = await Promise.all([
+    sb.from('resto_locales').select('*').eq('id', id).single(),
+    sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
+    sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
+    sb.from('resto_cuentas').select('*').eq('local_id', id).gte('created_at', desde.toISOString())
+  ]);
+  if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
+  D = { id, name: loc.data.nombre, mesas: loc.data.mesas,
+    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo })),
+    comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, note: r.nota || '', estado: r.estado, t: +new Date(r.created_at), cerrada: r.cerrada })),
+    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, items: r.items, t: +new Date(r.created_at) })) };
+}
+let rt = null, tmr = null;
+function suscribir() {
+  if (rt || !D) return;
+  const refresca = () => { clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; await cargar(); render(); }, 300); };
+  rt = sb.channel('resto-' + D.id);
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
+  rt.subscribe();
+}
+async function inicio() {
+  const { data } = await sb.auth.getSession();
+  S.user = data.session ? data.session.user : null;
+  if (S.user) { await cargar(); suscribir(); }
+  S.loading = false; render();
+}
+
 /* ---------- Vistas ---------- */
 function loginHTML() {
-  const opts = Object.entries(DB.locales).map(([id, l]) => `<option value="${id}">${esc(l.name)}</option>`).join('');
+  if (S.loading) return `<div class="login"><div class="card"><div class="mut">Cargando…</div></div></div>`;
   return `<div class="login"><div class="card">
     <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Pedidos y comandas para restaurantes y cafeterías</div></div>
-    <label class="mut">Local<select id="lsel">${opts}</select></label>
-    <label class="mut">Clave del local<input id="lpin" type="password" inputmode="numeric" placeholder="••••" autocomplete="off"></label>
+    <label class="mut">Correo del local<input id="lmail" type="email" autocomplete="username" placeholder="local@correo.cl"></label>
+    <label class="mut">Clave<input id="lpass" type="password" autocomplete="current-password" placeholder="••••••••"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
-    <button class="btn" data-act="login">Entrar</button>
-    <div class="hint">Modo demostración. Claves de prueba: Café Aroma <b>1111</b> · Restaurante Sabor <b>2222</b>. Cada local ve solo sus propios datos.</div>
+    <button class="btn" data-act="login" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Entrando…' : 'Entrar'}</button>
+    <div class="hint">¿No tienes cuenta? Pídela a Protech: <a href="https://wa.me/56939473588" target="_blank" rel="noopener">WhatsApp +56 9 3947 3588</a>. Cada local ve solo sus propios datos.</div>
   </div></div>`;
 }
 function shell(inner) {
@@ -180,7 +196,7 @@ function cartaHTML() {
 }
 function render() {
   const app = $('#app');
-  if (!S.local) { app.innerHTML = loginHTML(); return; }
+  if (!S.user || !D) { app.innerHTML = loginHTML(); return; }
   const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, carta: cartaHTML }[S.view];
   app.innerHTML = shell(v());
 }
@@ -191,46 +207,53 @@ document.addEventListener('change', e => {
   if (e.target.id === 'metodo') S.metodo = e.target.value;
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
-document.addEventListener('click', e => {
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'lpass' || e.target.id === 'lmail')) document.querySelector('[data-act=login]').click(); });
+const fallo = r => { if (r && r.error) { S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
+
+document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
+  if (S.busy) return;
   const a = b.dataset.act, d = b.dataset;
-  if (a === 'login') {
-    const id = $('#lsel').value, pin = $('#lpin').value.trim();
-    if (DB.locales[id].pin !== pin) { S.err = 'Clave incorrecta'; render(); return; }
-    S.err = ''; S.local = id; S.view = 'mesas'; try { sessionStorage.setItem('pr-local', id); } catch (x) {}
-  } else if (a === 'logout') { S.local = null; S.mesa = null; try { sessionStorage.removeItem('pr-local'); } catch (x) {} }
-  else if (a === 'tab') { S.view = d.v; S.mesa = null; }
-  else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; }
-  else if (a === 'volver') { S.mesa = null; S.cerrando = false; }
-  else if (a === 'inc') S.cart[d.id] = (S.cart[d.id] || 0) + 1;
-  else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
-  else if (a === 'enviar') {
-    const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p }));
-    if (!items.length) return;
-    L().comandas.push({ id: uid(), mesa: S.mesa, items, note: S.note.trim(), estado: 'pendiente', t: Date.now(), cerrada: false });
-    S.cart = {}; S.note = ''; save();
-  }
-  else if (a === 'cerrar') S.cerrando = true;
-  else if (a === 'nocerrar') S.cerrando = false;
-  else if (a === 'pagar') {
-    const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
-    L().cuentas.push({ id: uid(), mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, t: Date.now(), items: ab.flatMap(c => c.items) });
-    ab.forEach(c => c.cerrada = true); S.cerrando = false; S.mesa = null; save();
-  }
-  else if (a === 'avanzar') { const c = L().comandas.find(x => x.id === d.id); if (c) { c.estado = d.to; save(); } }
-  else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) { i.on = !i.on; save(); } }
-  else if (a === 'del') { L().menu = L().menu.filter(x => x.id !== d.id); save(); }
-  else if (a === 'add') {
-    const n = $('#an').value.trim(), c = $('#ac').value.trim() || 'General', p = +$('#ap').value;
-    if (!n || !(p > 0)) return; L().menu.push({ id: uid(), n, c, p, on: true }); save();
-  }
-  else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)); L().mesas = n; save(); }
+  try {
+    if (a === 'login') {
+      const email = $('#lmail').value.trim(), password = $('#lpass').value;
+      if (!email || !password) { S.err = 'Escribe tu correo y clave'; render(); return; }
+      S.busy = true; S.err = ''; render();
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) { S.busy = false; S.err = 'Correo o clave incorrectos'; render(); return; }
+      S.user = data.user; await cargar(); suscribir(); S.view = 'mesas'; S.busy = false; render(); return;
+    }
+    if (a === 'logout') { if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; render(); return; }
+    if (a === 'tab') { S.view = d.v; S.mesa = null; }
+    else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; }
+    else if (a === 'volver') { S.mesa = null; S.cerrando = false; }
+    else if (a === 'inc') S.cart[d.id] = (S.cart[d.id] || 0) + 1;
+    else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
+    else if (a === 'cerrar') S.cerrando = true;
+    else if (a === 'nocerrar') S.cerrando = false;
+    else {
+      S.busy = true;
+      if (a === 'enviar') {
+        const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p }));
+        if (items.length && !fallo(await sb.from('resto_comandas').insert({ local_id: D.id, mesa: S.mesa, items, nota: S.note.trim() }))) { S.cart = {}; S.note = ''; }
+      } else if (a === 'pagar') {
+        const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
+        const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, items: ab.flatMap(c => c.items) });
+        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); S.cerrando = false; S.mesa = null; }
+      } else if (a === 'avanzar') fallo(await sb.from('resto_comandas').update({ estado: d.to }).eq('id', d.id));
+      else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
+      else if (a === 'del') fallo(await sb.from('resto_menu').delete().eq('id', d.id));
+      else if (a === 'add') {
+        const n = $('#an').value.trim(), c = $('#ac').value.trim() || 'General', p = +$('#ap').value;
+        if (n && p > 0) fallo(await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: Math.round(p) }));
+      } else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)); fallo(await sb.from('resto_locales').update({ mesas: n }).eq('id', D.id)); }
+      await cargar(); S.busy = false;
+    }
+  } catch (x) { S.busy = false; console.error(x); }
   render();
 });
-/* Sincroniza entre pestañas del mismo equipo (ej. garzón y cocina) */
-window.addEventListener('storage', e => { if (e.key === KEY) { DB = load(); if (S.local && !DB.locales[S.local]) S.local = null; render(); } });
-setInterval(() => { if (S.local && S.view === 'cocina') render(); }, 30000);
-render();
+setInterval(async () => { if (S.user && D && !S.busy) { if (S.view === 'cocina' || S.view === 'mesas') { await cargar(); render(); } } }, 20000);
+inicio();
 </script>
 </body>
 </html>
