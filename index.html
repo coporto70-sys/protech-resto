@@ -48,10 +48,15 @@ h2{font-size:1.25rem;margin-bottom:12px}
 .stat b{display:block;font-size:1.6rem}
 .hint{font-size:.8rem;color:var(--mut);background:#f8fafc;border-radius:10px;padding:10px}
 .off{opacity:.45}
+#toast{position:fixed;left:12px;right:12px;top:64px;z-index:50;display:grid;gap:8px;pointer-events:none}
+#toast div{pointer-events:auto;padding:14px 16px;border-radius:12px;color:#fff;font-weight:800;font-size:1.1rem;box-shadow:0 8px 24px rgba(0,0,0,.35);animation:pulso .8s ease-in-out 6}
+#toast .tk-c{background:var(--bad)}#toast .tk-l{background:var(--ok)}
+@keyframes pulso{50%{transform:scale(1.03);filter:brightness(1.25)}}
 </style>
 </head>
 <body>
 <div id="app"></div>
+<div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* =====================================================
@@ -74,6 +79,38 @@ const L = () => D;
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
 const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) => s + i.q * i.p, 0), 0);
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
+
+/* ---------- Sonidos y avisos ---------- */
+const SNDL = { ambos: 'cocina y salón', cocina: 'solo cocina', salon: 'solo salón', off: 'apagado' };
+let SND = 'ambos'; try { SND = localStorage.getItem('pr-snd') || 'ambos'; } catch (e) {}
+let AC = null;
+function ctx() { try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; } catch (e) { return null; } }
+function tono(f, t0, dur, tipo, vol) {
+  const c = ctx(); if (!c) return;
+  const o = c.createOscillator(), g = c.createGain(); o.type = tipo; o.frequency.value = f; o.connect(g); g.connect(c.destination);
+  const t = c.currentTime + t0; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function vibra(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+function sonarCocina() { for (let i = 0; i < 3; i++) { tono(988, i * 0.75, 0.32, 'square', 0.9); tono(1319, i * 0.75 + 0.36, 0.32, 'square', 0.9); } vibra([300, 150, 300, 150, 300]); }
+function sonarListo() { tono(784, 0, 0.35, 'sine', 0.8); tono(1047, 0.3, 0.35, 'sine', 0.8); tono(1319, 0.6, 0.7, 'sine', 0.8); vibra([200, 100, 200]); }
+let toastT = null;
+function toast(txt, cls) {
+  const el = $('#toast'); if (!el) return;
+  el.innerHTML = `<div class="${cls}">${esc(txt)}</div>`;
+  clearTimeout(toastT); toastT = setTimeout(() => { el.innerHTML = ''; }, 12000);
+}
+document.addEventListener('pointerdown', () => ctx());
+document.addEventListener('click', e => { if (e.target.closest('#toast')) $('#toast').innerHTML = ''; });
+function avisar(prev) {
+  const nuevos = D.comandas.filter(c => !prev.has(c.id) && c.estado === 'pendiente');
+  const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo');
+  if (nuevos.length && (SND === 'cocina' || SND === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · Mesa ' + nuevos.map(c => c.mesa).join(', '), 'tk-c'); }
+  if (listos.length && (SND === 'salon' || SND === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · Mesa ' + listos.map(c => c.mesa).join(', '), 'tk-l'); }
+}
+let WL = null;
+async function pantalla() { try { if (SND !== 'off' && 'wakeLock' in navigator && !WL && !document.hidden) { WL = await navigator.wakeLock.request('screen'); WL.addEventListener('release', () => { WL = null; }); } } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pantalla(); });
 
 async function llamarAdmin(body) {
   const { data } = await sb.auth.getSession();
@@ -103,10 +140,12 @@ async function cargar() {
     sb.from('resto_cuentas').select('*').eq('local_id', id).gte('created_at', desde.toISOString())
   ]);
   if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
+  const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
   D = { id, name: loc.data.nombre, mesas: loc.data.mesas,
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, note: r.nota || '', estado: r.estado, t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, items: r.items, t: +new Date(r.created_at) })) };
+  if (prev) avisar(prev);
 }
 let rt = null, tmr = null;
 function suscribir() {
@@ -123,7 +162,7 @@ async function inicio() {
   const { data } = await sb.auth.getSession();
   S.user = data.session ? data.session.user : null;
   if (S.user && !S.setpass) { await cargar(); suscribir(); }
-  S.loading = false; render();
+  S.loading = false; render(); pantalla();
 }
 
 /* ---------- Vistas ---------- */
@@ -157,17 +196,20 @@ function shell(inner) {
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
+    <button class="btn-line" style="padding:6px 12px" data-act="sonido">Sonido: ${SNDL[SND]}${SND !== 'off' && !(AC && AC.state === 'running') ? ' (toca para activar)' : ''}</button>
     <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${inner}</main>`;
 }
 function mesasHTML() {
   if (S.mesa !== null) return mesaDetalle();
   const l = L(); let g = '';
+  const listos = l.comandas.filter(c => !c.cerrada && c.estado === 'listo');
+  const avisoListos = listos.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--ok)"><b>Listos para llevar a la mesa</b>${listos.map(c => `<div class="row"><div><b>Mesa ${c.mesa}</b> · ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div><button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado en mesa</button></div>`).join('')}</div>` : '';
   for (let n = 1; n <= l.mesas; n++) {
     const a = abiertas(n); const lis = a.some(c => c.estado === 'listo');
     g += `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" data-act="mesa" data-n="${n}"><b>${n}</b>
       <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) : 'Libre'}</span></button>`;
   }
-  return `<h2>Mesas</h2><div class="grid">${g}</div><p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  return `<h2>Mesas</h2>${avisoListos}<div class="grid">${g}</div><p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
 }
 function mesaDetalle() {
   const l = L(), n = S.mesa;
@@ -178,7 +220,7 @@ function mesaDetalle() {
   const sel = l.menu.filter(i => S.cart[i.id]);
   const subt = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
   const ab = abiertas(n), tot = totalMesa(n);
-  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span> ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div></div>`).join('');
+  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span> ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
   const prop = S.propina ? Math.round(tot * 0.1) : 0;
   const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · Mesa ${n}</b>
     <div class="row"><span>Consumo</span><b>${money(tot)}</b></div>
@@ -284,6 +326,12 @@ document.addEventListener('click', async e => {
       const { data, error } = await sb.auth.signInWithPassword({ email, password });
       if (error) { S.busy = false; S.err = 'Correo o clave incorrectos'; render(); return; }
       S.user = data.user; await cargar(); suscribir(); S.view = 'mesas'; S.busy = false; render(); return;
+    }
+    if (a === 'sonido') {
+      const o = ['ambos', 'cocina', 'salon', 'off']; SND = o[(o.indexOf(SND) + 1) % o.length];
+      try { localStorage.setItem('pr-snd', SND); } catch (x) {}
+      if (SND === 'cocina' || SND === 'ambos') sonarCocina(); else if (SND === 'salon') sonarListo();
+      pantalla(); render(); return;
     }
     if (a === 'olvide') { S.olvide = true; S.err = ''; S.ok = ''; render(); return; }
     if (a === 'volverlogin') { S.olvide = false; S.err = ''; S.ok = ''; render(); return; }
