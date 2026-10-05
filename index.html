@@ -68,15 +68,32 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
-let S = { user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false };
+let S = { user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
 const L = () => D;
 
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
 const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) => s + i.q * i.p, 0), 0);
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
 
+async function llamarAdmin(body) {
+  const { data } = await sb.auth.getSession();
+  const r = await fetch(SB_URL + '/functions/v1/admin-resto', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: 'Bearer ' + (data.session ? data.session.access_token : '') },
+    body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || j.message || ('Error ' + r.status));
+  return j;
+}
+async function adminCargar() {
+  try { const j = await llamarAdmin({ action: 'list' }); S.av.locales = j.locales; S.av.err = ''; S.av.cargado = true; }
+  catch (e) { S.av.err = e.message; S.av.cargado = true; }
+  render();
+}
 async function cargar() {
+  S.admin = !!(S.user && S.user.app_metadata && S.user.app_metadata.role === 'protech_admin');
+  if (S.admin && !S.av.cargado) adminCargar();
   const { data: mi } = await sb.from('resto_miembros').select('local_id').maybeSingle();
+  if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0);
   const [loc, menu, com, cue] = await Promise.all([
@@ -137,6 +154,7 @@ function loginHTML() {
 }
 function shell(inner) {
   const tabs = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['caja', 'Ventas'], ['carta', 'Carta y mesas']];
+  if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
     <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${inner}</main>`;
@@ -211,15 +229,42 @@ function cartaHTML() {
     <input id="ap" type="number" inputmode="numeric" placeholder="Precio"><button class="btn" data-act="add">Agregar</button></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b><input id="nm" type="number" min="1" max="60" value="${l.mesas}"><button class="btn-line" data-act="mesas">Guardar</button></div></div></div>`;
 }
+function adminShell() {
+  return `<header><div><b>Admin Protech</b><small>Protech Resto</small></div><nav></nav>
+    <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${adminHTML()}</main>`;
+}
+function adminHTML() {
+  const v = S.av, f = S.af;
+  const lista = v.locales.map(l => `<div class="card" style="margin-bottom:12px"><div class="row" style="padding-top:0"><div><b>${esc(l.nombre)}</b><div class="mut">${l.mesas} mesas</div></div></div>
+    ${l.usuarios.map(u => `<div class="row"><div>${esc(u.email)} <span class="pill">${u.confirmado ? 'Activo' : 'Invitación pendiente'}</span></div>
+      ${u.confirmado ? '' : `<button class="btn-line" data-act="a_reenviar" data-email="${esc(u.email)}">Reenviar</button>`}</div>`).join('') || '<p class="mut">Sin usuarios.</p>'}
+    <div style="display:flex;gap:8px;margin-top:10px"><input id="ae-${l.id}" type="email" placeholder="Agregar otro correo a este local"><button class="btn" style="white-space:nowrap" data-act="a_add" data-lid="${l.id}">Invitar</button></div></div>`).join('');
+  return `<h2>Admin Protech · Locales y usuarios</h2>
+    ${v.msg ? `<div class="card" style="margin-bottom:12px;color:var(--ok)">${esc(v.msg)}</div>` : ''}
+    ${v.err ? `<div class="card" style="margin-bottom:12px;color:var(--bad)">${esc(v.err)}</div>` : ''}
+    <div class="card" style="display:grid;gap:8px;margin-bottom:16px"><b>Nuevo local</b>
+      <input id="a-nombre" placeholder="Nombre del local (ej. Café Central)" value="${esc(f.nombre)}">
+      <input id="a-mesas" type="number" min="1" max="60" placeholder="Cantidad de mesas" value="${esc(f.mesas)}">
+      <input id="a-email" type="email" placeholder="Correo del dueño (recibirá la invitación)" value="${esc(f.email)}">
+      <button class="btn" data-act="a_crear" ${S.busy ? 'disabled' : ''}>Crear local e invitar por correo</button>
+      <div class="hint">El dueño recibe un correo desde Protech con un enlace para crear su clave. Si el correo ya tiene cuenta (por ejemplo del POS), solo se asigna al local.</div></div>
+    ${v.cargado ? lista || '<p class="mut">Aún no hay locales.</p>' : '<p class="mut">Cargando locales…</p>'}`;
+}
 function render() {
   const app = $('#app');
-  if (S.setpass || !S.user || !D) { app.innerHTML = loginHTML(); return; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, carta: cartaHTML }[S.view];
+  if (S.setpass || !S.user) { app.innerHTML = loginHTML(); return; }
+  if (!D) { app.innerHTML = S.admin ? adminShell() : loginHTML(); return; }
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
 /* ---------- Acciones ---------- */
-document.addEventListener('input', e => { if (e.target.id === 'nota') S.note = e.target.value; });
+document.addEventListener('input', e => {
+  if (e.target.id === 'nota') S.note = e.target.value;
+  if (e.target.id === 'a-nombre') S.af.nombre = e.target.value;
+  if (e.target.id === 'a-mesas') S.af.mesas = e.target.value;
+  if (e.target.id === 'a-email') S.af.email = e.target.value;
+});
 document.addEventListener('change', e => {
   if (e.target.id === 'metodo') S.metodo = e.target.value;
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
@@ -260,7 +305,25 @@ document.addEventListener('click', async e => {
       if (S.user) { await cargar(); suscribir(); }
       S.busy = false; render(); return;
     }
-    if (a === 'logout') { if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; render(); return; }
+    if (a === 'a_crear' || a === 'a_add' || a === 'a_reenviar') {
+      S.busy = true; S.av.msg = ''; S.av.err = ''; render();
+      try {
+        if (a === 'a_crear') {
+          const j = await llamarAdmin({ action: 'create_local', nombre: S.af.nombre, mesas: S.af.mesas, email: S.af.email });
+          S.av.msg = 'Local creado. ' + (j.persona.estado === 'invitado' ? 'Invitación enviada a ' : 'Asignado a ') + j.persona.email;
+          S.af = { nombre: '', mesas: '6', email: '' };
+        } else if (a === 'a_add') {
+          const em = ($('#ae-' + d.lid) || {}).value || '';
+          const j = await llamarAdmin({ action: 'add_user', local_id: d.lid, email: em });
+          S.av.msg = (j.persona.estado === 'invitado' ? 'Invitación enviada a ' : 'Asignado: ') + j.persona.email;
+        } else {
+          await llamarAdmin({ action: 'resend_invite', email: d.email }); S.av.msg = 'Invitación reenviada a ' + d.email;
+        }
+        const l = await llamarAdmin({ action: 'list' }); S.av.locales = l.locales;
+      } catch (x) { S.av.err = x.message; }
+      S.busy = false; render(); return;
+    }
+    if (a === 'logout') { if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; }
     else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; }
     else if (a === 'volver') { S.mesa = null; S.cerrando = false; }
