@@ -73,7 +73,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
-let S = { user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
+let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
 const L = () => D;
 
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
@@ -133,18 +133,20 @@ async function cargar() {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0);
-  const [loc, menu, com, cue] = await Promise.all([
+  const [loc, menu, com, cue, gar] = await Promise.all([
     sb.from('resto_locales').select('*').eq('id', id).single(),
     sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
     sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
-    sb.from('resto_cuentas').select('*').eq('local_id', id).gte('created_at', desde.toISOString())
+    sb.from('resto_cuentas').select('*').eq('local_id', id).gte('created_at', desde.toISOString()),
+    sb.from('resto_garzones').select('*').eq('local_id', id).order('nombre')
   ]);
   if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
   D = { id, name: loc.data.nombre, mesas: loc.data.mesas,
+    garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo })),
-    comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, note: r.nota || '', estado: r.estado, t: +new Date(r.created_at), cerrada: r.cerrada })),
-    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, items: r.items, t: +new Date(r.created_at) })) };
+    comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
+    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, garzon: r.garzon || '', items: r.items, t: +new Date(r.created_at) })) };
   if (prev) avisar(prev);
 }
 let rt = null, tmr = null;
@@ -192,7 +194,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const tabs = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['caja', 'Ventas'], ['carta', 'Carta y mesas']];
+  const tabs = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['caja', 'Ventas'], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
@@ -220,7 +222,7 @@ function mesaDetalle() {
   const sel = l.menu.filter(i => S.cart[i.id]);
   const subt = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
   const ab = abiertas(n), tot = totalMesa(n);
-  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span> ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
+  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span>${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
   const prop = S.propina ? Math.round(tot * 0.1) : 0;
   const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · Mesa ${n}</b>
     <div class="row"><span>Consumo</span><b>${money(tot)}</b></div>
@@ -231,10 +233,11 @@ function mesaDetalle() {
   return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">Mesa ${n}</h2></div>
   <div class="cols"><div class="card"><b>Carta</b>${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
   <div><div class="card"><b>Nuevo pedido</b>
+    ${garzSel(n)}
     ${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega platos desde la carta.</p>'}
     <input id="nota" placeholder="Nota para cocina (sin cebolla, etc.)" value="${esc(S.note)}" style="margin-top:8px">
     <div class="total"><span>Subtotal</span><span>${money(subt)}</span></div>
-    <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length ? '' : 'disabled'}>Enviar a cocina</button></div>
+    <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>Enviar a cocina</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
   <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
     <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
     <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length ? '' : 'disabled'}>Cerrar cuenta</button></div>${cierre}</div></div>`;
@@ -242,10 +245,47 @@ function mesaDetalle() {
 function cocinaHTML() {
   const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado').sort((a, b) => a.t - b.t);
   const col = (est, titulo, cls, btn, next) => `<div class="col"><h3>${titulo} (${cs.filter(c => c.estado === est).length})</h3>` +
-    (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>Mesa ${c.mesa}</span><span class="pill">${mins(c.t)} min</span></h4>
+    (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>Mesa ${c.mesa}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill">${mins(c.t)} min</span></h4>
       <ul>${c.items.map(i => `<li>${i.q}× ${esc(i.n)}</li>`).join('')}</ul>${c.note ? `<em>Nota: ${esc(c.note)}</em>` : ''}
       <button class="btn" style="width:100%" data-act="avanzar" data-id="${c.id}" data-to="${next}">${btn}</button></div>`).join('') || '<p class="mut">Sin comandas</p>') + '</div>';
   return `<h2>Cocina</h2><div class="kan">${col('pendiente', 'Pendientes', '', 'Empezar a preparar', 'preparando')}${col('preparando', 'Preparando', 'p2', 'Marcar listo', 'listo')}${col('listo', 'Listos para servir', 'p3', 'Entregado en mesa', 'entregado')}</div>`;
+}
+function garzonDe(n) { const a = abiertas(n).find(c => c.garzon); return a ? a.garzon : (S.garzon || ''); }
+function garzSel(n) {
+  const g = L().garzones.filter(x => x.on); const cur = garzonDe(n);
+  if (!g.length) return '<p class="mut" style="margin:6px 0">Sin garzones: agrégalos en "Carta y mesas".</p>';
+  const fijo = abiertas(n).some(c => c.garzon);
+  return `<label class="mut">Atiende<select id="garz" ${fijo ? 'disabled' : ''}><option value="">— elegir garzón —</option>${g.map(x => `<option ${x.n === cur ? 'selected' : ''}>${esc(x.n)}</option>`).join('')}</select></label>`;
+}
+function fechaIso(d) { const z = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()); }
+function resumenGarz(rows) {
+  const m = {}; rows.forEach(c => { const k = c.garzon || '(sin garzón)'; const o = m[k] || (m[k] = { n: k, cuentas: 0, venta: 0, prop: 0 }); o.cuentas++; o.venta += c.total; o.prop += c.propina; });
+  return Object.values(m).sort((a, b) => b.prop - a.prop);
+}
+async function garzCargar() {
+  if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
+  const d = new Date(S.rpd + 'T00:00:00'), h = new Date(S.rph + 'T00:00:00'); h.setDate(h.getDate() + 1);
+  const { data, error } = await sb.from('resto_cuentas').select('*').eq('local_id', D.id).gte('created_at', d.toISOString()).lt('created_at', h.toISOString()).order('created_at');
+  S.rp = error ? [] : data.map(r => ({ mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, garzon: r.garzon || '', t: +new Date(r.created_at) }));
+}
+function garzHTML() {
+  if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
+  if (S.rp === null) { garzCargar().then(render); return '<h2>Garzones</h2><p class="mut">Cargando…</p>'; }
+  const r = resumenGarz(S.rp), tp = r.reduce((a, x) => a + x.prop, 0), tv = r.reduce((a, x) => a + x.venta, 0);
+  return `<h2>Garzones · ventas y propinas</h2>
+  <div class="card" style="display:grid;gap:8px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <label class="mut">Desde<input id="rpd" type="date" value="${S.rpd}"></label><label class="mut">Hasta<input id="rph" type="date" value="${S.rph}"></label></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="rpver">Ver</button><button class="btn-line" data-act="rphoy">Hoy</button><button class="btn-line" data-act="rpsem">Últimos 7 días</button><button class="btn-line" data-act="rpmes">Este mes</button><button class="btn-ok" data-act="rpcsv">Descargar Excel (CSV)</button></div></div>
+  <div class="card" style="margin-top:12px"><b>Por garzón</b>${r.map(x => `<div class="row"><div>${esc(x.n)}<div class="mut">${x.cuentas} cuenta${x.cuentas === 1 ? '' : 's'} · ventas ${money(x.venta)}</div></div><b>${money(x.prop)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin cuentas cerradas en ese período.</p>'}
+    <div class="total"><span>Total propinas</span><span>${money(tp)}</span></div><div class="row"><span class="mut">Total ventas</span><span class="mut">${money(tv)}</span></div></div>
+  <p class="mut" style="margin-top:12px">Cada garzón se lleva la propina de las mesas que atendió. Las cuentas sin garzón elegido aparecen como "(sin garzón)".</p>`;
+}
+function garzCSV() {
+  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  let t = '﻿Garzón;Cuentas;Ventas;Propinas\n' + resumenGarz(S.rp).map(x => [q(x.n), x.cuentas, x.venta, x.prop].join(';')).join('\n');
+  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa, q(c.garzon), c.total, c.propina, c.metodo].join(';')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'propinas_' + S.rpd + '_a_' + S.rph + '.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
 function cajaHTML() {
   const cu = L().cuentas.filter(c => hoy(c.t)); const sum = k => cu.reduce((a, c) => a + c[k], 0);
@@ -269,6 +309,8 @@ function cartaHTML() {
   <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <input id="ap" type="number" inputmode="numeric" placeholder="Precio"><button class="btn" data-act="add">Agregar</button></div>
+  <div class="card" style="margin-top:12px"><b>Garzones</b>${l.garzones.map(g => `<div class="row ${g.on ? '' : 'off'}"><span>${esc(g.n)}</span><div style="display:flex;gap:6px"><button class="btn-line" data-act="gtoggle" data-id="${g.id}">${g.on ? 'Activo' : 'Inactivo'}</button><button class="btn-bad" data-act="gdel" data-id="${g.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Aún no hay garzones.</p>'}
+    <div style="display:flex;gap:8px;margin-top:8px"><input id="gn" placeholder="Nombre del garzón"><button class="btn" data-act="gadd">Agregar</button></div></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b><input id="nm" type="number" min="1" max="60" value="${l.mesas}"><button class="btn-line" data-act="mesas">Guardar</button></div></div></div>`;
 }
 function adminShell() {
@@ -296,7 +338,7 @@ function render() {
   const app = $('#app');
   if (S.setpass || !S.user) { app.innerHTML = loginHTML(); return; }
   if (!D) { app.innerHTML = S.admin ? adminShell() : loginHTML(); return; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, carta: cartaHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, garz: garzHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
@@ -309,6 +351,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'metodo') S.metodo = e.target.value;
+  if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'lpass' || e.target.id === 'lmail')) document.querySelector('[data-act=login]').click(); });
@@ -372,24 +415,32 @@ document.addEventListener('click', async e => {
       S.busy = false; render(); return;
     }
     if (a === 'logout') { if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
-    if (a === 'tab') { S.view = d.v; S.mesa = null; }
+    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; }
     else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; }
     else if (a === 'volver') { S.mesa = null; S.cerrando = false; }
     else if (a === 'inc') S.cart[d.id] = (S.cart[d.id] || 0) + 1;
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
+    else if (a === 'rphoy') { S.rpd = S.rph = fechaIso(new Date()); S.rp = null; }
+    else if (a === 'rpsem') { const d = new Date(); S.rph = fechaIso(d); d.setDate(d.getDate() - 6); S.rpd = fechaIso(d); S.rp = null; }
+    else if (a === 'rpmes') { const d = new Date(); S.rph = fechaIso(d); d.setDate(1); S.rpd = fechaIso(d); S.rp = null; }
+    else if (a === 'rpver') { const x = $('#rpd').value, y = $('#rph').value; if (x && y) { S.rpd = x <= y ? x : y; S.rph = x <= y ? y : x; S.rp = null; } }
+    else if (a === 'rpcsv') { if (S.rp) garzCSV(); }
     else if (a === 'cerrar') S.cerrando = true;
     else if (a === 'nocerrar') S.cerrando = false;
     else {
       S.busy = true;
       if (a === 'enviar') {
         const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p }));
-        if (items.length && !fallo(await sb.from('resto_comandas').insert({ local_id: D.id, mesa: S.mesa, items, nota: S.note.trim() }))) { S.cart = {}; S.note = ''; }
+        if (items.length && !fallo(await sb.from('resto_comandas').insert({ local_id: D.id, mesa: S.mesa, items, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null }))) { S.cart = {}; S.note = ''; }
       } else if (a === 'pagar') {
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
-        const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, items: ab.flatMap(c => c.items) });
+        const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: ab.flatMap(c => c.items) });
         if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); S.cerrando = false; S.mesa = null; }
       } else if (a === 'avanzar') fallo(await sb.from('resto_comandas').update({ estado: d.to }).eq('id', d.id));
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
+      else if (a === 'gadd') { const n = $('#gn').value.trim(); if (n) fallo(await sb.from('resto_garzones').insert({ local_id: D.id, nombre: n })); }
+      else if (a === 'gtoggle') { const g = L().garzones.find(x => x.id === d.id); if (g) fallo(await sb.from('resto_garzones').update({ activo: !g.on }).eq('id', d.id)); }
+      else if (a === 'gdel') fallo(await sb.from('resto_garzones').delete().eq('id', d.id));
       else if (a === 'del') fallo(await sb.from('resto_menu').delete().eq('id', d.id));
       else if (a === 'add') {
         const n = $('#an').value.trim(), c = $('#ac').value.trim() || 'General', p = +$('#ap').value;
