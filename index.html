@@ -452,7 +452,7 @@ document.addEventListener('click', async e => {
         const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e }));
         /* una comanda por estación: lo de cocina espera en Cocina; lo de cafetería queda anotado y ya entregado */
         const filas = ['cocina', 'cafeteria'].map(e => items.filter(x => x.e === e)).filter(g => g.length)
-          .map(g => ({ local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null, ...(g[0].e === 'cafeteria' ? { estado: 'entregado' } : {}) }));
+          .map(g => ({ local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null, estado: g[0].e === 'cafeteria' ? 'entregado' : 'pendiente' }));
         if (filas.length && !fallo(await sb.from('resto_comandas').insert(filas))) { S.cart = {}; S.note = ''; }
       } else if (a === 'pagar') {
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
