@@ -81,7 +81,8 @@ const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) =>
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
 
 /* ---------- Sonidos y avisos ---------- */
-const SNDL = { ambos: 'cocina y salón', cocina: 'solo cocina', salon: 'solo salón', off: 'apagado' };
+const SNDL = { ambos: 'todo', cocina: 'solo cocina', cafe: 'solo cafetería', salon: 'solo salón', off: 'apagado' };
+const esCafe = c => c.est === 'cafeteria';
 let SND = 'ambos'; try { SND = localStorage.getItem('pr-snd') || 'ambos'; } catch (e) {}
 let AC = null;
 function ctx() { try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; } catch (e) { return null; } }
@@ -104,8 +105,11 @@ document.addEventListener('pointerdown', () => ctx());
 document.addEventListener('click', e => { if (e.target.closest('#toast')) $('#toast').innerHTML = ''; });
 function avisar(prev) {
   const nuevos = D.comandas.filter(c => !prev.has(c.id) && c.estado === 'pendiente');
-  const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo');
-  if (nuevos.length && (SND === 'cocina' || SND === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · Mesa ' + nuevos.map(c => c.mesa).join(', '), 'tk-c'); }
+  const nuevosCocina = nuevos.filter(c => !esCafe(c)), nuevosCafe = nuevos.filter(esCafe);
+  /* los cafés los prepara y entrega el mismo garzón, así que "listo" de cafetería no suena en el salón */
+  const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo' && !esCafe(c));
+  if (nuevosCocina.length && (SND === 'cocina' || SND === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · Mesa ' + nuevosCocina.map(c => c.mesa).join(', '), 'tk-c'); }
+  if (nuevosCafe.length && (SND === 'cafe' || SND === 'ambos')) { sonarCocina(); toast('NUEVO CAFÉ · Mesa ' + nuevosCafe.map(c => c.mesa).join(', '), 'tk-c'); }
   if (listos.length && (SND === 'salon' || SND === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · Mesa ' + listos.map(c => c.mesa).join(', '), 'tk-l'); }
 }
 let WL = null;
@@ -144,8 +148,8 @@ async function cargar() {
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
   D = { id, name: loc.data.nombre, mesas: loc.data.mesas,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo })),
-    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo })),
-    comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
+    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina' })),
+    comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, garzon: r.garzon || '', items: r.items, t: +new Date(r.created_at) })) };
   if (prev) avisar(prev);
 }
@@ -194,7 +198,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const tabs = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['caja', 'Ventas'], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
+  const tabs = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['caja', 'Ventas'], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
@@ -222,7 +226,7 @@ function mesaDetalle() {
   const sel = l.menu.filter(i => S.cart[i.id]);
   const subt = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
   const ab = abiertas(n), tot = totalMesa(n);
-  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span>${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
+  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span>${esCafe(c) ? ' <small class="mut">cafetería</small>' : ''}${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
   const prop = S.propina ? Math.round(tot * 0.1) : 0;
   const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · Mesa ${n}</b>
     <div class="row"><span>Consumo</span><b>${money(tot)}</b></div>
@@ -235,21 +239,24 @@ function mesaDetalle() {
   <div><div class="card"><b>Nuevo pedido</b>
     ${garzSel(n)}
     ${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega platos desde la carta.</p>'}
-    <input id="nota" placeholder="Nota para cocina (sin cebolla, etc.)" value="${esc(S.note)}" style="margin-top:8px">
+    <input id="nota" placeholder="Nota (sin cebolla, sin azúcar, etc.)" value="${esc(S.note)}" style="margin-top:8px">
     <div class="total"><span>Subtotal</span><span>${money(subt)}</span></div>
-    <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>Enviar a cocina</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
+    <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>${sel.length && sel.every(i => i.e === 'cafeteria') ? 'Enviar a cafetería' : sel.some(i => i.e === 'cafeteria') ? 'Enviar a cocina y cafetería' : 'Enviar a cocina'}</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
   <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
     <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
     <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length ? '' : 'disabled'}>Cerrar cuenta</button></div>${cierre}</div></div>`;
 }
-function cocinaHTML() {
-  const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado').sort((a, b) => a.t - b.t);
+function estacionHTML(esta) {
+  const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && (esCafe(c) ? 'cafeteria' : 'cocina') === esta).sort((a, b) => a.t - b.t);
   const col = (est, titulo, cls, btn, next) => `<div class="col"><h3>${titulo} (${cs.filter(c => c.estado === est).length})</h3>` +
     (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>Mesa ${c.mesa}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill">${mins(c.t)} min</span></h4>
       <ul>${c.items.map(i => `<li>${i.q}× ${esc(i.n)}</li>`).join('')}</ul>${c.note ? `<em>Nota: ${esc(c.note)}</em>` : ''}
       <button class="btn" style="width:100%" data-act="avanzar" data-id="${c.id}" data-to="${next}">${btn}</button></div>`).join('') || '<p class="mut">Sin comandas</p>') + '</div>';
+  if (esta === 'cafeteria') return `<h2>Cafetería</h2><div class="kan">${col('pendiente', 'Por preparar', '', 'Listo para entregar', 'listo')}${col('listo', 'Listos para entregar', 'p3', 'Entregado en mesa', 'entregado')}</div>`;
   return `<h2>Cocina</h2><div class="kan">${col('pendiente', 'Pendientes', '', 'Empezar a preparar', 'preparando')}${col('preparando', 'Preparando', 'p2', 'Marcar listo', 'listo')}${col('listo', 'Listos para servir', 'p3', 'Entregado en mesa', 'entregado')}</div>`;
 }
+const cocinaHTML = () => estacionHTML('cocina');
+const cafeHTML = () => estacionHTML('cafeteria');
 function garzonDe(n) { const a = abiertas(n).find(c => c.garzon); return a ? a.garzon : (S.garzon || ''); }
 function garzSel(n) {
   const g = L().garzones.filter(x => x.on); const cur = garzonDe(n);
@@ -304,11 +311,13 @@ function cajaHTML() {
 function cartaHTML() {
   const l = L();
   return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
-    ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)}</div></div>
-      <div style="display:flex;gap:6px"><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
+    ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}</div></div>
+      <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
   <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
-    <input id="ap" type="number" inputmode="numeric" placeholder="Precio"><button class="btn" data-act="add">Agregar</button></div>
+    <input id="ap" type="number" inputmode="numeric" placeholder="Precio">
+    <label class="mut">Se prepara en<select id="ae"><option value="cocina">Cocina (platos, sándwiches, fríos, pasteles)</option><option value="cafeteria">Cafetería (cafés y bebidas calientes)</option></select></label>
+    <button class="btn" data-act="add">Agregar</button></div>
   <div class="card" style="margin-top:12px"><b>Garzones</b>${l.garzones.map(g => `<div class="row ${g.on ? '' : 'off'}"><span>${esc(g.n)}</span><div style="display:flex;gap:6px"><button class="btn-line" data-act="gtoggle" data-id="${g.id}">${g.on ? 'Activo' : 'Inactivo'}</button><button class="btn-bad" data-act="gdel" data-id="${g.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Aún no hay garzones.</p>'}
     <div style="display:flex;gap:8px;margin-top:8px"><input id="gn" placeholder="Nombre del garzón"><button class="btn" data-act="gadd">Agregar</button></div></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b><input id="nm" type="number" min="1" max="60" value="${l.mesas}"><button class="btn-line" data-act="mesas">Guardar</button></div></div></div>`;
@@ -338,7 +347,7 @@ function render() {
   const app = $('#app');
   if (S.setpass || !S.user) { app.innerHTML = loginHTML(); return; }
   if (!D) { app.innerHTML = S.admin ? adminShell() : loginHTML(); return; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, caja: cajaHTML, garz: garzHTML, carta: cartaHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, caja: cajaHTML, garz: garzHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
@@ -371,9 +380,9 @@ document.addEventListener('click', async e => {
       S.user = data.user; await cargar(); suscribir(); S.view = 'mesas'; S.busy = false; render(); return;
     }
     if (a === 'sonido') {
-      const o = ['ambos', 'cocina', 'salon', 'off']; SND = o[(o.indexOf(SND) + 1) % o.length];
+      const o = ['ambos', 'cocina', 'cafe', 'salon', 'off']; SND = o[(o.indexOf(SND) + 1) % o.length];
       try { localStorage.setItem('pr-snd', SND); } catch (x) {}
-      if (SND === 'cocina' || SND === 'ambos') sonarCocina(); else if (SND === 'salon') sonarListo();
+      if (SND === 'cocina' || SND === 'cafe' || SND === 'ambos') sonarCocina(); else if (SND === 'salon') sonarListo();
       pantalla(); render(); return;
     }
     if (a === 'olvide') { S.olvide = true; S.err = ''; S.ok = ''; render(); return; }
@@ -430,28 +439,33 @@ document.addEventListener('click', async e => {
     else {
       S.busy = true;
       if (a === 'enviar') {
-        const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p }));
-        if (items.length && !fallo(await sb.from('resto_comandas').insert({ local_id: D.id, mesa: S.mesa, items, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null }))) { S.cart = {}; S.note = ''; }
+        const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e }));
+        /* una comanda por estación: lo de cocina va a Cocina y los cafés a Cafetería */
+        const filas = ['cocina', 'cafeteria'].map(e => items.filter(x => x.e === e)).filter(g => g.length)
+          .map(g => ({ local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null }));
+        if (filas.length && !fallo(await sb.from('resto_comandas').insert(filas))) { S.cart = {}; S.note = ''; }
       } else if (a === 'pagar') {
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
         const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: ab.flatMap(c => c.items) });
         if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); S.cerrando = false; S.mesa = null; }
       } else if (a === 'avanzar') fallo(await sb.from('resto_comandas').update({ estado: d.to }).eq('id', d.id));
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
+      else if (a === 'est') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ estacion: i.e === 'cafeteria' ? 'cocina' : 'cafeteria' }).eq('id', d.id)); }
       else if (a === 'gadd') { const n = $('#gn').value.trim(); if (n) fallo(await sb.from('resto_garzones').insert({ local_id: D.id, nombre: n })); }
       else if (a === 'gtoggle') { const g = L().garzones.find(x => x.id === d.id); if (g) fallo(await sb.from('resto_garzones').update({ activo: !g.on }).eq('id', d.id)); }
       else if (a === 'gdel') fallo(await sb.from('resto_garzones').delete().eq('id', d.id));
       else if (a === 'del') fallo(await sb.from('resto_menu').delete().eq('id', d.id));
       else if (a === 'add') {
         const n = $('#an').value.trim(), c = $('#ac').value.trim() || 'General', p = +$('#ap').value;
-        if (n && p > 0) fallo(await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: Math.round(p) }));
+        const est = ($('#ae') || {}).value === 'cafeteria' ? { estacion: 'cafeteria' } : {};
+        if (n && p > 0) fallo(await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: Math.round(p), ...est }));
       } else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)); fallo(await sb.from('resto_locales').update({ mesas: n }).eq('id', D.id)); }
       await cargar(); S.busy = false;
     }
   } catch (x) { S.busy = false; console.error(x); }
   render();
 });
-setInterval(async () => { if (S.user && D && !S.busy) { if (S.view === 'cocina' || S.view === 'mesas') { await cargar(); render(); } } }, 20000);
+setInterval(async () => { if (S.user && D && !S.busy) { if (S.view === 'cocina' || S.view === 'cafe' || S.view === 'mesas') { await cargar(); render(); } } }, 20000);
 inicio();
 </script>
 </body>
