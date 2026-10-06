@@ -81,9 +81,10 @@ const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) =>
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
 
 /* ---------- Sonidos y avisos ---------- */
-const SNDL = { ambos: 'todo', cocina: 'solo cocina', cafe: 'solo cafetería', salon: 'solo salón', off: 'apagado' };
+const SNDL = { ambos: 'todo', cocina: 'solo cocina', salon: 'solo salón', off: 'apagado' };
 const esCafe = c => c.est === 'cafeteria';
 let SND = 'ambos'; try { SND = localStorage.getItem('pr-snd') || 'ambos'; } catch (e) {}
+if (!SNDL[SND]) SND = 'ambos';
 let AC = null;
 function ctx() { try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; } catch (e) { return null; } }
 function tono(f, t0, dur, tipo, vol) {
@@ -105,11 +106,10 @@ document.addEventListener('pointerdown', () => ctx());
 document.addEventListener('click', e => { if (e.target.closest('#toast')) $('#toast').innerHTML = ''; });
 function avisar(prev) {
   const nuevos = D.comandas.filter(c => !prev.has(c.id) && c.estado === 'pendiente');
-  const nuevosCocina = nuevos.filter(c => !esCafe(c)), nuevosCafe = nuevos.filter(esCafe);
-  /* los cafés los prepara y entrega el mismo garzón, así que "listo" de cafetería no suena en el salón */
+  /* la cafetería entra ya "entregada" (la preparan y sirven los garzones), así que solo la cocina avisa */
+  const nuevosCocina = nuevos.filter(c => !esCafe(c));
   const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo' && !esCafe(c));
   if (nuevosCocina.length && (SND === 'cocina' || SND === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · Mesa ' + nuevosCocina.map(c => c.mesa).join(', '), 'tk-c'); }
-  if (nuevosCafe.length && (SND === 'cafe' || SND === 'ambos')) { sonarCocina(); toast('NUEVO CAFÉ · Mesa ' + nuevosCafe.map(c => c.mesa).join(', '), 'tk-c'); }
   if (listos.length && (SND === 'salon' || SND === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · Mesa ' + listos.map(c => c.mesa).join(', '), 'tk-l'); }
 }
 let WL = null;
@@ -244,7 +244,7 @@ function mesaDetalle() {
     ${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega platos desde la carta.</p>'}
     <input id="nota" placeholder="Nota (sin cebolla, sin azúcar, etc.)" value="${esc(S.note)}" style="margin-top:8px">
     <div class="total"><span>Subtotal</span><span>${money(subt)}</span></div>
-    <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>${sel.length && sel.every(i => i.e === 'cafeteria') ? 'Enviar a cafetería' : sel.some(i => i.e === 'cafeteria') ? 'Enviar a cocina y cafetería' : 'Enviar a cocina'}</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
+    <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>${sel.length && sel.every(i => i.e === 'cafeteria') ? 'Anotar cafetería (sale directo)' : sel.some(i => i.e === 'cafeteria') ? 'Enviar a cocina y anotar cafetería' : 'Enviar a cocina'}</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
   <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
     <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
     <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length ? '' : 'disabled'}>Cerrar cuenta</button></div>${cierre}</div></div>`;
@@ -255,7 +255,12 @@ function estacionHTML(esta) {
     (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>Mesa ${c.mesa}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill">${mins(c.t)} min</span></h4>
       <ul>${c.items.map(i => `<li>${i.q}× ${esc(i.n)}</li>`).join('')}</ul>${c.note ? `<em>Nota: ${esc(c.note)}</em>` : ''}
       <button class="btn" style="width:100%" data-act="avanzar" data-id="${c.id}" data-to="${next}">${btn}</button></div>`).join('') || '<p class="mut">Sin comandas</p>') + '</div>';
-  if (esta === 'cafeteria') return `<h2>Cafetería</h2><div class="kan">${col('pendiente', 'Por preparar', '', 'Listo para entregar', 'listo')}${col('listo', 'Listos para entregar', 'p3', 'Entregado en mesa', 'entregado')}</div>`;
+  if (esta === 'cafeteria') {
+    /* registro de lo que salió directo de la cafetería en las mesas abiertas: no hay nada que marcar */
+    const todos = L().comandas.filter(c => !c.cerrada && esCafe(c)).sort((a, b) => b.t - a.t);
+    return `<h2>Cafetería</h2><div class="card"><p class="mut" style="margin-bottom:8px">Lo de cafetería sale directo de la mesa: queda anotado y no hay que marcar nada. Aquí ves lo servido en las mesas abiertas.</p>` +
+      (todos.map(c => `<div class="row"><div><b>Mesa ${c.mesa}</b>${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} · ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}${c.note ? ` <em class="mut">(${esc(c.note)})</em>` : ''}</div><span class="pill">${mins(c.t)} min</span></div>`).join('') || '<p class="mut">Sin cafés en mesas abiertas.</p>') + '</div>';
+  }
   return `<h2>Cocina</h2><div class="kan">${col('pendiente', 'Pendientes', '', 'Empezar a preparar', 'preparando')}${col('preparando', 'Preparando', 'p2', 'Marcar listo', 'listo')}${col('listo', 'Listos para servir', 'p3', 'Entregado en mesa', 'entregado')}</div>`;
 }
 const cocinaHTML = () => estacionHTML('cocina');
@@ -385,9 +390,9 @@ document.addEventListener('click', async e => {
       S.user = data.user; await cargar(); suscribir(); S.view = 'mesas'; S.busy = false; render(); return;
     }
     if (a === 'sonido') {
-      const o = ['ambos', 'cocina', 'cafe', 'salon', 'off']; SND = o[(o.indexOf(SND) + 1) % o.length];
+      const o = ['ambos', 'cocina', 'salon', 'off']; SND = o[(o.indexOf(SND) + 1) % o.length];
       try { localStorage.setItem('pr-snd', SND); } catch (x) {}
-      if (SND === 'cocina' || SND === 'cafe' || SND === 'ambos') sonarCocina(); else if (SND === 'salon') sonarListo();
+      if (SND === 'cocina' || SND === 'ambos') sonarCocina(); else if (SND === 'salon') sonarListo();
       pantalla(); render(); return;
     }
     if (a === 'olvide') { S.olvide = true; S.err = ''; S.ok = ''; render(); return; }
@@ -445,9 +450,9 @@ document.addEventListener('click', async e => {
       S.busy = true;
       if (a === 'enviar') {
         const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e }));
-        /* una comanda por estación: lo de cocina va a Cocina y los cafés a Cafetería */
+        /* una comanda por estación: lo de cocina espera en Cocina; lo de cafetería queda anotado y ya entregado */
         const filas = ['cocina', 'cafeteria'].map(e => items.filter(x => x.e === e)).filter(g => g.length)
-          .map(g => ({ local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null }));
+          .map(g => ({ local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null, ...(g[0].e === 'cafeteria' ? { estado: 'entregado' } : {}) }));
         if (filas.length && !fallo(await sb.from('resto_comandas').insert(filas))) { S.cart = {}; S.note = ''; }
       } else if (a === 'pagar') {
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
