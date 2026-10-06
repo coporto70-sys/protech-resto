@@ -32,6 +32,7 @@ h2{font-size:1.25rem;margin-bottom:12px}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
 .q{display:flex;align-items:center;gap:8px}.q button{width:34px;height:34px;padding:0;background:var(--line)}.q span{min-width:20px;text-align:center;font-weight:700}
+.piso{font-size:.8rem;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);margin:18px 0 8px;font-weight:700}
 .cat{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);margin:14px 0 4px;font-weight:700}
 .kan{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
 .col h3{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
@@ -80,6 +81,8 @@ const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
 /* i.pg = unidades de ese producto que un cliente ya pagó por separado (cobro parcial) */
 const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) => s + (i.q - (i.pg || 0)) * i.p, 0), 0);
 const pagada = c => c.items.every(i => (i.pg || 0) >= i.q);
+/* las mesas del piso 2 se guardan como 101, 102… (así no chocan con las del piso 1) */
+const nm = m => m > 100 ? 'Piso 2 · Mesa ' + (m - 100) : 'Mesa ' + m;
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
 
 /* ---------- Sonidos y avisos ---------- */
@@ -111,8 +114,8 @@ function avisar(prev) {
   /* la cafetería entra ya "entregada" (la preparan y sirven los garzones), así que solo la cocina avisa */
   const nuevosCocina = nuevos.filter(c => !esCafe(c));
   const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo' && !esCafe(c));
-  if (nuevosCocina.length && (SND === 'cocina' || SND === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · Mesa ' + nuevosCocina.map(c => c.mesa).join(', '), 'tk-c'); }
-  if (listos.length && (SND === 'salon' || SND === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · Mesa ' + listos.map(c => c.mesa).join(', '), 'tk-l'); }
+  if (nuevosCocina.length && (SND === 'cocina' || SND === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · ' + nuevosCocina.map(c => nm(c.mesa)).join(', '), 'tk-c'); }
+  if (listos.length && (SND === 'salon' || SND === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · ' + listos.map(c => nm(c.mesa)).join(', '), 'tk-l'); }
 }
 let WL = null;
 async function pantalla() { try { if (SND !== 'off' && 'wakeLock' in navigator && !WL && !document.hidden) { WL = await navigator.wakeLock.request('screen'); WL.addEventListener('release', () => { WL = null; }); } } catch (e) {} }
@@ -148,7 +151,7 @@ async function cargar() {
   ]);
   if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, name: loc.data.nombre, mesas: loc.data.mesas,
+  D = { id, name: loc.data.nombre, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina' })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
@@ -209,15 +212,17 @@ function shell(inner) {
 }
 function mesasHTML() {
   if (S.mesa !== null) return mesaDetalle();
-  const l = L(); let g = '';
+  const l = L(); let g = '', g2 = '';
   const listos = l.comandas.filter(c => !c.cerrada && c.estado === 'listo');
-  const avisoListos = listos.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--ok)"><b>Listos para llevar a la mesa</b>${listos.map(c => `<div class="row"><div><b>Mesa ${c.mesa}</b> · ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div><button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado en mesa</button></div>`).join('')}</div>` : '';
-  for (let n = 1; n <= l.mesas; n++) {
-    const a = abiertas(n); const lis = a.some(c => c.estado === 'listo');
-    g += `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" data-act="mesa" data-n="${n}"><b>${n}</b>
+  const avisoListos = listos.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--ok)"><b>Listos para llevar a la mesa</b>${listos.map(c => `<div class="row"><div><b>${nm(c.mesa)}</b> · ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div><button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado en mesa</button></div>`).join('')}</div>` : '';
+  const tarjeta = n => {
+    const a = abiertas(n), lis = a.some(c => c.estado === 'listo');
+    return `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" data-act="mesa" data-n="${n}"><b>${n > 100 ? n - 100 : n}</b>
       <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) : 'Libre'}</span></button>`;
-  }
-  return `<h2>Mesas</h2>${avisoListos}<div class="grid">${g}</div><p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  };
+  for (let n = 1; n <= l.mesas; n++) g += tarjeta(n);
+  for (let k = 1; k <= l.mesas2; k++) g2 += tarjeta(100 + k);
+  return `<h2>Mesas</h2>${avisoListos}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
 }
 function camposPago(base) {
   const prop = S.propina ? Math.round(base * 0.1) : 0;
@@ -239,18 +244,18 @@ function mesaDetalle() {
   const ab = abiertas(n), tot = totalMesa(n);
   const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span>${esCafe(c) ? ' <small class="mut">cafetería</small>' : ''}${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} ${c.items.map(i => i.q + '× ' + esc(i.n) + (i.pg ? ' <small class="mut">(' + (i.pg >= i.q ? 'pagado' : i.pg + ' pagado') + ')</small>' : '')).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
   const resta = ab.some(c => c.items.some(i => i.pg));
-  const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · Mesa ${n}</b>
+  const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · ${nm(n)}</b>
     <div class="row"><span>${resta ? 'Consumo restante' : 'Consumo'}</span><b>${money(tot)}</b></div>
     ${tot > 0 ? camposPago(tot) : '<p class="mut" style="margin:8px 0">Todo está pagado: solo falta cerrar la mesa.</p>'}
     <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-ok" data-act="pagar">Confirmar pago</button><button class="btn-line" data-act="nocerrar">Volver</button></div></div>` : '';
   const selSub = ab.reduce((a, c) => a + c.items.reduce((s, i, ix) => s + (S.sel[c.id + ':' + ix] || 0) * i.p, 0), 0);
-  const parcial = S.parcial ? `<div class="card" style="margin-top:12px"><b>Cobrar parte de la mesa · Mesa ${n}</b>
+  const parcial = S.parcial ? `<div class="card" style="margin-top:12px"><b>Cobrar parte de la mesa · ${nm(n)}</b>
     <p class="mut" style="margin:6px 0">Marca lo que consumió quien se retira. Lo que pague se descuenta del total de la mesa.</p>
     ${ab.map(c => c.items.map((i, ix) => { const rem = i.q - (i.pg || 0); return rem <= 0 ? '' : `<div class="row"><div>${esc(i.n)}<div class="mut">${money(i.p)} · quedan ${rem}</div></div><div class="q"><button data-act="pdec" data-c="${c.id}" data-i="${ix}">−</button><span>${S.sel[c.id + ':' + ix] || 0}</span><button data-act="pinc" data-c="${c.id}" data-i="${ix}">+</button></div></div>`; }).join('')).join('')}
     <div class="row"><span>Consumo seleccionado</span><b>${money(selSub)}</b></div>
     ${selSub > 0 ? camposPago(selSub) : ''}
     <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-ok" data-act="pagarparte" ${selSub > 0 ? '' : 'disabled'}>Confirmar pago parcial</button><button class="btn-line" data-act="noparcial">Volver</button></div></div>` : '';
-  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">Mesa ${n}</h2></div>
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">${nm(n)}</h2></div>
   <div class="cols"><div class="card"><b>Carta</b>${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
   <div><div class="card"><b>Nuevo pedido</b>
     ${garzSel(n)}
@@ -266,14 +271,14 @@ function mesaDetalle() {
 function estacionHTML(esta) {
   const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && (esCafe(c) ? 'cafeteria' : 'cocina') === esta).sort((a, b) => a.t - b.t);
   const col = (est, titulo, cls, btn, next) => `<div class="col"><h3>${titulo} (${cs.filter(c => c.estado === est).length})</h3>` +
-    (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>Mesa ${c.mesa}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill">${mins(c.t)} min</span></h4>
+    (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>${nm(c.mesa)}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill">${mins(c.t)} min</span></h4>
       <ul>${c.items.map(i => `<li>${i.q}× ${esc(i.n)}</li>`).join('')}</ul>${c.note ? `<em>Nota: ${esc(c.note)}</em>` : ''}
       <button class="btn" style="width:100%" data-act="avanzar" data-id="${c.id}" data-to="${next}">${btn}</button></div>`).join('') || '<p class="mut">Sin comandas</p>') + '</div>';
   if (esta === 'cafeteria') {
     /* registro de lo que salió directo de la cafetería en las mesas abiertas: no hay nada que marcar */
     const todos = L().comandas.filter(c => !c.cerrada && esCafe(c)).sort((a, b) => b.t - a.t);
     return `<h2>Cafetería</h2><div class="card"><p class="mut" style="margin-bottom:8px">Lo de cafetería sale directo de la mesa: queda anotado y no hay que marcar nada. Aquí ves lo servido en las mesas abiertas.</p>` +
-      (todos.map(c => `<div class="row"><div><b>Mesa ${c.mesa}</b>${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} · ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}${c.note ? ` <em class="mut">(${esc(c.note)})</em>` : ''}</div><span class="pill">${mins(c.t)} min</span></div>`).join('') || '<p class="mut">Sin cafés en mesas abiertas.</p>') + '</div>';
+      (todos.map(c => `<div class="row"><div><b>${nm(c.mesa)}</b>${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} · ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}${c.note ? ` <em class="mut">(${esc(c.note)})</em>` : ''}</div><span class="pill">${mins(c.t)} min</span></div>`).join('') || '<p class="mut">Sin cafés en mesas abiertas.</p>') + '</div>';
   }
   return `<h2>Cocina</h2><div class="kan">${col('pendiente', 'Pendientes', '', 'Empezar a preparar', 'preparando')}${col('preparando', 'Preparando', 'p2', 'Marcar listo', 'listo')}${col('listo', 'Listos para servir', 'p3', 'Entregado en mesa', 'entregado')}</div>`;
 }
@@ -312,7 +317,7 @@ function garzHTML() {
 function garzCSV() {
   const q = v => '"' + String(v).replace(/"/g, '""') + '"';
   let t = '﻿Garzón;Cuentas;Ventas;Propinas\n' + resumenGarz(S.rp).map(x => [q(x.n), x.cuentas, x.venta, x.prop].join(';')).join('\n');
-  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina 10%;Propina efectivo;Propina tarjeta;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa, q(c.garzon), c.total, c.propina, c.pe || 0, c.pt || 0, c.metodo].join(';')).join('\n');
+  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina 10%;Propina efectivo;Propina tarjeta;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa > 100 ? 'Piso 2 - ' + (c.mesa - 100) : c.mesa, q(c.garzon), c.total, c.propina, c.pe || 0, c.pt || 0, c.metodo].join(';')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
   a.download = 'propinas_' + S.rpd + '_a_' + S.rph + '.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
@@ -342,7 +347,10 @@ function cartaHTML() {
     <button class="btn" data-act="add">Agregar</button></div>
   <div class="card" style="margin-top:12px"><b>Garzones</b>${l.garzones.map(g => `<div class="row ${g.on ? '' : 'off'}"><span>${esc(g.n)}</span><div style="display:flex;gap:6px"><button class="btn-line" data-act="gtoggle" data-id="${g.id}">${g.on ? 'Activo' : 'Inactivo'}</button><button class="btn-bad" data-act="gdel" data-id="${g.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Aún no hay garzones.</p>'}
     <div style="display:flex;gap:8px;margin-top:8px"><input id="gn" placeholder="Nombre del garzón"><button class="btn" data-act="gadd">Agregar</button></div></div>
-  <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b><input id="nm" type="number" min="1" max="60" value="${l.mesas}"><button class="btn-line" data-act="mesas">Guardar</button></div></div></div>`;
+  <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b>
+    <label class="mut">Mesas del primer piso<input id="nm" type="number" min="1" max="60" value="${l.mesas}"></label>
+    <label class="mut">Mesas del segundo piso (0 si no tiene)<input id="nm2" type="number" min="0" max="30" value="${l.mesas2}"></label>
+    <button class="btn-line" data-act="mesas">Guardar</button></div></div></div>`;
 }
 function adminShell() {
   return `<header><div><b>Admin Protech</b><small>Protech Resto</small></div><nav></nav>
@@ -516,7 +524,7 @@ document.addEventListener('click', async e => {
         const n = $('#an').value.trim(), c = $('#ac').value.trim() || 'General', p = +$('#ap').value;
         const est = ($('#ae') || {}).value === 'cafeteria' ? { estacion: 'cafeteria' } : {};
         if (n && p > 0) fallo(await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: Math.round(p), ...est }));
-      } else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)); fallo(await sb.from('resto_locales').update({ mesas: n }).eq('id', D.id)); }
+      } else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)), n2 = Math.min(30, Math.max(0, Math.round(+$('#nm2').value || 0))); fallo(await sb.from('resto_locales').update({ mesas: n, mesas2: n2 }).eq('id', D.id)); }
       await cargar(); S.busy = false;
       if (a === 'pagarparte' && S.mesa && !abiertas(S.mesa).length) S.mesa = null;
     }
