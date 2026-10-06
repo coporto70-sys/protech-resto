@@ -150,7 +150,7 @@ async function cargar() {
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina' })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
-    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, garzon: r.garzon || '', items: r.items, t: +new Date(r.created_at) })) };
+    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, t: +new Date(r.created_at) })) };
   if (prev) avisar(prev);
 }
 let rt = null, tmr = null;
@@ -228,11 +228,14 @@ function mesaDetalle() {
   const ab = abiertas(n), tot = totalMesa(n);
   const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span>${esCafe(c) ? ' <small class="mut">cafetería</small>' : ''}${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
   const prop = S.propina ? Math.round(tot * 0.1) : 0;
+  const ptj = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
   const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · Mesa ${n}</b>
     <div class="row"><span>Consumo</span><b>${money(tot)}</b></div>
     <label class="row" style="cursor:pointer"><span>Propina sugerida 10%</span><input type="checkbox" style="width:auto" data-act="propina" ${S.propina ? 'checked' : ''}></label>
-    <div class="total"><span>Total a pagar</span><span>${money(tot + prop)}</span></div>
-    <label class="mut">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option></select></label>
+    <label class="mut" style="display:block;margin-top:8px">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option></select></label>
+    ${S.metodo === 'Tarjeta' ? `<label class="mut" style="display:block;margin-top:8px">Propina o recargo adicional en la tarjeta (se suma al total)<input id="ptarj" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pt)}"></label>` : ''}
+    <label class="mut" style="display:block;margin-top:8px">Propina en efectivo que le dieron al garzón (no se suma al total)<input id="pefec" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pe)}"></label>
+    <div class="total"><span>Total a pagar</span><span>${money(tot + prop + ptj)}</span></div>
     <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-ok" data-act="pagar">Confirmar pago</button><button class="btn-line" data-act="nocerrar">Volver</button></div></div>` : '';
   return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">Mesa ${n}</h2></div>
   <div class="cols"><div class="card"><b>Carta</b>${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
@@ -266,14 +269,14 @@ function garzSel(n) {
 }
 function fechaIso(d) { const z = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()); }
 function resumenGarz(rows) {
-  const m = {}; rows.forEach(c => { const k = c.garzon || '(sin garzón)'; const o = m[k] || (m[k] = { n: k, cuentas: 0, venta: 0, prop: 0 }); o.cuentas++; o.venta += c.total; o.prop += c.propina; });
+  const m = {}; rows.forEach(c => { const k = c.garzon || '(sin garzón)'; const o = m[k] || (m[k] = { n: k, cuentas: 0, venta: 0, prop: 0, ext: 0 }); o.cuentas++; o.venta += c.total; o.prop += c.propina + (c.pe || 0) + (c.pt || 0); o.ext += (c.pe || 0) + (c.pt || 0); });
   return Object.values(m).sort((a, b) => b.prop - a.prop);
 }
 async function garzCargar() {
   if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
   const d = new Date(S.rpd + 'T00:00:00'), h = new Date(S.rph + 'T00:00:00'); h.setDate(h.getDate() + 1);
   const { data, error } = await sb.from('resto_cuentas').select('*').eq('local_id', D.id).gte('created_at', d.toISOString()).lt('created_at', h.toISOString()).order('created_at');
-  S.rp = error ? [] : data.map(r => ({ mesa: r.mesa, total: r.total, propina: r.propina, metodo: r.metodo, garzon: r.garzon || '', t: +new Date(r.created_at) }));
+  S.rp = error ? [] : data.map(r => ({ mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', t: +new Date(r.created_at) }));
 }
 function garzHTML() {
   if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
@@ -283,25 +286,25 @@ function garzHTML() {
   <div class="card" style="display:grid;gap:8px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <label class="mut">Desde<input id="rpd" type="date" value="${S.rpd}"></label><label class="mut">Hasta<input id="rph" type="date" value="${S.rph}"></label></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="rpver">Ver</button><button class="btn-line" data-act="rphoy">Hoy</button><button class="btn-line" data-act="rpsem">Últimos 7 días</button><button class="btn-line" data-act="rpmes">Este mes</button><button class="btn-ok" data-act="rpcsv">Descargar Excel (CSV)</button></div></div>
-  <div class="card" style="margin-top:12px"><b>Por garzón</b>${r.map(x => `<div class="row"><div>${esc(x.n)}<div class="mut">${x.cuentas} cuenta${x.cuentas === 1 ? '' : 's'} · ventas ${money(x.venta)}</div></div><b>${money(x.prop)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin cuentas cerradas en ese período.</p>'}
+  <div class="card" style="margin-top:12px"><b>Por garzón</b>${r.map(x => `<div class="row"><div>${esc(x.n)}<div class="mut">${x.cuentas} cuenta${x.cuentas === 1 ? '' : 's'} · ventas ${money(x.venta)}${x.ext ? ' · incluye ' + money(x.ext) + ' en efectivo/tarjeta' : ''}</div></div><b>${money(x.prop)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin cuentas cerradas en ese período.</p>'}
     <div class="total"><span>Total propinas</span><span>${money(tp)}</span></div><div class="row"><span class="mut">Total ventas</span><span class="mut">${money(tv)}</span></div></div>
-  <p class="mut" style="margin-top:12px">Cada garzón se lleva la propina de las mesas que atendió. Las cuentas sin garzón elegido aparecen como "(sin garzón)".</p>`;
+  <p class="mut" style="margin-top:12px">Cada garzón se lleva la propina de las mesas que atendió, más lo que anotaste como propina en efectivo o recargo en tarjeta. Las cuentas sin garzón elegido aparecen como "(sin garzón)".</p>`;
 }
 function garzCSV() {
   const q = v => '"' + String(v).replace(/"/g, '""') + '"';
   let t = '﻿Garzón;Cuentas;Ventas;Propinas\n' + resumenGarz(S.rp).map(x => [q(x.n), x.cuentas, x.venta, x.prop].join(';')).join('\n');
-  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa, q(c.garzon), c.total, c.propina, c.metodo].join(';')).join('\n');
+  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina 10%;Propina efectivo;Propina tarjeta;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa, q(c.garzon), c.total, c.propina, c.pe || 0, c.pt || 0, c.metodo].join(';')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
   a.download = 'propinas_' + S.rpd + '_a_' + S.rph + '.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
 function cajaHTML() {
   const cu = L().cuentas.filter(c => hoy(c.t)); const sum = k => cu.reduce((a, c) => a + c[k], 0);
-  const por = {}; cu.forEach(c => por[c.metodo] = (por[c.metodo] || 0) + c.total + c.propina);
+  const por = {}; cu.forEach(c => por[c.metodo] = (por[c.metodo] || 0) + c.total + c.propina + c.pt);
   const pop = {}; cu.forEach(c => c.items.forEach(i => pop[i.n] = (pop[i.n] || 0) + i.q));
   const top = Object.entries(pop).sort((a, b) => b[1] - a[1]).slice(0, 5);
   return `<h2>Ventas de hoy</h2><div class="stats">
     <div class="card stat"><span class="mut">Ventas</span><b>${money(sum('total'))}</b></div>
-    <div class="card stat"><span class="mut">Propinas</span><b>${money(sum('propina'))}</b></div>
+    <div class="card stat"><span class="mut">Propinas (10% + efectivo + tarjeta)</span><b>${money(sum('propina') + sum('pe') + sum('pt'))}</b></div>
     <div class="card stat"><span class="mut">Cuentas cerradas</span><b>${cu.length}</b></div>
     <div class="card stat"><span class="mut">Ticket promedio</span><b>${money(cu.length ? sum('total') / cu.length : 0)}</b></div></div>
   <div class="cols"><div class="card"><b>Por forma de pago</b>${Object.entries(por).map(([k, v]) => `<div class="row"><span>${k}</span><b>${money(v)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay ventas hoy.</p>'}</div>
@@ -354,12 +357,14 @@ function render() {
 /* ---------- Acciones ---------- */
 document.addEventListener('input', e => {
   if (e.target.id === 'nota') S.note = e.target.value;
+  if (e.target.id === 'pefec') S.pe = e.target.value;
+  if (e.target.id === 'ptarj') S.pt = e.target.value;
   if (e.target.id === 'a-nombre') S.af.nombre = e.target.value;
   if (e.target.id === 'a-mesas') S.af.mesas = e.target.value;
   if (e.target.id === 'a-email') S.af.email = e.target.value;
 });
 document.addEventListener('change', e => {
-  if (e.target.id === 'metodo') S.metodo = e.target.value;
+  if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
@@ -425,8 +430,8 @@ document.addEventListener('click', async e => {
     }
     if (a === 'logout') { if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; }
-    else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; }
-    else if (a === 'volver') { S.mesa = null; S.cerrando = false; }
+    else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.pe = ''; S.pt = ''; }
+    else if (a === 'volver') { S.mesa = null; S.cerrando = false; S.pe = ''; S.pt = ''; }
     else if (a === 'inc') S.cart[d.id] = (S.cart[d.id] || 0) + 1;
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
     else if (a === 'rphoy') { S.rpd = S.rph = fechaIso(new Date()); S.rp = null; }
@@ -446,8 +451,9 @@ document.addEventListener('click', async e => {
         if (filas.length && !fallo(await sb.from('resto_comandas').insert(filas))) { S.cart = {}; S.note = ''; }
       } else if (a === 'pagar') {
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
-        const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: ab.flatMap(c => c.items) });
-        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); S.cerrando = false; S.mesa = null; }
+        const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
+        const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: ab.flatMap(c => c.items), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) });
+        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); S.cerrando = false; S.mesa = null; S.pe = ''; S.pt = ''; }
       } else if (a === 'avanzar') fallo(await sb.from('resto_comandas').update({ estado: d.to }).eq('id', d.id));
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
       else if (a === 'est') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ estacion: i.e === 'cafeteria' ? 'cocina' : 'cafeteria' }).eq('id', d.id)); }
