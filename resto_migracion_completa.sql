@@ -103,3 +103,19 @@ end $$;
 do $$ begin alter publication supabase_realtime add table public.resto_turnos;   exception when others then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.resto_pedidos;  exception when others then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.resto_reservas; exception when others then null; end $$;
+
+-- Registro de quién está en caja en cada turno (entrada/salida de cada usuario con su PIN)
+create table if not exists public.resto_sesiones (
+  id uuid primary key default gen_random_uuid(),
+  local_id uuid not null,
+  turno_id uuid,
+  usuario text not null,
+  rol text,
+  entrada timestamptz not null default now(),
+  salida timestamptz
+);
+alter table public.resto_sesiones enable row level security;
+do $$ begin
+  create policy p_sesiones on public.resto_sesiones for all using (local_id = resto_mi_local()) with check (local_id = resto_mi_local());
+exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.resto_sesiones; exception when others then null; end $$;
