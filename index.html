@@ -654,6 +654,7 @@ document.addEventListener('click', async e => {
       S.busy = false; render(); return;
     }
     if (a === 'a_crear' || a === 'a_add' || a === 'a_reenviar') {
+      const emIn = a === 'a_add' ? (($('#ae-' + d.lid) || {}).value || '') : '';
       S.busy = true; S.av.msg = ''; S.av.err = ''; render();
       try {
         if (a === 'a_crear') {
@@ -661,7 +662,7 @@ document.addEventListener('click', async e => {
           S.av.msg = 'Local creado. ' + (j.persona.estado === 'invitado' ? 'Invitación enviada a ' : 'Asignado a ') + j.persona.email;
           S.af = { nombre: '', mesas: '6', email: '' };
         } else if (a === 'a_add') {
-          const em = ($('#ae-' + d.lid) || {}).value || '';
+          const em = emIn;
           const j = await llamarAdmin({ action: 'add_user', local_id: d.lid, email: em });
           S.av.msg = (j.persona.estado === 'invitado' ? 'Invitación enviada a ' : 'Asignado: ') + j.persona.email;
         } else {
