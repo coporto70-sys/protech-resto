@@ -74,15 +74,16 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
-let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', qk: null, pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
+let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', f: {}, np: null, th: null, qk: null, pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
 const L = () => D;
+const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S.quien ? { cobrado_por: S.quien } : {}) });
 /* ---------- Roles y PIN ----------
    Si el local tiene PIN de administradora, cada persona elige quién es y entra con su PIN.
    Administradora: todo. Garzón: solo Mesas (tomar pedidos y cobrar). Cocina: Cocina y Cafetería.
    Si el local aún no configuró PIN, funciona como siempre (todo visible). */
 const rolesOn = () => !!(D && D.adminPin);
 const esAdm = () => !rolesOn() || S.rol === 'admin';
-const TABS = { admin: ['mesas', 'cocina', 'cafe', 'caja', 'garz', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'garz', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
 const misTabs = () => !rolesOn() ? TABS.admin : (TABS[S.rol] || []);
 async function hpin(scope, pin) {
   const b = new TextEncoder().encode(D.id + ':' + scope + ':' + pin);
@@ -122,7 +123,16 @@ const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
 const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) => s + (i.q - (i.pg || 0)) * i.p, 0), 0);
 const pagada = c => c.items.every(i => (i.pg || 0) >= i.q);
 /* las mesas del piso 2 se guardan como 101, 102… (así no chocan con las del piso 1) */
-const nm = m => m > 100 ? 'Piso 2 · Mesa ' + (m - 100) : 'Mesa ' + m;
+const nm = m => {
+  if (m >= 1000) { const p = (D && D.pedidos || []).find(x => x.num === m); return p ? (p.tipo === 'delivery' ? 'Delivery' : 'Para llevar') + ' #' + (m - 1000) + (p.cliente ? ' · ' + esc(p.cliente) : '') : 'Pedido #' + (m - 1000); }
+  return m > 100 ? 'Piso 2 · Mesa ' + (m - 100) : 'Mesa ' + m;
+};
+const fv = k => esc(S.f[k] ?? '');
+const pedDe = n => ((D && D.pedidos) || []).find(p => p.num === n);
+const cajaAbierta = () => !rolesOn() || !!D.turno;
+const hoyIso = () => fechaIso(new Date());
+const resDe = n => ((D && D.reservas) || []).filter(r => r.mesa === n && r.estado === 'pendiente' && r.fecha === hoyIso()).sort((a, b) => a.hora.localeCompare(b.hora))[0];
+const bajoStock = () => L().menu.filter(i => i.s != null && i.s <= i.sm);
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
 
 /* ---------- Sonidos y avisos ---------- */
@@ -181,19 +191,22 @@ async function cargar() {
   const { data: mi } = await sb.from('resto_miembros').select('local_id').maybeSingle();
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
-  const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0);
-  const [loc, menu, com, cue, gar] = await Promise.all([
+  const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
+  const [loc, menu, com, cue, gar, tur, ped, res] = await Promise.all([
     sb.from('resto_locales').select('*').eq('id', id).single(),
     sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
     sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
     sb.from('resto_cuentas').select('*').eq('local_id', id).gte('created_at', desde.toISOString()),
-    sb.from('resto_garzones').select('*').eq('local_id', id).order('nombre')
+    sb.from('resto_garzones').select('*').eq('local_id', id).order('nombre'),
+    sb.from('resto_turnos').select('*').eq('local_id', id).is('cerrado_at', null).order('abierto_at', { ascending: false }).limit(1),
+    sb.from('resto_pedidos').select('*').eq('local_id', id).eq('cerrado', false).order('num'),
+    sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora')
   ]);
   if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
-    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina' })),
+    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0 })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, t: +new Date(r.created_at) })) };
   if (prev) avisar(prev);
@@ -203,7 +216,7 @@ function suscribir() {
   if (rt || !D) return;
   const refresca = () => { clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; await cargar(); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
-  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
   rt.subscribe();
 }
 const _h = location.hash || '';
@@ -243,7 +256,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['caja', 'Ventas'], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
+  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
   const tabs = todas.filter(t => misTabs().includes(t[0]));
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
@@ -259,12 +272,20 @@ function mesasHTML() {
   const avisoListos = listos.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--ok)"><b>Listos para llevar a la mesa</b>${listos.map(c => `<div class="row"><div><b>${nm(c.mesa)}</b> · ${c.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div><button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado en mesa</button></div>`).join('')}</div>` : '';
   const tarjeta = n => {
     const a = abiertas(n), lis = a.some(c => c.estado === 'listo');
-    return `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" data-act="mesa" data-n="${n}"><b>${n > 100 ? n - 100 : n}</b>
-      <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) : 'Libre'}</span></button>`;
+    const rv = !a.length && resDe(n);
+    return `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" ${rv ? 'style="border-color:var(--brand);background:#f0f9ff"' : ''} data-act="mesa" data-n="${n}"><b>${n > 100 ? n - 100 : n}</b>
+      <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) : rv ? 'Reservada ' + esc(rv.hora) + ' · ' + esc(rv.nombre) : 'Libre'}</span></button>`;
   };
   for (let n = 1; n <= l.mesas; n++) g += tarjeta(n);
   for (let k = 1; k <= l.mesas2; k++) g2 += tarjeta(100 + k);
-  return `<h2>Mesas</h2>${avisoListos}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  const fnp = S.np ? `<div style="display:grid;gap:8px;margin-top:10px"><b>${S.np.tipo === 'delivery' ? 'Nuevo delivery' : 'Nuevo pedido para llevar'}</b>
+    <input id="np-c" data-keep placeholder="Nombre del cliente" value="${fv('np-c')}">
+    <input id="np-t" data-keep type="tel" inputmode="tel" placeholder="Teléfono" value="${fv('np-t')}">
+    ${S.np.tipo === 'delivery' ? `<input id="np-d" data-keep placeholder="Dirección de entrega" value="${fv('np-d')}">` : ''}
+    <div style="display:flex;gap:8px"><button class="btn" data-act="crearped">Crear y tomar pedido</button><button class="btn-line" data-act="cancelnp">Cancelar</button></div></div>` : '';
+  const cartaPed = `<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b style="flex:1">Para llevar y delivery</b><button class="btn" data-act="nuevoped" data-t="llevar">+ Para llevar</button><button class="btn" data-act="nuevoped" data-t="delivery">+ Delivery</button></div>${fnp}
+    ${(l.pedidos || []).map(p => { const a = abiertas(p.num), lis = a.some(c => c.estado === 'listo'); return `<div class="row"><div>${p.tipo === 'delivery' ? '🛵' : '🥡'} <b>#${p.num - 1000}</b> ${esc(p.cliente || '')}<div class="mut">${a.length ? (lis ? 'Listo · ' : 'En preparación · ') + money(totalMesa(p.num)) : 'Sin pedido enviado'}${p.direccion ? ' · ' + esc(p.direccion) : ''}</div></div><button class="${lis ? 'btn-ok' : 'btn-line'}" data-act="mesa" data-n="${p.num}">Abrir</button></div>`; }).join('')}</div>`;
+  return `<h2>Mesas</h2>${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
 }
 function camposPago(base) {
   const prop = S.propina ? Math.round(base * 0.1) : 0;
@@ -279,8 +300,8 @@ function mesaDetalle() {
   const l = L(), n = S.mesa;
   const cats = [...new Set(l.menu.filter(i => i.on).map(i => i.c))];
   const carta = cats.map(c => `<div class="cat">${esc(c)}</div>` + l.menu.filter(i => i.on && i.c === c).map(i => `
-    <div class="row"><div>${esc(i.n)}<div class="mut">${money(i.p)}</div></div>
-    <div class="q"><button data-act="dec" data-id="${i.id}">−</button><span>${S.cart[i.id] || 0}</span><button data-act="inc" data-id="${i.id}">+</button></div></div>`).join('')).join('');
+    <div class="row"><div>${esc(i.n)}<div class="mut">${money(i.p)}${i.s != null ? (i.s <= 0 ? ' · <b style="color:var(--bad)">Sin stock</b>' : ' · quedan ' + i.s) : ''}</div></div>
+    <div class="q"><button data-act="dec" data-id="${i.id}">−</button><span>${S.cart[i.id] || 0}</span><button data-act="inc" data-id="${i.id}" ${i.s != null && (S.cart[i.id] || 0) >= i.s ? 'disabled style="opacity:.4"' : ''}>+</button></div></div>`).join('')).join('');
   const sel = l.menu.filter(i => S.cart[i.id]);
   const subt = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
   const ab = abiertas(n), tot = totalMesa(n);
@@ -297,7 +318,12 @@ function mesaDetalle() {
     <div class="row"><span>Consumo seleccionado</span><b>${money(selSub)}</b></div>
     ${selSub > 0 ? camposPago(selSub) : ''}
     <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-ok" data-act="pagarparte" ${selSub > 0 ? '' : 'disabled'}>Confirmar pago parcial</button><button class="btn-line" data-act="noparcial">Volver</button></div></div>` : '';
-  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">${nm(n)}</h2></div>
+  const pd = pedDe(n);
+  const pinfo = pd ? `<div class="card" style="margin-bottom:12px"><b>${pd.tipo === 'delivery' ? '🛵 Delivery' : '🥡 Para llevar'}</b> · ${esc(pd.cliente || '')}${pd.telefono ? ' · ' + esc(pd.telefono) : ''}${pd.direccion ? `<div class="mut">${esc(pd.direccion)}</div>` : ''}${!ab.length ? `<button class="btn-bad" style="margin-top:8px" data-act="cancelped">Cancelar pedido</button>` : ''}</div>` : '';
+  const rvm = resDe(n);
+  const rinfo = rvm ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--brand)"><b>Reserva ${esc(rvm.hora)}</b> · ${esc(rvm.nombre)} · ${rvm.personas} personas${rvm.nota ? `<div class="mut">${esc(rvm.nota)}</div>` : ''}</div>` : '';
+  const sinCaja = !cajaAbierta() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">La caja está cerrada. La administradora debe abrir la caja para poder cobrar.</p>' : '';
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">${nm(n)}</h2></div>${pinfo}${rinfo}
   <div class="cols"><div class="card"><b>Carta</b>${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
   <div><div class="card"><b>Nuevo pedido</b>
     ${garzSel(n)}
@@ -307,8 +333,8 @@ function mesaDetalle() {
     <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>${sel.length && sel.every(i => i.e === 'cafeteria') ? 'Anotar cafetería (sale directo)' : sel.some(i => i.e === 'cafeteria') ? 'Enviar a cocina y anotar cafetería' : 'Enviar a cocina'}</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
   <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
     <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
-    <button class="btn-line" style="width:100%;margin-top:8px" data-act="parcial" ${tot > 0 ? '' : 'disabled'}>Cobrar parte (alguien se retira)</button>
-    <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length ? '' : 'disabled'}>Cerrar cuenta</button></div>${cierre}${parcial}</div></div>`;
+    <button class="btn-line" style="width:100%;margin-top:8px" data-act="parcial" ${tot > 0 && cajaAbierta() ? '' : 'disabled'}>Cobrar parte (alguien se retira)</button>
+    <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() ? '' : 'disabled'}>Cerrar cuenta</button>${sinCaja}</div>${cierre}${parcial}</div></div>`;
 }
 function estacionHTML(esta) {
   const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && (esCafe(c) ? 'cafeteria' : 'cocina') === esta).sort((a, b) => a.t - b.t);
@@ -359,9 +385,61 @@ function garzHTML() {
 function garzCSV() {
   const q = v => '"' + String(v).replace(/"/g, '""') + '"';
   let t = '﻿Garzón;Cuentas;Ventas;Propinas\n' + resumenGarz(S.rp).map(x => [q(x.n), x.cuentas, x.venta, x.prop].join(';')).join('\n');
-  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina 10%;Propina efectivo;Propina tarjeta;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa > 100 ? 'Piso 2 - ' + (c.mesa - 100) : c.mesa, q(c.garzon), c.total, c.propina, c.pe || 0, c.pt || 0, c.metodo].join(';')).join('\n');
+  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina 10%;Propina efectivo;Propina tarjeta;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa >= 1000 ? 'Pedido ' + (c.mesa - 1000) : c.mesa > 100 ? 'Piso 2 - ' + (c.mesa - 100) : c.mesa, q(c.garzon), c.total, c.propina, c.pe || 0, c.pt || 0, c.metodo].join(';')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
   a.download = 'propinas_' + S.rpd + '_a_' + S.rph + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+async function turnoCargar() {
+  const { data } = await sb.from('resto_turnos').select('*').eq('local_id', D.id).not('cerrado_at', 'is', null).order('abierto_at', { ascending: false }).limit(15);
+  S.th = data || [];
+}
+function turnoRes(t) {
+  const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
+  cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; pr += c.propina + c.pe + c.pt; });
+  return { cuentas: cu.length, vt, ef, tj, tr, pr, esp: (t.monto_inicial || 0) + ef };
+}
+const hora = t => new Date(t).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function turnoHTML() {
+  const t = D.turno;
+  if (S.th === null) { turnoCargar().then(render); }
+  const hist = (S.th || []).map(h => `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
+  if (!t) return `<h2>Caja</h2><div class="card" style="display:grid;gap:8px"><b>Caja cerrada</b><p class="mut">Abre la caja para que los garzones puedan cobrar. Anota el efectivo con que parte el turno.</p>
+    <input id="tini" data-keep type="number" inputmode="numeric" min="0" placeholder="Efectivo inicial en caja (0 si no hay)" value="${fv('tini')}"><button class="btn-ok" data-act="tabrir">Abrir caja</button></div>
+    <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
+  const r = turnoRes(t), cont = S.f.tcont, dif = cont === undefined || cont === '' ? null : Math.round(+cont) - r.esp;
+  return `<h2>Caja · turno abierto</h2><div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}</div>
+  <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
+  <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
+    <div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial. No incluye la propina en efectivo entregada directo al garzón.</p></div>
+  <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cerrar caja (cierre del día)</b>
+    <input id="tcont" data-keep type="number" inputmode="numeric" min="0" placeholder="Efectivo contado en caja" value="${fv('tcont')}">
+    ${dif !== null ? `<div style="font-weight:700;color:${dif === 0 ? 'var(--ok)' : 'var(--bad)'}">${dif === 0 ? 'La caja cuadra' : (dif > 0 ? 'Sobran ' : 'Faltan ') + money(Math.abs(dif))}</div>` : ''}
+    <input id="tnota" data-keep placeholder="Observación (opcional)" value="${fv('tnota')}"><button class="btn-bad" data-act="tcerrar">Cerrar caja</button></div>
+  <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
+}
+function invHTML() {
+  const l = L(), bajos = bajoStock();
+  return `<h2>Inventario</h2>${bajos.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--warn)"><b>Stock bajo o agotado</b>${bajos.map(i => `<div class="row"><span>${esc(i.n)}</span><b style="color:var(--bad)">${i.s}</b></div>`).join('')}</div>` : ''}
+  <div class="card"><p class="mut" style="margin-bottom:6px">Escribe una cantidad y usa "Controlar" para empezar a llevar el stock de un producto. Cada venta lo descuenta sola. "Entrada" suma mercadería; "Contar" fija el stock real; "Mín." fija el aviso de stock bajo.</p>
+  ${l.menu.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}</div></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="sq-${i.id}" data-keep type="number" inputmode="numeric" placeholder="Cant." style="width:80px" value="${fv('sq-' + i.id)}">
+    ${i.s == null ? `<button class="btn" data-act="sk_set" data-id="${i.id}">Controlar</button>` : `<button class="btn-ok" data-act="sk_add" data-id="${i.id}">+ Entrada</button><button class="btn-line" data-act="sk_set" data-id="${i.id}">Contar</button><button class="btn-line" data-act="sk_min" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="sk_off" data-id="${i.id}">Quitar</button>`}</div></div>`).join('') || '<p class="mut">Sin productos.</p>'}</div>`;
+}
+function resvHTML() {
+  const l = L(), hoyS = hoyIso();
+  const mesasOpt = ['<option value="">Sin asignar</option>'];
+  for (let n = 1; n <= l.mesas; n++) mesasOpt.push(`<option value="${n}" ${String(S.f.rm) === String(n) ? 'selected' : ''}>${nm(n)}</option>`);
+  for (let k = 1; k <= l.mesas2; k++) mesasOpt.push(`<option value="${100 + k}" ${String(S.f.rm) === String(100 + k) ? 'selected' : ''}>${nm(100 + k)}</option>`);
+  const pend = l.reservas.filter(r => r.estado === 'pendiente'), dias = [...new Set(pend.map(r => r.fecha))];
+  const ahora = new Date().toTimeString().slice(0, 5);
+  return `<h2>Reservas</h2><div class="cols"><div>${dias.map(d => `<div class="piso">${d === hoyS ? 'Hoy' : new Date(d + 'T12:00:00').toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })}</div><div class="card">${pend.filter(r => r.fecha === d).map(r => `<div class="row"><div><b>${esc(r.hora)}</b> · ${esc(r.nombre)} · ${r.personas} pers.${d === hoyS && r.hora < ahora ? ' <span class="pill" style="background:#fee2e2;color:var(--bad)">atrasada</span>' : ''}<div class="mut">${r.mesa ? nm(r.mesa) : 'Sin mesa asignada'}${r.telefono ? ' · ' + esc(r.telefono) : ''}${r.nota ? ' · ' + esc(r.nota) : ''}</div></div><div style="display:flex;gap:6px"><button class="btn-ok" data-act="rllego" data-id="${r.id}">Llegó</button><button class="btn-bad" data-act="rcancel" data-id="${r.id}">Cancelar</button></div></div>`).join('')}</div>`).join('') || '<p class="mut">No hay reservas pendientes.</p>'}</div>
+  <div class="card" style="display:grid;gap:8px;align-self:start"><b>Nueva reserva</b>
+    <label class="mut">Fecha<input id="rf" data-keep type="date" value="${S.f.rf || hoyS}" min="${hoyS}"></label>
+    <label class="mut">Hora<input id="rh" data-keep type="time" value="${fv('rh')}"></label>
+    <label class="mut">Personas<input id="rp" data-keep type="number" inputmode="numeric" min="1" value="${S.f.rp || 2}"></label>
+    <input id="rn" data-keep placeholder="Nombre" value="${fv('rn')}"><input id="rt" data-keep type="tel" inputmode="tel" placeholder="Teléfono" value="${fv('rt')}">
+    <label class="mut">Mesa<select id="rm" data-keep>${mesasOpt.join('')}</select></label>
+    <input id="rnota" data-keep placeholder="Nota (cumpleaños, terraza…)" value="${fv('rnota')}"><button class="btn" data-act="rcrear">Guardar reserva</button></div></div>`;
 }
 function cajaHTML() {
   const cu = L().cuentas.filter(c => hoy(c.t)); const sum = k => cu.reduce((a, c) => a + c[k], 0);
@@ -423,17 +501,24 @@ function adminHTML() {
 }
 function render() {
   const app = $('#app');
+  const ae = document.activeElement, aid = ae && ae.id, ss = ae && ae.selectionStart;
+  try { renderInner(app); } finally {
+    if (aid) { const el = document.getElementById(aid); if (el && el !== document.activeElement) { el.focus(); try { el.setSelectionRange(ss, ss); } catch (x) {} } }
+  }
+}
+function renderInner(app) {
   if (S.setpass || !S.user) { app.innerHTML = loginHTML(); return; }
   if (!D) { app.innerHTML = S.admin ? adminShell() : loginHTML(); return; }
   restaurarRol();
   if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, caja: cajaHTML, garz: garzHTML, carta: cartaHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, caja: cajaHTML, garz: garzHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
 /* ---------- Acciones ---------- */
 document.addEventListener('input', e => {
+  if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'nota') S.note = e.target.value;
   if (e.target.id === 'pefec') S.pe = e.target.value;
   if (e.target.id === 'ptarj') {
@@ -447,6 +532,7 @@ document.addEventListener('input', e => {
   if (e.target.id === 'a-email') S.af.email = e.target.value;
 });
 document.addEventListener('change', e => {
+  if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
@@ -527,11 +613,13 @@ document.addEventListener('click', async e => {
     }
     if (a === 'cambiar') { S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} render(); return; }
     if (a === 'logout') { S.rol = null; S.quien = ''; S.qk = null; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
-    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; }
+    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'turno') S.th = null; }
     else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
     else if (a === 'volver') { S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
-    else if (a === 'inc') S.cart[d.id] = (S.cart[d.id] || 0) + 1;
+    else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
+    else if (a === 'nuevoped') { S.np = { tipo: d.t }; S.f = {}; }
+    else if (a === 'cancelnp') { S.np = null; S.f = {}; }
     else if (a === 'rphoy') { S.rpd = S.rph = fechaIso(new Date()); S.rp = null; }
     else if (a === 'rpsem') { const d = new Date(); S.rph = fechaIso(d); d.setDate(d.getDate() - 6); S.rpd = fechaIso(d); S.rp = null; }
     else if (a === 'rpmes') { const d = new Date(); S.rph = fechaIso(d); d.setDate(1); S.rpd = fechaIso(d); S.rp = null; }
@@ -548,11 +636,12 @@ document.addEventListener('click', async e => {
     else {
       S.busy = true;
       if (a === 'enviar') {
+        const conStock = L().menu.filter(i => S.cart[i.id] && i.s != null).map(i => [i.id, S.cart[i.id]]);
         const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e }));
         /* una comanda por estación: lo de cocina espera en Cocina; lo de cafetería queda anotado y ya entregado */
         const filas = ['cocina', 'cafeteria'].map(e => items.filter(x => x.e === e)).filter(g => g.length)
           .map(g => ({ local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null, estado: g[0].e === 'cafeteria' ? 'entregado' : 'pendiente' }));
-        if (filas.length && !fallo(await sb.from('resto_comandas').insert(filas))) { S.cart = {}; S.note = ''; }
+        if (filas.length && !fallo(await sb.from('resto_comandas').insert(filas))) { for (const [mid, q] of conStock) await sb.rpc('resto_stock_mover', { p_menu: mid, p_delta: -q, p_motivo: 'venta', p_por: S.quien || '', p_log: false }); S.cart = {}; S.note = ''; }
       } else if (a === 'pagarparte') {
         /* un cliente se retira y paga solo lo suyo: se registra ese pago y esas unidades quedan descontadas de la mesa */
         const pick = [];
@@ -560,7 +649,7 @@ document.addEventListener('click', async e => {
         if (pick.length) {
           const sub = pick.reduce((s, x) => s + x.q * x.i.p, 0);
           const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
-          const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: sub, propina: S.propina ? Math.round(sub * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: pick.map(x => ({ n: x.i.n, q: x.q, p: x.i.p, e: x.i.e })), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) });
+          const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: sub, propina: S.propina ? Math.round(sub * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: pick.map(x => ({ n: x.i.n, q: x.q, p: x.i.p, e: x.i.e })), ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) });
           if (!fallo(r)) {
             for (const c of new Set(pick.map(x => x.c))) {
               const items = c.items.map((it, ix) => { const x = pick.find(y => y.c === c && y.ix === ix); return x ? { ...it, pg: (it.pg || 0) + x.q } : it; });
@@ -574,12 +663,58 @@ document.addEventListener('click', async e => {
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
         const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
-        const r = tot > 0 ? await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }) : {};
-        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); S.cerrando = false; S.mesa = null; S.pe = ''; S.pt = ''; }
+        const r = tot > 0 ? await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }) : {};
+        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); S.cerrando = false; S.mesa = null; S.pe = ''; S.pt = ''; }
       } else if (a === 'avanzar') {
         const c = L().comandas.find(x => x.id === d.id);
         fallo(await sb.from('resto_comandas').update({ estado: d.to, ...(d.to === 'entregado' && c && pagada(c) ? { cerrada: true } : {}) }).eq('id', d.id));
       }
+      else if (a === 'crearped') {
+        const c = (S.f['np-c'] || '').trim(), t = (S.f['np-t'] || '').trim(), dir = (S.f['np-d'] || '').trim();
+        if (!c) alert('Escribe el nombre del cliente.');
+        else if (S.np.tipo === 'delivery' && !dir) alert('Escribe la dirección de entrega.');
+        else {
+          const mx = await sb.from('resto_pedidos').select('num').eq('local_id', D.id).order('num', { ascending: false }).limit(1);
+          const num = Math.max(1000, mx.data && mx.data[0] ? mx.data[0].num : 1000) + 1;
+          if (!fallo(await sb.from('resto_pedidos').insert({ local_id: D.id, num, tipo: S.np.tipo, cliente: c, telefono: t || null, direccion: dir || null }))) { S.np = null; S.f = {}; S.mesa = num; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
+        }
+      }
+      else if (a === 'cancelped') { if (S.mesa >= 1000 && !abiertas(S.mesa).length && !fallo(await sb.from('resto_pedidos').delete().eq('local_id', D.id).eq('num', S.mesa))) S.mesa = null; }
+      else if (a === 'tabrir') { if (!D.turno) fallo(await sb.from('resto_turnos').insert({ local_id: D.id, abierto_por: S.quien || 'Administradora', monto_inicial: Math.max(0, Math.round(+S.f.tini || 0)) })); S.f = {}; S.th = null; }
+      else if (a === 'tcerrar' && D.turno) {
+        const t = D.turno, r = turnoRes(t), cont = S.f.tcont, open = D.comandas.filter(x => !x.cerrada).length;
+        if (cont === undefined || cont === '') alert('Cuenta el efectivo de la caja y escribe el monto contado.');
+        else if (!open || confirm('Hay ' + open + ' pedido(s) todavía abiertos en mesas. ¿Cerrar la caja igual?')) {
+          const c = Math.round(+cont);
+          if (!fallo(await sb.from('resto_turnos').update({ cerrado_at: new Date().toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: c, diferencia: c - r.esp, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas, nota: (S.f.tnota || '').trim() || null }).eq('id', t.id))) { S.f = {}; S.th = null; }
+        }
+      }
+      else if (a === 'sk_set' || a === 'sk_add' || a === 'sk_min' || a === 'sk_off') {
+        const it = L().menu.find(x => x.id === d.id), raw = S.f['sq-' + d.id], q = Math.round(+raw);
+        if (it) {
+          if (a === 'sk_off') fallo(await sb.from('resto_menu').update({ stock: null }).eq('id', d.id));
+          else if (raw === undefined || raw === '' || isNaN(q) || q < 0) alert('Escribe una cantidad.');
+          else {
+            let r;
+            if (a === 'sk_min') r = await sb.from('resto_menu').update({ stock_min: q }).eq('id', d.id);
+            else if (a === 'sk_add') r = await sb.rpc('resto_stock_mover', { p_menu: d.id, p_delta: q, p_motivo: 'entrada', p_por: S.quien || '', p_log: true });
+            else if (it.s == null) r = await sb.from('resto_menu').update({ stock: q }).eq('id', d.id);
+            else r = await sb.rpc('resto_stock_mover', { p_menu: d.id, p_delta: q - it.s, p_motivo: 'conteo', p_por: S.quien || '', p_log: true });
+            if (!fallo(r)) delete S.f['sq-' + d.id];
+          }
+        }
+      }
+      else if (a === 'rcrear') {
+        const f = S.f, fecha = f.rf || hoyIso(), h = f.rh || '', nom = (f.rn || '').trim(), mesa = f.rm ? +f.rm : null;
+        if (!h || !nom) alert('Escribe la hora y el nombre.');
+        else {
+          const mm = x => +x.slice(0, 2) * 60 + +x.slice(3, 5);
+          const choca = mesa && L().reservas.some(r => r.estado === 'pendiente' && r.mesa === mesa && r.fecha === fecha && Math.abs(mm(r.hora) - mm(h)) < 120);
+          if (!choca || confirm(nm(mesa) + ' ya tiene otra reserva cerca de esa hora. ¿Guardar igual?'))
+            if (!fallo(await sb.from('resto_reservas').insert({ local_id: D.id, fecha, hora: h, personas: Math.max(1, Math.round(+f.rp || 2)), nombre: nom, telefono: (f.rt || '').trim() || null, mesa, nota: (f.rnota || '').trim() || null }))) S.f = {};
+        }
+      }
+      else if (a === 'rllego' || a === 'rcancel') fallo(await sb.from('resto_reservas').update({ estado: a === 'rllego' ? 'llego' : 'cancelada' }).eq('id', d.id));
       else if (a === 'setadminpin' && esAdm()) {
         const p = ($('#apin') || {}).value || '';
         if (!/^\d{4,8}$/.test(p)) { alert('El PIN debe tener de 4 a 8 números.'); }
