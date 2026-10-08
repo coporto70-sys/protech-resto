@@ -74,7 +74,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
-let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', f: {}, np: null, th: null, mos: false, ses: null, qk: null, pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
+let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', f: {}, np: null, th: null, mos: false, ses: null, back: null, qk: null, pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
 const L = () => D;
 const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S.quien ? { cobrado_por: S.quien } : {}) });
 /* ---------- Roles y PIN ----------
@@ -153,22 +153,47 @@ function tono(f, t0, dur, tipo, vol) {
 function vibra(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
 function sonarCocina() { for (let i = 0; i < 3; i++) { tono(988, i * 0.75, 0.32, 'square', 0.9); tono(1319, i * 0.75 + 0.36, 0.32, 'square', 0.9); } vibra([300, 150, 300, 150, 300]); }
 function sonarListo() { tono(784, 0, 0.35, 'sine', 0.8); tono(1047, 0.3, 0.35, 'sine', 0.8); tono(1319, 0.6, 0.7, 'sine', 0.8); vibra([200, 100, 200]); }
-let toastT = null;
 function toast(txt, cls) {
   const el = $('#toast'); if (!el) return;
-  el.innerHTML = `<div class="${cls}">${esc(txt)}</div>`;
-  clearTimeout(toastT); toastT = setTimeout(() => { el.innerHTML = ''; }, 12000);
+  const d = document.createElement('div'); d.className = cls; d.innerHTML = esc(txt); el.appendChild(d);
+  while (el.children.length > 4) el.removeChild(el.firstChild);
+  setTimeout(() => { if (d.parentNode) d.remove(); }, 12000);
 }
 document.addEventListener('pointerdown', () => ctx());
 document.addEventListener('click', e => { if (e.target.closest('#toast')) $('#toast').innerHTML = ''; });
+/* Avisos: la administradora recibe TODO (comandas, listos, cafetería, pedidos, stock, reservas).
+   Garzón: solo sus pedidos listos. Cocina: solo comandas nuevas. */
+let EX = null;
 function avisar(prev) {
-  const nuevos = D.comandas.filter(c => !prev.has(c.id) && c.estado === 'pendiente');
-  /* la cafetería entra ya "entregada" (la preparan y sirven los garzones), así que solo la cocina avisa */
-  const nuevosCocina = nuevos.filter(c => !esCafe(c));
-  const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo' && !esCafe(c));
-  if (nuevosCocina.length && (SND === 'cocina' || SND === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · ' + nuevosCocina.map(c => nm(c.mesa)).join(', '), 'tk-c'); }
-  if (listos.length && (SND === 'salon' || SND === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · ' + listos.map(c => nm(c.mesa)).join(', '), 'tk-l'); }
+  const rol = rolesOn() ? S.rol : 'admin', adm = rol === 'admin';
+  const modo = adm ? (SND === 'off' ? 'off' : 'ambos') : SND;
+  const por = c => nm(c.mesa) + (c.garzon ? ' (' + c.garzon + ')' : '');
+  const nuevos = D.comandas.filter(c => !prev.has(c.id) && c.estado === 'pendiente' && !esCafe(c));
+  const cafes = D.comandas.filter(c => !prev.has(c.id) && esCafe(c));
+  const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo' && !esCafe(c) && (rol !== 'garzon' || c.garzon === S.quien));
+  if (nuevos.length && (adm || rol === 'cocina') && (modo === 'cocina' || modo === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · ' + nuevos.map(por).join(', '), 'tk-c'); }
+  if (listos.length && (adm || rol === 'garzon') && (modo === 'salon' || modo === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · ' + listos.map(por).join(', '), 'tk-l'); }
+  if (adm && modo !== 'off' && cafes.length) toast('CAFETERÍA · ' + cafes.map(por).join(', '), 'tk-l');
 }
+function avisarExtra() {
+  const adm = esAdm(), ids = new Set((D.pedidos || []).map(p => p.id)), bajos = new Set(bajoStock().map(i => i.id));
+  if (EX && EX.lid === D.id && adm && SND !== 'off') {
+    const np = D.pedidos.filter(p => !EX.ped.has(p.id));
+    if (np.length) { sonarListo(); toast('NUEVO ' + np.map(p => (p.tipo === 'delivery' ? 'DELIVERY' : 'PARA LLEVAR') + ' #' + (p.num - 1000) + ' · ' + p.cliente).join(', '), 'tk-c'); }
+    const nb = bajoStock().filter(i => !EX.low.has(i.id));
+    if (nb.length) toast('STOCK BAJO · ' + nb.map(i => i.n + ' (' + i.s + ')').join(', '), 'tk-c');
+  }
+  EX = { lid: D.id, ped: ids, low: bajos };
+}
+const RESAL = new Set();
+setInterval(() => {
+  if (!S.user || !D || !esAdm() || SND === 'off') return;
+  const now = new Date(), m0 = now.getHours() * 60 + now.getMinutes();
+  (D.reservas || []).filter(r => r.estado === 'pendiente' && r.fecha === hoyIso()).forEach(r => {
+    const m = +r.hora.slice(0, 2) * 60 + +r.hora.slice(3, 5);
+    if (m - m0 <= 15 && m - m0 >= -5 && !RESAL.has(r.id)) { RESAL.add(r.id); sonarListo(); toast('RESERVA ' + r.hora + ' · ' + r.nombre + ' · ' + r.personas + ' pers.' + (r.mesa ? ' · ' + nm(r.mesa) : ''), 'tk-l'); }
+  });
+}, 30000);
 let WL = null;
 async function pantalla() { try { if (SND !== 'off' && 'wakeLock' in navigator && !WL && !document.hidden) { WL = await navigator.wakeLock.request('screen'); WL.addEventListener('release', () => { WL = null; }); } } catch (e) {} }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) pantalla(); });
@@ -214,6 +239,7 @@ async function cargar() {
   D.sesiones = [];
   if (D.turno) { const ss = await sb.from('resto_sesiones').select('*').eq('turno_id', D.turno.id).order('entrada'); D.sesiones = ss.data || []; await ensureSes(); }
   if (prev) avisar(prev);
+  avisarExtra();
 }
 /* ---------- Registro de quién está en caja ---------- */
 async function ensureSes() {
@@ -291,7 +317,7 @@ function mesasHTML() {
     const a = abiertas(n), lis = a.some(c => c.estado === 'listo');
     const rv = !a.length && resDe(n);
     return `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" ${rv ? 'style="border-color:var(--brand);background:#f0f9ff"' : ''} data-act="mesa" data-n="${n}"><b>${n > 100 ? n - 100 : n}</b>
-      <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) : rv ? 'Reservada ' + esc(rv.hora) + ' · ' + esc(rv.nombre) : 'Libre'}</span></button>`;
+      <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) + (a.find(c => c.garzon) ? '<br><b>' + esc(a.find(c => c.garzon).garzon) + '</b>' : '') : rv ? 'Reservada ' + esc(rv.hora) + ' · ' + esc(rv.nombre) : 'Libre'}</span></button>`;
   };
   for (let n = 1; n <= l.mesas; n++) g += tarjeta(n);
   for (let k = 1; k <= l.mesas2; k++) g2 += tarjeta(100 + k);
@@ -303,7 +329,15 @@ function mesasHTML() {
     <div style="display:flex;gap:8px"><button class="btn" data-act="crearped">Crear y tomar pedido</button><button class="btn-line" data-act="cancelnp">Cancelar</button></div></div>` : '';
   const cartaPed = `<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b style="flex:1">Mostrador, para llevar y delivery</b><button class="btn-ok" data-act="mostrador">+ Venta mostrador</button><button class="btn" data-act="nuevoped" data-t="llevar">+ Para llevar</button><button class="btn" data-act="nuevoped" data-t="delivery">+ Delivery</button></div>${fnp}
     ${(l.pedidos || []).map(p => { const a = abiertas(p.num), lis = a.some(c => c.estado === 'listo'); return `<div class="row"><div>${p.tipo === 'delivery' ? '🛵' : '🥡'} <b>#${p.num - 1000}</b> ${esc(p.cliente || '')}<div class="mut">${a.length ? (lis ? 'Listo · ' : 'En preparación · ') + money(totalMesa(p.num)) : 'Sin pedido enviado'}${p.direccion ? ' · ' + esc(p.direccion) : ''}</div></div><button class="${lis ? 'btn-ok' : 'btn-line'}" data-act="mesa" data-n="${p.num}">Abrir</button></div>`; }).join('')}</div>`;
-  return `<h2>Mesas</h2>${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  const ocup = []; for (let n = 1; n <= l.mesas; n++) ocup.push(n); for (let k = 1; k <= l.mesas2; k++) ocup.push(100 + k);
+  const oc = ocup.filter(n => abiertas(n).length), enMesas = oc.reduce((a, n) => a + totalMesa(n), 0);
+  const resumen = `<p class="mut" style="margin-bottom:10px"><b>${oc.length}</b> de ${ocup.length} mesas ocupadas · por cobrar en mesas <b>${money(enMesas)}</b></p>`;
+  return `<h2>Mesas</h2>${resumen}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+}
+const mesasAbiertas = () => [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0).map(c => c.mesa))].sort((a, b) => a - b);
+function porCobrarHTML() {
+  const ms = mesasAbiertas();
+  return `<div class="card" style="margin-bottom:12px"><b>Mesas por cobrar</b><p class="mut" style="margin:4px 0">Cuando un cliente termina y viene a pagar a la caja, cóbralo aquí.</p>${ms.map(n => { const a = abiertas(n), g = (a.find(c => c.garzon) || {}).garzon; return `<div class="row"><div><b>${nm(n)}</b>${g ? ' <small class="mut">' + esc(g) + '</small>' : ''}<div class="mut">${a.map(c => c.items.map(i => (i.q - (i.pg || 0)) + '× ' + esc(i.n)).join(', ')).join(' · ')}</div></div><div style="display:flex;gap:8px;align-items:center"><b>${money(totalMesa(n))}</b><button class="btn-ok" data-act="cobrarmesa" data-n="${n}">Cobrar</button></div></div>`; }).join('') || '<p class="mut" style="margin-top:8px">No hay mesas con consumo pendiente.</p>'}</div>`;
 }
 function mostradorHTML() {
   const l = L(), cats = [...new Set(l.menu.filter(i => i.on).map(i => i.c))];
@@ -311,7 +345,7 @@ function mostradorHTML() {
     <div class="row"><div>${esc(i.n)}<div class="mut">${money(i.p)}${i.s != null ? (i.s <= 0 ? ' · <b style="color:var(--bad)">Sin stock</b>' : ' · quedan ' + i.s) : ''}</div></div>
     <div class="q"><button data-act="dec" data-id="${i.id}">−</button><span>${S.cart[i.id] || 0}</span><button data-act="inc" data-id="${i.id}" ${i.s != null && (S.cart[i.id] || 0) >= i.s ? 'disabled style="opacity:.4"' : ''}>+</button></div></div>`).join('')).join('');
   const sel = l.menu.filter(i => S.cart[i.id]), sub = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
-  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="mosvolver">← Mesas</button><h2 style="margin:0">Venta mostrador</h2></div>
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="mosvolver">← Mesas</button><h2 style="margin:0">Venta mostrador</h2></div>${porCobrarHTML()}
   <div class="cols"><div class="card"><b>Productos</b>${carta || '<p class="mut">La carta está vacía.</p>'}</div>
   <div><div class="card"><b>Venta</b>${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega productos.</p>'}
     ${sub > 0 ? camposPago(sub) : ''}
@@ -442,11 +476,11 @@ function turnoHTML() {
   const t = D.turno;
   if (S.th === null) { turnoCargar().then(render); }
   const hist = (S.th || []).map(h => `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
-  if (!t) return `<h2>Caja</h2><div class="card" style="display:grid;gap:8px"><b>Caja cerrada</b><p class="mut">Abre la caja para que los garzones puedan cobrar. Anota el efectivo con que parte el turno.</p>
+  if (!t) return `<h2>Caja</h2>${porCobrarHTML()}<div class="card" style="display:grid;gap:8px"><b>Caja cerrada</b><p class="mut">Abre la caja para que los garzones puedan cobrar. Anota el efectivo con que parte el turno.</p>
     <input id="tini" data-keep type="number" inputmode="numeric" min="0" placeholder="Efectivo inicial en caja (0 si no hay)" value="${fv('tini')}"><button class="btn-ok" data-act="tabrir">Abrir caja</button></div>
     <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
   const r = turnoRes(t), cont = S.f.tcont, dif = cont === undefined || cont === '' ? null : Math.round(+cont) - r.esp;
-  return `<h2>Caja · turno abierto</h2><div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}</div>
+  return `<h2>Caja · turno abierto</h2><div style="margin-bottom:12px"><button class="btn-ok" data-act="mostrador">+ Venta mostrador</button></div>${porCobrarHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}</div>
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
   <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
     <div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial. No incluye la propina en efectivo entregada directo al garzón.</p></div>
@@ -652,14 +686,15 @@ document.addEventListener('click', async e => {
       entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n); render(); return;
     }
     if (a === 'cambiar') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} render(); return; }
-    if (a === 'logout') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
+    if (a === 'logout') { EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'turno') S.th = null; }
     else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
-    else if (a === 'volver') { S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
+    else if (a === 'volver') { if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
     else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
-    else if (a === 'mostrador') { S.mos = true; S.cart = {}; S.propina = false; S.metodo = 'Efectivo'; S.pe = ''; S.pt = ''; }
-    else if (a === 'mosvolver') { S.mos = false; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; }
+    else if (a === 'cobrarmesa') { S.back = S.mos ? 'mesas' : S.view; S.mos = false; S.view = 'mesas'; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = true; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.propina = true; S.metodo = 'Efectivo'; }
+    else if (a === 'mostrador') { S.back = S.view; S.view = 'mesas'; S.mos = true; S.cart = {}; S.propina = false; S.metodo = 'Efectivo'; S.pe = ''; S.pt = ''; }
+    else if (a === 'mosvolver') { if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.mos = false; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; }
     else if (a === 'nuevoped') { S.np = { tipo: d.t }; S.f = {}; }
     else if (a === 'cancelnp') { S.np = null; S.f = {}; }
     else if (a === 'rphoy') { S.rpd = S.rph = fechaIso(new Date()); S.rp = null; }
@@ -706,7 +741,7 @@ document.addEventListener('click', async e => {
         const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
         const r = tot > 0 ? await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }) : {};
-        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); S.cerrando = false; S.mesa = null; S.pe = ''; S.pt = ''; }
+        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } S.pe = ''; S.pt = ''; }
       } else if (a === 'avanzar') {
         const c = L().comandas.find(x => x.id === d.id);
         fallo(await sb.from('resto_comandas').update({ estado: d.to, ...(d.to === 'entregado' && c && pagada(c) ? { cerrada: true } : {}) }).eq('id', d.id));
@@ -719,7 +754,7 @@ document.addEventListener('click', async e => {
           const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: 0, total: sub, propina: S.propina ? Math.round(sub * 0.1) : 0, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) });
           if (!fallo(r)) {
             for (const i of sel) if (i.s != null) await sb.rpc('resto_stock_mover', { p_menu: i.id, p_delta: -S.cart[i.id], p_motivo: 'venta', p_por: S.quien || '', p_log: false });
-            S.mos = false; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; toast('Venta cobrada · ' + money(sub), 'tk-l');
+            S.mos = false; if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; toast('Venta cobrada · ' + money(sub), 'tk-l');
           }
         }
       }
