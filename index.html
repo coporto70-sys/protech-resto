@@ -74,8 +74,48 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
-let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
+let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', qk: null, pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
 const L = () => D;
+/* ---------- Roles y PIN ----------
+   Si el local tiene PIN de administradora, cada persona elige quién es y entra con su PIN.
+   Administradora: todo. Garzón: solo Mesas (tomar pedidos y cobrar). Cocina: Cocina y Cafetería.
+   Si el local aún no configuró PIN, funciona como siempre (todo visible). */
+const rolesOn = () => !!(D && D.adminPin);
+const esAdm = () => !rolesOn() || S.rol === 'admin';
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'caja', 'garz', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+const misTabs = () => !rolesOn() ? TABS.admin : (TABS[S.rol] || []);
+async function hpin(scope, pin) {
+  const b = new TextEncoder().encode(D.id + ':' + scope + ':' + pin);
+  const h = await crypto.subtle.digest('SHA-256', b);
+  return [...new Uint8Array(h)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+function entrar(rol, quien) {
+  S.rol = rol; S.quien = quien; S.qk = null; S.pinErr = ''; S.mesa = null;
+  S.garzon = rol === 'garzon' ? quien : '';
+  S.view = misTabs()[0];
+  try { sessionStorage.setItem('pr-rol', JSON.stringify({ lid: D.id, rol, quien })); } catch (e) {}
+}
+function restaurarRol() {
+  if (!rolesOn() || S.rol) return;
+  try {
+    const r = JSON.parse(sessionStorage.getItem('pr-rol') || 'null');
+    if (r && r.lid === D.id && (r.rol === 'admin' || r.rol === 'cocina' || (r.rol === 'garzon' && D.garzones.some(g => g.n === r.quien && g.on)))) { S.rol = r.rol; S.quien = r.quien; S.garzon = r.rol === 'garzon' ? r.quien : ''; S.view = misTabs()[0]; }
+  } catch (e) {}
+}
+function quienHTML() {
+  const g = D.garzones.filter(x => x.on);
+  const opt = (k, n, sub) => `<button class="mesa" style="width:100%" data-act="qsel" data-k="${esc(k)}"><b style="font-size:1.1rem">${esc(n)}</b><span>${sub}</span></button>`;
+  let sel = '';
+  if (S.qk) {
+    const nombre = S.qk === 'admin' ? 'Administradora' : S.qk.slice(2);
+    sel = `<div class="card" style="margin-top:12px;display:grid;gap:10px"><b>${esc(nombre)}</b>
+      <label class="mut">Tu PIN<input id="qpin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••" autofocus></label>
+      ${S.pinErr ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.pinErr)}</div>` : ''}
+      <div style="display:flex;gap:8px"><button class="btn" style="flex:1" data-act="qok">Entrar</button><button class="btn-line" data-act="qback">Volver</button></div></div>`;
+  }
+  return `<header><div><b>${esc(D.name)}</b><small>Protech Resto</small></div><nav></nav><button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header>
+  <main><h2>¿Quién eres?</h2><div class="grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${opt('cocina', 'Cocina', 'Comandas')}</div>${sel}</main>`;
+}
 
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
 /* i.pg = unidades de ese producto que un cliente ya pagó por separado (cobro parcial) */
@@ -151,8 +191,8 @@ async function cargar() {
   ]);
   if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, name: loc.data.nombre, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
-    garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo })),
+  D = { id, name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+    garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina' })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, t: +new Date(r.created_at) })) };
@@ -203,11 +243,13 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const tabs = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['caja', 'Ventas'], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
+  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['caja', 'Ventas'], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
+  const tabs = todas.filter(t => misTabs().includes(t[0]));
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
     <button class="btn-line" style="padding:6px 12px" data-act="sonido">Sonido: ${SNDL[SND]}${SND !== 'off' && !(AC && AC.state === 'running') ? ' (toca para activar)' : ''}</button>
+    ${rolesOn() ? `<button class="btn-line" style="padding:6px 12px" data-act="cambiar">${esc(S.rol === 'admin' ? 'Administradora' : S.rol === 'cocina' ? 'Cocina' : S.quien)} · cambiar</button>` : ''}
     <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${inner}</main>`;
 }
 function mesasHTML() {
@@ -350,7 +392,13 @@ function cartaHTML() {
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b>
     <label class="mut">Mesas del primer piso<input id="nm" type="number" min="1" max="60" value="${l.mesas}"></label>
     <label class="mut">Mesas del segundo piso (0 si no tiene)<input id="nm2" type="number" min="0" max="30" value="${l.mesas2}"></label>
-    <button class="btn-line" data-act="mesas">Guardar</button></div></div></div>`;
+    <button class="btn-line" data-act="mesas">Guardar</button></div>
+  <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>PIN de acceso</b>
+    <p class="mut">${l.adminPin ? 'Activado: cada persona entra con su PIN. Los garzones solo ven Mesas y cobros; las ventas son solo para la administradora.' : 'Aún sin PIN: todos ven todo. Crea el PIN de la administradora para activar los accesos por usuario.'}</p>
+    <label class="mut">${l.adminPin ? 'Cambiar PIN de la administradora' : 'PIN de la administradora (4 a 8 números)'}<input id="apin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••"></label>
+    <button class="btn" data-act="setadminpin">Guardar PIN de administradora</button>
+    ${l.adminPin ? `<p class="mut">PIN de cada garzón (vacío = entra sin PIN):</p>${l.garzones.map(g => `<div class="row"><span>${esc(g.n)} <small class="mut">${g.pin ? 'con PIN' : 'sin PIN'}</small></span><div style="display:flex;gap:6px"><input id="gp-${g.id}" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:90px"><button class="btn-line" data-act="setgpin" data-id="${g.id}">Guardar</button></div></div>`).join('') || ''}
+    <button class="btn-bad" data-act="quitarpin">Desactivar accesos por usuario</button>` : ''}</div></div></div>`;
 }
 function adminShell() {
   return `<header><div><b>Admin Protech</b><small>Protech Resto</small></div><nav></nav>
@@ -377,6 +425,9 @@ function render() {
   const app = $('#app');
   if (S.setpass || !S.user) { app.innerHTML = loginHTML(); return; }
   if (!D) { app.innerHTML = S.admin ? adminShell() : loginHTML(); return; }
+  restaurarRol();
+  if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
+  if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
   const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, caja: cajaHTML, garz: garzHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
@@ -460,7 +511,22 @@ document.addEventListener('click', async e => {
       } catch (x) { S.av.err = x.message; }
       S.busy = false; render(); return;
     }
-    if (a === 'logout') { if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
+    if (a === 'qsel') {
+      S.pinErr = '';
+      if (d.k === 'cocina') { entrar('cocina', 'Cocina'); render(); return; }
+      if (d.k.startsWith('g:')) { const g = D.garzones.find(x => x.n === d.k.slice(2)); if (g && !g.pin) { entrar('garzon', g.n); render(); return; } }
+      S.qk = d.k; render(); return;
+    }
+    if (a === 'qback') { S.qk = null; S.pinErr = ''; render(); return; }
+    if (a === 'qok') {
+      const pin = ($('#qpin') || {}).value || '', k = S.qk; if (!k) return;
+      const adm = k === 'admin', g = adm ? null : D.garzones.find(x => x.n === k.slice(2));
+      const ok = adm ? (await hpin('admin', pin)) === D.adminPin : !!(g && (await hpin('g:' + g.id, pin)) === g.pin);
+      if (!ok) { S.pinErr = 'PIN incorrecto'; render(); return; }
+      entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n); render(); return;
+    }
+    if (a === 'cambiar') { S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} render(); return; }
+    if (a === 'logout') { S.rol = null; S.quien = ''; S.qk = null; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; }
     else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
     else if (a === 'volver') { S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
@@ -513,6 +579,19 @@ document.addEventListener('click', async e => {
       } else if (a === 'avanzar') {
         const c = L().comandas.find(x => x.id === d.id);
         fallo(await sb.from('resto_comandas').update({ estado: d.to, ...(d.to === 'entregado' && c && pagada(c) ? { cerrada: true } : {}) }).eq('id', d.id));
+      }
+      else if (a === 'setadminpin' && esAdm()) {
+        const p = ($('#apin') || {}).value || '';
+        if (!/^\d{4,8}$/.test(p)) { alert('El PIN debe tener de 4 a 8 números.'); }
+        else if (!fallo(await sb.from('resto_locales').update({ admin_pin: await hpin('admin', p) }).eq('id', D.id))) { S.rol = 'admin'; S.quien = 'Administradora'; try { sessionStorage.setItem('pr-rol', JSON.stringify({ lid: D.id, rol: 'admin', quien: 'Administradora' })); } catch (x) {} alert('PIN guardado. Desde ahora cada persona entra con su PIN.'); }
+      }
+      else if (a === 'setgpin' && esAdm()) {
+        const p = ($('#gp-' + d.id) || {}).value || '';
+        if (p && !/^\d{4,8}$/.test(p)) alert('El PIN debe tener de 4 a 8 números.');
+        else fallo(await sb.from('resto_garzones').update({ pin: p ? await hpin('g:' + d.id, p) : null }).eq('id', d.id));
+      }
+      else if (a === 'quitarpin') {
+        if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id));
       }
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
       else if (a === 'est') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ estacion: i.e === 'cafeteria' ? 'cocina' : 'cafeteria' }).eq('id', d.id)); }
