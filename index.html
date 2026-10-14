@@ -105,19 +105,24 @@ function entrar(rol, quien) {
   S.rol = rol; S.quien = quien; S.qk = null; S.pinErr = ''; S.mesa = null;
   S.garzon = rol === 'garzon' ? quien : '';
   S.view = misTabs()[0];
-  try { sessionStorage.setItem('pr-rol', JSON.stringify({ lid: D.id, rol, quien })); } catch (e) {}
+  guardarRol(D.id, rol, quien);
   /* el dispositivo de la cocina queda abierto: si se recarga, vuelve solo a Cocina con la misma cocinera */
   try { if (rol === 'cocina') localStorage.setItem('pr-cocina', JSON.stringify({ lid: D.id, quien })); else localStorage.removeItem('pr-cocina'); } catch (e) {}
   S.ses = null; S.mos = false; ensureSes().then(render); pantalla();
 }
-const olvidarRol = () => { try { sessionStorage.removeItem('pr-rol'); localStorage.removeItem('pr-cocina'); } catch (e) {} };
+/* Quién está usando este dispositivo se guarda en el propio equipo (no se pierde al recargar, cambiar de pestaña ni cuando el celular cierra la app).
+   Se mantiene 16 h desde la última vez que se usó; "Cambiar" o "Salir" lo borran. */
+const ROL_MS = 16 * 3600 * 1000;
+function guardarRol(lid, rol, quien) { try { localStorage.setItem('pr-rol', JSON.stringify({ lid, rol, quien, t: Date.now() })); } catch (e) {} }
+const olvidarRol = () => { try { sessionStorage.removeItem('pr-rol'); localStorage.removeItem('pr-rol'); localStorage.removeItem('pr-cocina'); } catch (e) {} };
 const cocineraValida = q => D.cocineras.length ? D.cocineras.some(c => c.n === q && c.on) : q === 'Cocina';
 function restaurarRol() {
   if (!rolesOn() || S.rol) return;
   try {
-    let r = JSON.parse(sessionStorage.getItem('pr-rol') || 'null');
+    let r = JSON.parse(localStorage.getItem('pr-rol') || 'null');
+    if (r && r.rol !== 'cocina' && Date.now() - (r.t || 0) > ROL_MS) { localStorage.removeItem('pr-rol'); r = null; }
     if (!r) { const k = JSON.parse(localStorage.getItem('pr-cocina') || 'null'); if (k) r = { lid: k.lid, rol: 'cocina', quien: k.quien }; }
-    if (r && r.lid === D.id && (r.rol === 'admin' || (r.rol === 'cocina' && cocineraValida(r.quien)) || (r.rol === 'garzon' && D.garzones.some(g => g.n === r.quien && g.on)))) { S.rol = r.rol; S.quien = r.quien; S.garzon = r.rol === 'garzon' ? r.quien : ''; S.view = misTabs()[0]; ensureSes().then(() => {}); pantalla(); }
+    if (r && r.lid === D.id && (r.rol === 'admin' || (r.rol === 'cocina' && cocineraValida(r.quien)) || (r.rol === 'garzon' && D.garzones.some(g => g.n === r.quien && g.on)))) { S.rol = r.rol; S.quien = r.quien; S.garzon = r.rol === 'garzon' ? r.quien : ''; S.view = misTabs()[0]; guardarRol(r.lid, r.rol, r.quien); ensureSes().then(() => {}); pantalla(); }
   } catch (e) {}
 }
 function quienHTML() {
@@ -231,7 +236,9 @@ async function adminCargar() {
 async function cargar() {
   S.admin = !!(S.user && S.user.app_metadata && S.user.app_metadata.role === 'protech_admin');
   if (S.admin && !S.av.cargado) adminCargar();
-  const { data: mi } = await sb.from('resto_miembros').select('local_id').maybeSingle();
+  const { data: mi, error: eMi } = await sb.from('resto_miembros').select('local_id').maybeSingle();
+  /* si la consulta falló (internet, token en renovación) NO se cierra la sesión: se conserva lo que ya está en pantalla y se reintenta */
+  if (eMi) { if (!D) S.err = 'Sin conexión con el servidor. Reintentando…'; reintentarCarga(); return; }
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
@@ -246,7 +253,7 @@ async function cargar() {
     sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora'),
     sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre')
   ]);
-  if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
+  if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
   D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
@@ -272,7 +279,27 @@ async function endSes() {
   const x = S.ses; S.ses = null;
   if (x) { try { await sb.from('resto_sesiones').update({ salida: new Date().toISOString() }).eq('id', x.id); } catch (e) {} }
 }
-let rt = null, tmr = null;
+let rt = null, tmr = null, tReint = null;
+function reintentarCarga() {
+  clearTimeout(tReint);
+  tReint = setTimeout(async () => { if (!S.user) return; try { await cargar(); } catch (e) {} render(); }, 5000);
+}
+/* Al volver a la app (celular que la había dormido, PC que estuvo suspendido o internet que volvió) se renueva la sesión y los datos sin pedir ingreso */
+async function reconectar() {
+  if (S.setpass) return;
+  try {
+    const { data } = await sb.auth.getSession();
+    if (!data.session) { const r = await sb.auth.refreshSession(); if (r.data && r.data.session) data.session = r.data.session; }
+    if (!data.session) return;
+    S.user = data.session.user;
+    await cargar();
+    if (rt) { sb.removeChannel(rt); rt = null; }
+    suscribir(); render();
+  } catch (e) { reintentarCarga(); }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user) reconectar(); });
+window.addEventListener('online', () => { if (S.user) reconectar(); });
+setInterval(() => { if (S.user && !document.hidden) sb.auth.getSession(); }, 10 * 60 * 1000);
 function suscribir() {
   if (rt || !D) return;
   const refresca = () => { clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; await cargar(); render(); }, 300); };
@@ -282,7 +309,11 @@ function suscribir() {
 }
 const _h = location.hash || '';
 if (/type=(invite|recovery)/.test(_h)) S.setpass = true;
-sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') { S.setpass = true; render(); } });
+sb.auth.onAuthStateChange(ev => {
+  if (ev === 'PASSWORD_RECOVERY') { S.setpass = true; render(); }
+  /* si Supabase pierde la sesión sin que nadie pulse "Salir", se intenta recuperar antes de mostrar el ingreso */
+  if (ev === 'SIGNED_OUT' && S.user && !S.saliendo) setTimeout(() => { if (!S.saliendo) reconectar(); }, 1500);
+});
 async function inicio() {
   const { data } = await sb.auth.getSession();
   S.user = data.session ? data.session.user : null;
@@ -909,7 +940,7 @@ document.addEventListener('click', async e => {
       entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n); render(); return;
     }
     if (a === 'cambiar') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; olvidarRol(); render(); return; }
-    if (a === 'logout') { EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
+    if (a === 'logout') { S.saliendo = true; EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; }
@@ -1066,7 +1097,7 @@ document.addEventListener('click', async e => {
       else if (a === 'setadminpin' && esAdm()) {
         const p = ($('#apin') || {}).value || '';
         if (!/^\d{4,8}$/.test(p)) { alert('El PIN debe tener de 4 a 8 números.'); }
-        else if (!fallo(await sb.from('resto_locales').update({ admin_pin: await hpin('admin', p) }).eq('id', D.id))) { S.rol = 'admin'; S.quien = 'Administradora'; try { sessionStorage.setItem('pr-rol', JSON.stringify({ lid: D.id, rol: 'admin', quien: 'Administradora' })); } catch (x) {} alert('PIN guardado. Desde ahora cada persona entra con su PIN.'); }
+        else if (!fallo(await sb.from('resto_locales').update({ admin_pin: await hpin('admin', p) }).eq('id', D.id))) { S.rol = 'admin'; S.quien = 'Administradora'; guardarRol(D.id, 'admin', 'Administradora'); alert('PIN guardado. Desde ahora cada persona entra con su PIN.'); }
       }
       else if (a === 'setgpin' && esAdm()) {
         const p = ($('#gp-' + d.id) || {}).value || '';
