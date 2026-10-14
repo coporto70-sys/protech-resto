@@ -371,6 +371,10 @@ function addMos(id) {
   S.cart[id] = (S.cart[id] || 0) + q;
   delete S.f['bq-' + id]; delete S.f['bus-mos'];
 }
+function buscadorHTML() {
+  return `<input id="bus-mos" data-keep autocomplete="off" placeholder="🔍 Buscar producto (ej. pan, café…)" style="width:100%;margin:0 0 8px" value="${fv('bus-mos')}">
+    ${S.f['bus-mos'] ? `<div style="border:2px solid var(--warn);border-radius:10px;padding:4px 10px;margin-bottom:10px">${busMos().map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)}${i.s != null ? (i.s <= 0 ? ' · <b style="color:var(--bad)">Sin stock</b>' : ' · quedan ' + i.s) : ''}</div></div><div style="display:flex;gap:6px;align-items:center"><input id="bq-${i.id}" data-keep type="number" inputmode="numeric" min="1" title="Cantidad" aria-label="Cantidad" style="width:64px;text-align:center" value="${S.f['bq-' + i.id] === undefined ? 1 : fv('bq-' + i.id)}"><button class="btn-ok" data-act="mosadd" data-id="${i.id}" ${i.s != null && (S.cart[i.id] || 0) >= i.s ? 'disabled style="opacity:.4"' : ''}>+ Agregar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Sin resultados.</p>'}</div>` : ''}`;
+}
 function mostradorHTML() {
   const l = L(), cats = [...new Set(l.menu.filter(i => i.on).map(i => i.c))];
   const carta = cats.map(c => `<div class="cat">${esc(c)}</div>` + l.menu.filter(i => i.on && i.c === c).map(i => `
@@ -380,8 +384,7 @@ function mostradorHTML() {
   return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="mosvolver">← Mesas</button><h2 style="margin:0">Venta mostrador</h2></div>${porCobrarHTML()}
   <div class="cols"><div class="card"><b>Productos</b>
     <input id="scan-mos" autocomplete="off" placeholder="Escanear código de barras…" style="width:100%;margin:8px 0">
-    <input id="bus-mos" data-keep autocomplete="off" placeholder="🔍 Buscar producto sin código (ej. pan, café…)" style="width:100%;margin:0 0 8px" value="${fv('bus-mos')}">
-    ${S.f['bus-mos'] ? `<div style="border:2px solid var(--warn);border-radius:10px;padding:4px 10px;margin-bottom:10px">${busMos().map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)}${i.s != null ? (i.s <= 0 ? ' · <b style="color:var(--bad)">Sin stock</b>' : ' · quedan ' + i.s) : ''}</div></div><div style="display:flex;gap:6px;align-items:center"><input id="bq-${i.id}" data-keep type="number" inputmode="numeric" min="1" title="Cantidad" aria-label="Cantidad" style="width:64px;text-align:center" value="${S.f['bq-' + i.id] === undefined ? 1 : fv('bq-' + i.id)}"><button class="btn-ok" data-act="mosadd" data-id="${i.id}" ${i.s != null && (S.cart[i.id] || 0) >= i.s ? 'disabled style="opacity:.4"' : ''}>+ Agregar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Sin resultados.</p>'}</div>` : ''}
+    ${buscadorHTML()}
     ${carta || '<p class="mut">La carta está vacía.</p>'}</div>
   <div><div class="card"><b>Venta</b>${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega productos.</p>'}
     ${sub > 0 ? camposPago(sub) : ''}
@@ -451,7 +454,7 @@ function mesaDetalle() {
   const rinfo = rvm ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--brand)"><b>Reserva ${esc(rvm.hora)}</b> · ${esc(rvm.nombre)} · ${rvm.personas} personas${rvm.nota ? `<div class="mut">${esc(rvm.nota)}</div>` : ''}</div>` : '';
   const sinCaja = !puedeCobrarMesa() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">Esta cuenta se cobra en la caja.</p>' : !cajaAbierta() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">La caja está cerrada. La administradora debe abrir la caja para poder cobrar.</p>' : '';
   return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">${nm(n)}</h2></div>${pinfo}${rinfo}
-  <div class="cols"><div class="card"><b>Carta</b>${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
+  <div class="cols"><div class="card"><b>Carta</b>${buscadorHTML()}${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
   <div><div class="card"><b>Nuevo pedido</b>
     ${garzSel(n)}
     ${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega platos desde la carta.</p>'}
@@ -850,8 +853,8 @@ document.addEventListener('click', async e => {
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'turno') S.th = null; }
-    else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
-    else if (a === 'volver') { if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'mesa') { delete S.f['bus-mos']; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'volver') { delete S.f['bus-mos']; if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
     else if (a === 'mosadd') addMos(d.id);
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
