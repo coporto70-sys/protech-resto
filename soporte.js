@@ -219,7 +219,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target &&
 /* =====================================================
    CHAT EN VIVO (lado del local)
    ===================================================== */
-const CH = { open: false, msgs: [], cargado: false, ok: false, modo: 'bot', unread: 0, lid: null, ch: null, busy: false, typing: false, ia: true };
+const CH = { open: false, msgs: [], cargado: false, ok: false, modo: 'bot', unread: 0, lid: null, ch: null, busy: false, typing: false, ia: false }; /* ia: false = solo guía + soporte humano. Ponerlo en true activa la función Edge resto-ayuda (requiere ANTHROPIC_API_KEY en Supabase) */
 
 /* ---------- Guía del sistema: el asistente responde con esto ---------- */
 const normTxt = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -342,7 +342,7 @@ async function chatEnviar(texto) {
     else {
       const resp = chatBot(texto);
       await chatInsertar('cliente', texto); chatPintar();
-      if (resp.ok && resp.s >= 3) { await chatInsertar('bot', resp.r); }
+      if (resp.ok && (resp.s >= 3 || !CH.ia)) { await chatInsertar('bot', resp.r); }
       else {
         CH.typing = true; chatPintar();
         const ia = await chatIA();
@@ -383,7 +383,7 @@ async function chatCargar() {
   }).subscribe();
   chatPintar();
 }
-function chatLimpiar() { CH.ia = true; CH.typing = false; if (CH.ch) { sb.removeChannel(CH.ch); CH.ch = null; } CH.lid = null; CH.msgs = []; CH.cargado = false; CH.ok = false; CH.open = false; CH.unread = 0; CH.modo = 'bot'; }
+function chatLimpiar() { CH.typing = false; if (CH.ch) { sb.removeChannel(CH.ch); CH.ch = null; } CH.lid = null; CH.msgs = []; CH.cargado = false; CH.ok = false; CH.open = false; CH.unread = 0; CH.modo = 'bot'; }
 
 /* Se llama al final de cada render(): decide qué chat mostrar según quién entró */
 function chatSync() {
