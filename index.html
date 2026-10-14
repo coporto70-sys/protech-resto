@@ -83,7 +83,7 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
    Si el local aún no configuró PIN, funciona como siempre (todo visible). */
 const rolesOn = () => !!(D && D.adminPin);
 const esAdm = () => !rolesOn() || S.rol === 'admin';
-const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'garz', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'garz', 'coms', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
 /* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
 const puedeCobrar = () => !rolesOn() || S.rol === 'admin' || (S.rol === 'garzon' && cajaGarzon());
@@ -317,7 +317,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['garz', 'Garzones'], ['carta', 'Carta y mesas']];
+  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas']];
   const tabs = todas.filter(t => misTabs().includes(t[0]));
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
@@ -519,6 +519,56 @@ function garzCSV() {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
   a.download = 'propinas_' + S.rpd + '_a_' + S.rph + '.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
+/* ---------- Comandas por garzón (solo administradora): revisar lo que se envió para detectar errores de venta ---------- */
+async function cmPagina(tabla, d, h) {
+  let rows = [], err = false;
+  for (let p = 0; p < 10; p++) {
+    const r = await sb.from(tabla).select('*').eq('local_id', D.id).gte('created_at', d.toISOString()).lt('created_at', h.toISOString()).order('created_at', { ascending: false }).range(p * 1000, p * 1000 + 999);
+    if (r.error) { err = true; break; }
+    rows = rows.concat(r.data || []); if ((r.data || []).length < 1000) break;
+  }
+  return { rows, err };
+}
+async function cmCargar() {
+  if (!S.cmd) S.cmd = fechaIso(new Date()); if (!S.cmh) S.cmh = S.cmd;
+  const d = new Date(S.cmd + 'T00:00:00'), h = new Date(S.cmh + 'T00:00:00'); h.setDate(h.getDate() + 1);
+  const [a, b] = await Promise.all([cmPagina('resto_comandas', d, h), cmPagina('resto_cuentas', d, h)]);
+  S.cm = {
+    err: a.err || b.err,
+    rows: a.rows.map(r => ({ id: r.id, mesa: r.mesa, items: r.items || [], nota: r.nota || '', garzon: r.garzon || '(sin garzón)', estado: r.estado, cerrada: !!r.cerrada, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', t: +new Date(r.created_at) })),
+    cuentas: b.rows.map(r => ({ mesa: r.mesa, total: r.total, garzon: r.garzon || '(sin garzón)' }))
+  };
+}
+const cmValor = c => c.items.reduce((s, i) => s + i.q * i.p, 0);
+const cmPend = c => c.cerrada ? 0 : c.items.reduce((s, i) => s + (i.q - (i.pg || 0)) * i.p, 0);
+const cmMesaTxt = m => m === 0 ? 'Mostrador' : m >= 1000 ? 'Pedido ' + (m - 1000) : m > 100 ? 'Piso 2 · Mesa ' + (m - 100) : 'Mesa ' + m;
+function cmFiltradas() { const g = S.f.cmg || ''; return S.cm.rows.filter(c => !g || c.garzon === g); }
+function comsHTML() {
+  if (!S.cmd) S.cmd = fechaIso(new Date()); if (!S.cmh) S.cmh = S.cmd;
+  if (S.cm === null || S.cm === undefined) { cmCargar().then(render); return '<h2>Comandas</h2><p class="mut">Cargando…</p>'; }
+  const garz = [...new Set(S.cm.rows.map(c => c.garzon))].sort();
+  const por = {};
+  S.cm.rows.forEach(c => { const o = por[c.garzon] || (por[c.garzon] = { n: c.garzon, cant: 0, env: 0, pend: 0, cob: 0 }); o.cant++; o.env += cmValor(c); o.pend += cmPend(c); });
+  S.cm.cuentas.filter(c => c.mesa !== 0).forEach(c => { const o = por[c.garzon] || (por[c.garzon] = { n: c.garzon, cant: 0, env: 0, pend: 0, cob: 0 }); o.cob += c.total; });
+  const res = Object.values(por).sort((a, b) => b.env - a.env);
+  const fil = cmFiltradas(), sel = S.f.cmg || '';
+  const estPill = c => `<span class="pill">${c.est === 'cafeteria' ? 'Cafetería' : 'Cocina'}</span> <span class="pill">${esc(c.estado || '')}</span>${c.cerrada ? ' <span class="pill" style="background:#dcfce7;color:var(--ok)">cobrada</span>' : ''}`;
+  return `<h2>Comandas enviadas por garzón</h2>
+  <div class="card" style="display:grid;gap:8px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <label class="mut">Desde<input id="cmd" type="date" value="${S.cmd}"></label><label class="mut">Hasta<input id="cmh" type="date" value="${S.cmh}"></label></div>
+    <label class="mut">Garzón<select id="cmg" data-keep><option value="">Todos</option>${garz.map(g => `<option ${g === sel ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="cmver">Ver</button><button class="btn-line" data-act="cmhoy">Hoy</button><button class="btn-line" data-act="cmsem">Últimos 7 días</button><button class="btn-line" data-act="cmmes">Este mes</button><button class="btn-ok" data-act="cmcsv">Descargar Excel (CSV)</button></div></div>
+  ${S.cm.err ? '<div class="card" style="margin-top:12px;color:var(--bad)">No se pudieron cargar todos los datos. Intenta de nuevo con "Ver".</div>' : ''}
+  <div class="card" style="margin-top:12px"><b>Resumen por garzón</b>${res.map(x => { const dif = x.env - x.pend - x.cob; return `<div class="row"><div>${esc(x.n)}<div class="mut">${x.cant} comanda${x.cant === 1 ? '' : 's'} · enviado ${money(x.env)} · cobrado ${money(x.cob)}${x.pend ? ' · mesas abiertas ' + money(x.pend) : ''}</div></div><b style="color:${dif === 0 ? 'var(--ok)' : 'var(--bad)'}">${dif === 0 ? 'Cuadra' : (dif > 0 ? 'Falta cobrar ' : 'Cobró de más ') + money(Math.abs(dif))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Sin comandas en ese período.</p>'}
+    <p class="mut" style="margin-top:8px">"Cuadra" significa que lo enviado coincide con lo cobrado más lo que sigue en mesas abiertas. Si no cuadra, revisa las comandas de ese garzón abajo (ítems anotados de más o de menos, descuentos, cobros distintos). Las ventas por mostrador no se comparan porque no pasan por comanda.</p></div>
+  <div class="card" style="margin-top:12px"><b>Detalle de comandas${sel ? ' · ' + esc(sel) : ''} (${fil.length})</b>${fil.map(c => `<div class="row" style="align-items:flex-start"><div><b>${esc(cmMesaTxt(c.mesa))}</b> · ${hora(c.t)} · ${esc(c.garzon)}<div style="margin:4px 0">${estPill(c)}</div>${c.items.map(i => `<div>${i.q}× ${esc(i.n)} <span class="mut">${money(i.p)}</span></div>`).join('')}${c.nota ? `<div class="mut">Nota: ${esc(c.nota)}</div>` : ''}</div><b>${money(cmValor(c))}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin comandas para mostrar.</p>'}</div>`;
+}
+function cmCSV() {
+  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  const t = '﻿Fecha;Mesa;Garzón;Estación;Estado;Cobrada;Detalle;Nota;Valor\n' + cmFiltradas().map(c => [new Date(c.t).toLocaleString('es-CL'), q(cmMesaTxt(c.mesa)), q(c.garzon), c.est === 'cafeteria' ? 'Cafetería' : 'Cocina', c.estado || '', c.cerrada ? 'Sí' : 'No', q(c.items.map(i => i.q + 'x ' + i.n + ' (' + i.p + ')').join(', ')), q(c.nota), cmValor(c)].join(';')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'comandas_' + S.cmd + '_a_' + S.cmh + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
 async function turnoCargar() {
   const { data } = await sb.from('resto_turnos').select('*').eq('local_id', D.id).not('cerrado_at', 'is', null).order('abierto_at', { ascending: false }).limit(15);
   S.th = data || [];
@@ -682,7 +732,7 @@ function renderInner(app) {
   restaurarRol();
   if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, caja: cajaHTML, garz: garzHTML, carta: cartaHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
@@ -707,6 +757,7 @@ document.addEventListener('change', e => {
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
+  if (e.target.id === 'cmg') render();
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
 /* Código de barras: el lector USB escribe el código y pulsa Enter, igual que un teclado */
@@ -852,7 +903,7 @@ document.addEventListener('click', async e => {
     if (a === 'logout') { EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
-    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'turno') S.th = null; }
+    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; }
     else if (a === 'mesa') { delete S.f['bus-mos']; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'volver') { delete S.f['bus-mos']; if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
@@ -868,6 +919,11 @@ document.addEventListener('click', async e => {
     else if (a === 'rpmes') { const d = new Date(); S.rph = fechaIso(d); d.setDate(1); S.rpd = fechaIso(d); S.rp = null; }
     else if (a === 'rpver') { const x = $('#rpd').value, y = $('#rph').value; if (x && y) { S.rpd = x <= y ? x : y; S.rph = x <= y ? y : x; S.rp = null; } }
     else if (a === 'rpcsv') { if (S.rp) garzCSV(); }
+    else if (a === 'cmhoy') { S.cmd = S.cmh = fechaIso(new Date()); S.cm = null; }
+    else if (a === 'cmsem') { const d = new Date(); S.cmh = fechaIso(d); d.setDate(d.getDate() - 6); S.cmd = fechaIso(d); S.cm = null; }
+    else if (a === 'cmmes') { const d = new Date(); S.cmh = fechaIso(d); d.setDate(1); S.cmd = fechaIso(d); S.cm = null; }
+    else if (a === 'cmver') { const x = $('#cmd').value, y = $('#cmh').value; if (x && y) { S.cmd = x <= y ? x : y; S.cmh = x <= y ? y : x; S.cm = null; } }
+    else if (a === 'cmcsv') { if (S.cm) cmCSV(); }
     else if (a === 'cerrar') { S.cerrando = true; S.parcial = false; S.sel = {}; }
     else if (a === 'nocerrar') S.cerrando = false;
     else if (a === 'parcial') { S.parcial = true; S.cerrando = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
