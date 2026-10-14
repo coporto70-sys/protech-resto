@@ -74,7 +74,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
-let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', f: {}, np: null, th: null, mos: false, ses: null, back: null, qk: null, pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
+let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', f: {}, np: null, th: null, mos: false, ses: null, back: null, qk: null, rc: '', pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
 const L = () => D;
 const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S.quien ? { cobrado_por: S.quien } : {}) });
 /* ---------- Roles y PIN ----------
@@ -364,7 +364,33 @@ function camposPago(base) {
     <label class="mut" style="display:block;margin-top:8px">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option></select></label>
     ${S.metodo === 'Tarjeta' ? `<label class="mut" style="display:block;margin-top:8px">Propina o recargo adicional en la tarjeta (se suma al total)<input id="ptarj" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pt)}"></label>` : ''}
     <label class="mut" style="display:block;margin-top:8px">Propina en efectivo que le dieron al garzón (no se suma al total)<input id="pefec" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pe)}"></label>
-    <div class="total"><span>Total a pagar</span><span id="totpagar" data-base="${base}">${money(base + prop + ptj)}</span></div>`;
+    <div class="total"><span>Total a pagar</span><span id="totpagar" data-base="${base}">${money(base + prop + ptj)}</span></div>
+    ${pagoDetalleHTML(base + prop + ptj)}`;
+}
+/* Detalle del pago según la forma elegida: efectivo (con cuánto paga y vuelto), tarjeta o transferencia */
+function pagoDetalleHTML(total) {
+  if (S.metodo === 'Efectivo') {
+    const billetes = [2000, 5000, 10000, 20000].filter(b => b >= total || b === 20000);
+    return `<div class="card" style="margin-top:10px;background:#f0fdf4;display:grid;gap:8px"><b>Pago en efectivo</b>
+      <label class="mut">Efectivo recibido del cliente<input id="recib" type="number" inputmode="numeric" min="0" placeholder="¿Con cuánto paga?" value="${esc(S.rc)}"></label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-line" data-act="rec" data-v="${total}">Justo</button>${billetes.map(b => `<button class="btn-line" data-act="rec" data-v="${b}">${money(b)}</button>`).join('')}</div>
+      <div class="total" style="margin:0"><span>Vuelto a entregar</span><span id="vuelto" data-total="${total}">—</span></div></div>`;
+  }
+  if (S.metodo === 'Tarjeta') return `<div class="card" style="margin-top:10px;background:#eff6ff"><b>Pago con tarjeta</b><div class="mut" style="margin-top:4px">Cobra <b>${money(total)}</b> en el terminal de tarjeta y confirma cuando salga aprobado.</div></div>`;
+  return `<div class="card" style="margin-top:10px;background:#faf5ff"><b>Pago por transferencia</b><div class="mut" style="margin-top:4px">Confirma que la transferencia de <b>${money(total)}</b> ya llegó a la cuenta antes de cobrar.</div></div>`;
+}
+const totalPago = base => base + (S.propina ? Math.round(base * 0.1) : 0) + (S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0);
+const recibidoMal = base => S.metodo === 'Efectivo' && S.rc !== '' && S.rc !== undefined && Math.round(+S.rc) < totalPago(base);
+function actualizaVuelto() {
+  const v = $('#vuelto'); if (!v) return;
+  if (S.rc === '' || S.rc === undefined) { v.textContent = '—'; v.style.color = ''; return; }
+  const d = Math.round(+S.rc) - (+v.dataset.total);
+  v.textContent = d >= 0 ? money(d) : 'Faltan ' + money(-d); v.style.color = d >= 0 ? 'var(--ok)' : 'var(--bad)';
+}
+function baseCobro(a) {
+  if (a === 'pagar') return totalMesa(S.mesa);
+  if (a === 'mospagar') return L().menu.filter(i => S.cart[i.id]).reduce((s, i) => s + i.p * S.cart[i.id], 0);
+  return abiertas(S.mesa).reduce((s, c) => s + c.items.reduce((t, i, ix) => t + Math.min(S.sel[c.id + ':' + ix] || 0, i.q - (i.pg || 0)) * i.p, 0), 0);
 }
 function mesaDetalle() {
   const l = L(), n = S.mesa;
@@ -606,7 +632,7 @@ function adminHTML() {
 function render() {
   const app = $('#app');
   const ae = document.activeElement, aid = ae && ae.id, ss = ae && ae.selectionStart;
-  try { renderInner(app); } finally {
+  try { renderInner(app); actualizaVuelto(); } finally {
     if (aid) { const el = document.getElementById(aid); if (el && el !== document.activeElement) { el.focus(); try { el.setSelectionRange(ss, ss); } catch (x) {} } }
     /* en PC, en la venta mostrador el cursor vuelve solo al campo del lector */
     else if (S.mos && S.view === 'mesas' && matchMedia('(pointer:fine)').matches) { const sc = document.getElementById('scan-mos'); if (sc) sc.focus(); }
@@ -627,6 +653,7 @@ document.addEventListener('input', e => {
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'nota') S.note = e.target.value;
   if (e.target.id === 'pefec') S.pe = e.target.value;
+  if (e.target.id === 'recib') { S.rc = e.target.value; actualizaVuelto(); }
   if (e.target.id === 'ptarj') {
     S.pt = e.target.value;
     /* actualiza el total en pantalla sin redibujar (así no se pierde el cursor al escribir) */
@@ -674,13 +701,20 @@ document.addEventListener('keydown', e => {
   else if (id.startsWith('cb-')) { e.preventDefault(); S.f[id] = e.target.value; const b = document.querySelector('[data-act=cb_set][data-id="' + id.slice(3) + '"]'); if (b) b.click(); }
   else if (id === 'acb') e.preventDefault();
 });
-const fallo = r => { if (r && r.error) { S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
+const fallo = r => { if (r && r.error) { S.lastErr = true; S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
 
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
   if (S.busy) return;
   const a = b.dataset.act, d = b.dataset;
   if (['cobrarmesa', 'mostrador', 'cerrar', 'parcial', 'pagar', 'pagarparte', 'mospagar'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado puede cobrar.'); return; }
+  let pagoInfo = null;
+  if (['pagar', 'pagarparte', 'mospagar'].includes(a)) {
+    const b = baseCobro(a);
+    if (b > 0 && recibidoMal(b)) { alert('El efectivo recibido es menor al total a pagar. Revisa el monto.'); return; }
+    const tp = totalPago(b), rc = S.rc !== '' && S.rc !== undefined ? Math.round(+S.rc) : null;
+    pagoInfo = a === 'mospagar' && !cajaAbierta() ? null : { m: S.metodo, tp, rc }; S.lastErr = false;
+  }
   try {
     if (a === 'login') {
       const email = $('#lmail').value.trim(), password = $('#lpass').value;
@@ -751,14 +785,15 @@ document.addEventListener('click', async e => {
     }
     if (a === 'cambiar') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} render(); return; }
     if (a === 'logout') { EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
+    if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'turno') S.th = null; }
-    else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
-    else if (a === 'volver') { if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
+    else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'volver') { if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
-    else if (a === 'cobrarmesa') { S.back = S.mos ? 'mesas' : S.view; S.mos = false; S.view = 'mesas'; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = true; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.propina = true; S.metodo = 'Efectivo'; }
-    else if (a === 'mostrador') { S.back = S.view; S.view = 'mesas'; S.mos = true; S.cart = {}; S.propina = false; S.metodo = 'Efectivo'; S.pe = ''; S.pt = ''; }
-    else if (a === 'mosvolver') { if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.mos = false; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; }
+    else if (a === 'cobrarmesa') { S.back = S.mos ? 'mesas' : S.view; S.mos = false; S.view = 'mesas'; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = true; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; S.propina = true; S.metodo = 'Efectivo'; }
+    else if (a === 'mostrador') { S.back = S.view; S.view = 'mesas'; S.mos = true; S.cart = {}; S.propina = false; S.metodo = 'Efectivo'; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'mosvolver') { if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.mos = false; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'nuevoped') { S.np = { tipo: d.t }; S.f = {}; }
     else if (a === 'cancelnp') { S.np = null; S.f = {}; }
     else if (a === 'rphoy') { S.rpd = S.rph = fechaIso(new Date()); S.rp = null; }
@@ -768,8 +803,8 @@ document.addEventListener('click', async e => {
     else if (a === 'rpcsv') { if (S.rp) garzCSV(); }
     else if (a === 'cerrar') { S.cerrando = true; S.parcial = false; S.sel = {}; }
     else if (a === 'nocerrar') S.cerrando = false;
-    else if (a === 'parcial') { S.parcial = true; S.cerrando = false; S.sel = {}; S.pe = ''; S.pt = ''; }
-    else if (a === 'noparcial') { S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
+    else if (a === 'parcial') { S.parcial = true; S.cerrando = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'noparcial') { S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'pinc' || a === 'pdec') {
       const c = abiertas(S.mesa).find(x => x.id === d.c), it = c && c.items[+d.i];
       if (it) { const k = d.c + ':' + d.i, v = (S.sel[k] || 0) + (a === 'pinc' ? 1 : -1); if (v > 0) S.sel[k] = Math.min(it.q - (it.pg || 0), v); else delete S.sel[k]; }
@@ -798,7 +833,7 @@ document.addEventListener('click', async e => {
               const lista = items.every(it => (it.pg || 0) >= it.q) && c.estado === 'entregado';
               if (fallo(await sb.from('resto_comandas').update({ items, ...(lista ? { cerrada: true } : {}) }).eq('id', c.id))) break;
             }
-            S.parcial = false; S.sel = {}; S.pe = ''; S.pt = '';
+            S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = '';
           }
         }
       } else if (a === 'pagar') {
@@ -807,7 +842,7 @@ document.addEventListener('click', async e => {
         const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
         const r = tot > 0 ? await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }) : {};
-        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } S.pe = ''; S.pt = ''; }
+        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } S.pe = ''; S.pt = ''; S.rc = ''; }
       } else if (a === 'avanzar') {
         const c = L().comandas.find(x => x.id === d.id);
         fallo(await sb.from('resto_comandas').update({ estado: d.to, ...(d.to === 'entregado' && c && pagada(c) ? { cerrada: true } : {}) }).eq('id', d.id));
@@ -820,7 +855,7 @@ document.addEventListener('click', async e => {
           const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: 0, total: sub, propina: S.propina ? Math.round(sub * 0.1) : 0, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) });
           if (!fallo(r)) {
             for (const i of sel) if (i.s != null) await sb.rpc('resto_stock_mover', { p_menu: i.id, p_delta: -S.cart[i.id], p_motivo: 'venta', p_por: S.quien || '', p_log: false });
-            S.mos = false; if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; toast('Venta cobrada · ' + money(sub), 'tk-l');
+            S.mos = false; if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; S.rc = '';
           }
         }
       }
@@ -831,7 +866,7 @@ document.addEventListener('click', async e => {
         else {
           const mx = await sb.from('resto_pedidos').select('num').eq('local_id', D.id).order('num', { ascending: false }).limit(1);
           const num = Math.max(1000, mx.data && mx.data[0] ? mx.data[0].num : 1000) + 1;
-          if (!fallo(await sb.from('resto_pedidos').insert({ local_id: D.id, num, tipo: S.np.tipo, cliente: c, telefono: t || null, direccion: dir || null }))) { S.np = null; S.f = {}; S.mesa = num; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; }
+          if (!fallo(await sb.from('resto_pedidos').insert({ local_id: D.id, num, tipo: S.np.tipo, cliente: c, telefono: t || null, direccion: dir || null }))) { S.np = null; S.f = {}; S.mesa = num; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
         }
       }
       else if (a === 'cancelped') { if (S.mesa >= 1000 && !abiertas(S.mesa).length && !fallo(await sb.from('resto_pedidos').delete().eq('local_id', D.id).eq('num', S.mesa))) S.mesa = null; }
@@ -922,6 +957,10 @@ document.addEventListener('click', async e => {
         else if (n && p > 0) fallo(await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: Math.round(p), ...est, ...(cb ? { codigo: cb } : {}), ...(st !== '' && +st >= 0 ? { stock: Math.round(+st) } : {}) }));
       } else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)), n2 = Math.min(30, Math.max(0, Math.round(+$('#nm2').value || 0))); fallo(await sb.from('resto_locales').update({ mesas: n, mesas2: n2 }).eq('id', D.id)); }
       await cargar(); S.busy = false;
+      if (pagoInfo && pagoInfo.tp > 0 && !S.lastErr) {
+        const x = pagoInfo;
+        toast(x.m === 'Efectivo' ? 'Cobrado ' + money(x.tp) + ' en efectivo' + (x.rc != null ? ' · recibido ' + money(x.rc) + ' · VUELTO ' + money(x.rc - x.tp) : '') : 'Cobrado ' + money(x.tp) + (x.m === 'Tarjeta' ? ' con tarjeta' : ' por transferencia'), 'tk-l');
+      }
       if (a === 'pagarparte' && S.mesa && !abiertas(S.mesa).length) S.mesa = null;
     }
   } catch (x) { S.busy = false; console.error(x); }
