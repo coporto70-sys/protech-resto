@@ -629,7 +629,7 @@ function adminHTML() {
   const v = S.av, f = S.af;
   const lista = v.locales.map(l => `<div class="card" style="margin-bottom:12px"><div class="row" style="padding-top:0"><div><b>${esc(l.nombre)}</b><div class="mut">${l.mesas} mesas</div></div></div>
     ${l.usuarios.map(u => `<div class="row"><div>${esc(u.email)} <span class="pill">${u.confirmado ? 'Activo' : 'Invitación pendiente'}</span></div>
-      ${u.confirmado ? '' : `<button class="btn-line" data-act="a_reenviar" data-email="${esc(u.email)}">Reenviar</button>`}</div>`).join('') || '<p class="mut">Sin usuarios.</p>'}
+      <div style="display:flex;gap:6px">${u.confirmado ? '' : `<button class="btn-line" data-act="a_reenviar" data-email="${esc(u.email)}">Reenviar</button>`}<button class="btn-line" style="color:var(--bad)" data-act="a_quitar" data-email="${esc(u.email)}" data-lid="${l.id}" data-ln="${esc(l.nombre)}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin usuarios.</p>'}
     <div style="display:flex;gap:8px;margin-top:10px"><input id="ae-${l.id}" type="email" placeholder="Agregar otro correo a este local"><button class="btn" style="white-space:nowrap" data-act="a_add" data-lid="${l.id}">Invitar</button></div></div>`).join('');
   return `<h2>Admin Protech · Locales y usuarios</h2>
     ${v.msg ? `<div class="card" style="margin-bottom:12px;color:var(--ok)">${esc(v.msg)}</div>` : ''}
@@ -762,6 +762,17 @@ document.addEventListener('click', async e => {
       history.replaceState(null, '', location.pathname); S.setpass = false;
       const { data } = await sb.auth.getSession(); S.user = data.session ? data.session.user : null;
       if (S.user) { await cargar(); suscribir(); }
+      S.busy = false; render(); return;
+    }
+    if (a === 'a_quitar') {
+      if (!confirm('¿Quitar a ' + d.email + ' del local "' + d.ln + '"?\n\nPierde el acceso a este local. Su cuenta no se elimina.')) return;
+      S.busy = true; S.av.msg = ''; S.av.err = ''; render();
+      try {
+        const { data: n, error } = await sb.rpc('resto_quitar_usuario', { p_email: d.email, p_local: d.lid });
+        if (error) throw new Error(error.message);
+        S.av.msg = n ? d.email + ' fue quitado del local ' + d.ln : 'No se encontró a ' + d.email + ' en ese local';
+        const l = await llamarAdmin({ action: 'list' }); S.av.locales = l.locales;
+      } catch (x) { S.av.err = x.message; }
       S.busy = false; render(); return;
     }
     if (a === 'a_crear' || a === 'a_add' || a === 'a_reenviar') {
