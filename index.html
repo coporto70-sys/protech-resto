@@ -98,17 +98,22 @@ function entrar(rol, quien) {
   S.garzon = rol === 'garzon' ? quien : '';
   S.view = misTabs()[0];
   try { sessionStorage.setItem('pr-rol', JSON.stringify({ lid: D.id, rol, quien })); } catch (e) {}
-  S.ses = null; S.mos = false; ensureSes().then(render);
+  /* el dispositivo de la cocina queda abierto: si se recarga, vuelve solo a Cocina con la misma cocinera */
+  try { if (rol === 'cocina') localStorage.setItem('pr-cocina', JSON.stringify({ lid: D.id, quien })); else localStorage.removeItem('pr-cocina'); } catch (e) {}
+  S.ses = null; S.mos = false; ensureSes().then(render); pantalla();
 }
+const olvidarRol = () => { try { sessionStorage.removeItem('pr-rol'); localStorage.removeItem('pr-cocina'); } catch (e) {} };
+const cocineraValida = q => D.cocineras.length ? D.cocineras.some(c => c.n === q && c.on) : q === 'Cocina';
 function restaurarRol() {
   if (!rolesOn() || S.rol) return;
   try {
-    const r = JSON.parse(sessionStorage.getItem('pr-rol') || 'null');
-    if (r && r.lid === D.id && (r.rol === 'admin' || r.rol === 'cocina' || (r.rol === 'garzon' && D.garzones.some(g => g.n === r.quien && g.on)))) { S.rol = r.rol; S.quien = r.quien; S.garzon = r.rol === 'garzon' ? r.quien : ''; S.view = misTabs()[0]; ensureSes().then(() => {}); }
+    let r = JSON.parse(sessionStorage.getItem('pr-rol') || 'null');
+    if (!r) { const k = JSON.parse(localStorage.getItem('pr-cocina') || 'null'); if (k) r = { lid: k.lid, rol: 'cocina', quien: k.quien }; }
+    if (r && r.lid === D.id && (r.rol === 'admin' || (r.rol === 'cocina' && cocineraValida(r.quien)) || (r.rol === 'garzon' && D.garzones.some(g => g.n === r.quien && g.on)))) { S.rol = r.rol; S.quien = r.quien; S.garzon = r.rol === 'garzon' ? r.quien : ''; S.view = misTabs()[0]; ensureSes().then(() => {}); pantalla(); }
   } catch (e) {}
 }
 function quienHTML() {
-  const g = D.garzones.filter(x => x.on);
+  const g = D.garzones.filter(x => x.on), coc = D.cocineras.filter(x => x.on);
   const opt = (k, n, sub) => `<button class="mesa" style="width:100%" data-act="qsel" data-k="${esc(k)}"><b style="font-size:1.1rem">${esc(n)}</b><span>${sub}</span></button>`;
   let sel = '';
   if (S.qk) {
@@ -119,7 +124,7 @@ function quienHTML() {
       <div style="display:flex;gap:8px"><button class="btn" style="flex:1" data-act="qok">Entrar</button><button class="btn-line" data-act="qback">Volver</button></div></div>`;
   }
   return `<header><div><b>${esc(D.name)}</b><small>Protech Resto</small></div><nav></nav><button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header>
-  <main><h2>¿Quién eres?</h2><div class="grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${opt('cocina', 'Cocina', 'Comandas')}</div>${sel}</main>`;
+  <main><h2>¿Quién eres?</h2><div class="grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${coc.length ? coc.map(x => opt('c:' + x.n, x.n, 'Cocina · comandas')).join('') : opt('cocina', 'Cocina', 'Comandas')}</div>${sel}</main>`;
 }
 
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
@@ -222,7 +227,7 @@ async function cargar() {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc] = await Promise.all([
     sb.from('resto_locales').select('*').eq('id', id).single(),
     sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
     sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
@@ -230,12 +235,14 @@ async function cargar() {
     sb.from('resto_garzones').select('*').eq('local_id', id).order('nombre'),
     sb.from('resto_turnos').select('*').eq('local_id', id).is('cerrado_at', null).order('abierto_at', { ascending: false }).limit(1),
     sb.from('resto_pedidos').select('*').eq('local_id', id).eq('cerrado', false).order('num'),
-    sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora')
+    sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora'),
+    sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre')
   ]);
   if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
   D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
+    cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', t: +new Date(r.created_at) })) };
@@ -308,8 +315,8 @@ function shell(inner) {
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
     <button class="btn-line" style="padding:6px 12px" data-act="sonido">Sonido: ${SNDL[SND]}${SND !== 'off' && !(AC && AC.state === 'running') ? ' (toca para activar)' : ''}</button>
-    ${rolesOn() ? `<button class="btn-line" style="padding:6px 12px" data-act="cambiar">${esc(S.rol === 'admin' ? 'Administradora' : S.rol === 'cocina' ? 'Cocina' : S.quien)} · cambiar</button>` : ''}
-    <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${inner}</main>`;
+    ${rolesOn() ? `<button class="btn-line" style="padding:6px 12px" data-act="cambiar">${esc(S.rol === 'admin' ? 'Administradora' : S.rol === 'cocina' ? (S.quien && S.quien !== 'Cocina' ? 'Cocina · ' + S.quien : 'Cocina') : S.quien)} · cambiar</button>` : ''}
+    <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${S.rol === 'cocina' && SND !== 'off' && !(AC && AC.state === 'running') ? '<button class="btn" style="width:100%;margin-bottom:12px;padding:14px;font-size:1.1rem" data-act="activarsonido">🔔 Toca aquí para activar el sonido de las comandas</button>' : ''}${inner}</main>`;
 }
 function mesasHTML() {
   if (S.mesa !== null) return mesaDetalle();
@@ -597,6 +604,10 @@ function cartaHTML() {
     <button class="btn" data-act="add">Agregar</button></div>
   <div class="card" style="margin-top:12px"><b>Garzones</b>${l.garzones.map(g => `<div class="row ${g.on ? '' : 'off'}"><span>${esc(g.n)}</span><div style="display:flex;gap:6px"><button class="btn-line" data-act="gtoggle" data-id="${g.id}">${g.on ? 'Activo' : 'Inactivo'}</button><button class="btn-bad" data-act="gdel" data-id="${g.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Aún no hay garzones.</p>'}
     <div style="display:flex;gap:8px;margin-top:8px"><input id="gn" placeholder="Nombre del garzón"><button class="btn" data-act="gadd">Agregar</button></div></div>
+  <div class="card" style="margin-top:12px"><b>Cocineras</b>
+    <p class="mut" style="margin:4px 0 6px">${l.adminPin ? 'Cada cocinera entra con su PIN en el dispositivo de la cocina. Ese dispositivo se queda en Cocina y suena con cada comanda nueva. Si no hay cocineras, entra el botón "Cocina" sin PIN.' : 'Primero crea el PIN de la administradora (más abajo): las cocineras entran con su PIN cuando el local tiene accesos por usuario.'}</p>
+    ${(l.cocineras || []).map(c => `<div class="row ${c.on ? '' : 'off'}"><div>${esc(c.n)}<div class="mut">${c.pin ? 'con PIN' : 'sin PIN'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${l.adminPin ? `<input id="cp-${c.id}" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:90px"><button class="btn-line" data-act="setcpin" data-id="${c.id}">Guardar PIN</button>` : ''}<button class="btn-line" data-act="ctoggle" data-id="${c.id}">${c.on ? 'Activa' : 'Inactiva'}</button><button class="btn-bad" data-act="cdel" data-id="${c.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:6px 0">Aún no hay cocineras.</p>'}
+    <div style="display:flex;gap:8px;margin-top:8px"><input id="cn" placeholder="Nombre de la cocinera"><button class="btn" data-act="cadd">Agregar</button></div></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b>
     <label class="mut">Mesas del primer piso<input id="nm" type="number" min="1" max="60" value="${l.mesas}"></label>
     <label class="mut">Mesas del segundo piso (0 si no tiene)<input id="nm2" type="number" min="0" max="30" value="${l.mesas2}"></label>
@@ -772,20 +783,27 @@ document.addEventListener('click', async e => {
     if (a === 'qsel') {
       S.pinErr = '';
       if (d.k === 'cocina') { entrar('cocina', 'Cocina'); render(); return; }
+      if (d.k.startsWith('c:')) { const c = D.cocineras.find(x => x.n === d.k.slice(2) && x.on); if (c && !c.pin) { entrar('cocina', c.n); render(); return; } }
       if (d.k.startsWith('g:')) { const g = D.garzones.find(x => x.n === d.k.slice(2)); if (g && !g.pin) { entrar('garzon', g.n); render(); return; } }
       S.qk = d.k; render(); return;
     }
     if (a === 'qback') { S.qk = null; S.pinErr = ''; render(); return; }
     if (a === 'qok') {
       const pin = ($('#qpin') || {}).value || '', k = S.qk; if (!k) return;
+      if (k.startsWith('c:')) {
+        const c = D.cocineras.find(x => x.n === k.slice(2) && x.on);
+        if (!(c && c.pin && (await hpin('c:' + c.id, pin)) === c.pin)) { S.pinErr = 'PIN incorrecto'; render(); return; }
+        entrar('cocina', c.n); render(); return;
+      }
       const adm = k === 'admin', g = adm ? null : D.garzones.find(x => x.n === k.slice(2));
       const ok = adm ? (await hpin('admin', pin)) === D.adminPin : !!(g && (await hpin('g:' + g.id, pin)) === g.pin);
       if (!ok) { S.pinErr = 'PIN incorrecto'; render(); return; }
       entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n); render(); return;
     }
-    if (a === 'cambiar') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} render(); return; }
-    if (a === 'logout') { EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; try { sessionStorage.removeItem('pr-rol'); } catch (x) {} if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
+    if (a === 'cambiar') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; olvidarRol(); render(); return; }
+    if (a === 'logout') { EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
+    if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'turno') S.th = null; }
     else if (a === 'mesa') { S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'volver') { if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
@@ -945,6 +963,14 @@ document.addEventListener('click', async e => {
       }
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
       else if (a === 'est') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ estacion: i.e === 'cafeteria' ? 'cocina' : 'cafeteria' }).eq('id', d.id)); }
+      else if (a === 'cadd' && esAdm()) { const n = ($('#cn') || {}).value.trim(); if (n) fallo(await sb.from('resto_cocineras').insert({ local_id: D.id, nombre: n })); }
+      else if (a === 'ctoggle' && esAdm()) { const c = L().cocineras.find(x => x.id === d.id); if (c) fallo(await sb.from('resto_cocineras').update({ activo: !c.on }).eq('id', d.id)); }
+      else if (a === 'cdel' && esAdm()) { const c = L().cocineras.find(x => x.id === d.id); if (c && confirm('¿Quitar a ' + c.n + '?')) fallo(await sb.from('resto_cocineras').delete().eq('id', d.id)); }
+      else if (a === 'setcpin' && esAdm()) {
+        const p = ($('#cp-' + d.id) || {}).value || '';
+        if (p && !/^\d{4,8}$/.test(p)) alert('El PIN debe tener de 4 a 8 números.');
+        else fallo(await sb.from('resto_cocineras').update({ pin: p ? await hpin('c:' + d.id, p) : null }).eq('id', d.id));
+      }
       else if (a === 'gadd') { const n = $('#gn').value.trim(); if (n) fallo(await sb.from('resto_garzones').insert({ local_id: D.id, nombre: n })); }
       else if (a === 'gtoggle') { const g = L().garzones.find(x => x.id === d.id); if (g) fallo(await sb.from('resto_garzones').update({ activo: !g.on }).eq('id', d.id)); }
       else if (a === 'gdel') fallo(await sb.from('resto_garzones').delete().eq('id', d.id));
