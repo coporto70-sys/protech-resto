@@ -89,6 +89,12 @@ const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien &
 const puedeCobrar = () => !rolesOn() || S.rol === 'admin' || (S.rol === 'garzon' && cajaGarzon());
 /* Todos los garzones cobran sus mesas; la venta por mostrador y la pestaña Caja son solo para la administradora y los garzones autorizados con PIN */
 const puedeCobrarMesa = () => !rolesOn() || S.rol === 'admin' || S.rol === 'garzon';
+/* Mesas propias: cada mesa es de quien la tomó. Un garzón no entra a la mesa de otro; solo quien tiene caja (PIN autorizado) puede abrirla para cobrarla. */
+const duenoMesa = n => ((abiertas(n).find(c => c.garzon) || {}).garzon) || '';
+const esGarzonRol = () => rolesOn() && S.rol === 'garzon';
+const mesaPropia = n => { const d = duenoMesa(n); return !esGarzonRol() || !d || d === S.quien; };
+const puedeVerMesa = n => mesaPropia(n) || cajaGarzon();
+const puedeCobrarEsta = n => puedeCobrarMesa() && puedeVerMesa(n);
 const misTabs = () => !rolesOn() ? TABS.admin : S.rol === 'garzon' && cajaGarzon() ? ['mesas', 'turno'] : (TABS[S.rol] || []);
 async function hpin(scope, pin) {
   const b = new TextEncoder().encode(D.id + ':' + scope + ':' + pin);
@@ -321,6 +327,7 @@ function shell(inner) {
     <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${S.rol === 'cocina' && SND !== 'off' && !(AC && AC.state === 'running') ? '<button class="btn" style="width:100%;margin-bottom:12px;padding:14px;font-size:1.1rem" data-act="activarsonido">🔔 Toca aquí para activar el sonido de las comandas</button>' : ''}${inner}</main>`;
 }
 function mesasHTML() {
+  if (S.mesa !== null && !puedeVerMesa(S.mesa)) S.mesa = null;
   if (S.mesa !== null) return mesaDetalle();
   const l = L(); let g = '', g2 = '';
   const listos = l.comandas.filter(c => !c.cerrada && c.estado === 'listo');
@@ -349,7 +356,7 @@ function mesasHTML() {
 const mesasAbiertas = () => [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0).map(c => c.mesa))].sort((a, b) => a - b);
 function porCobrarHTML() {
   const ms = mesasAbiertas();
-  return `<div class="card" style="margin-bottom:12px"><b>Mesas por cobrar</b><p class="mut" style="margin:4px 0">Cuando un cliente termina y viene a pagar a la caja, cóbralo aquí.</p>${ms.map(n => { const a = abiertas(n), g = (a.find(c => c.garzon) || {}).garzon; return `<div class="row"><div><b>${nm(n)}</b>${g ? ' <small class="mut">' + esc(g) + '</small>' : ''}<div class="mut">${a.map(c => c.items.map(i => (i.q - (i.pg || 0)) + '× ' + esc(i.n)).join(', ')).join(' · ')}</div></div><div style="display:flex;gap:8px;align-items:center"><b>${money(totalMesa(n))}</b>${puedeCobrarMesa() ? `<button class="btn-ok" data-act="cobrarmesa" data-n="${n}">Cobrar</button>` : '<span class="mut">Cobra en caja</span>'}</div></div>`; }).join('') || '<p class="mut" style="margin-top:8px">No hay mesas con consumo pendiente.</p>'}</div>`;
+  return `<div class="card" style="margin-bottom:12px"><b>Mesas por cobrar</b><p class="mut" style="margin:4px 0">Cuando un cliente termina y viene a pagar a la caja, cóbralo aquí.</p>${ms.map(n => { const a = abiertas(n), g = (a.find(c => c.garzon) || {}).garzon; return `<div class="row"><div><b>${nm(n)}</b>${g ? ' <small class="mut">' + esc(g) + '</small>' : ''}<div class="mut">${a.map(c => c.items.map(i => (i.q - (i.pg || 0)) + '× ' + esc(i.n)).join(', ')).join(' · ')}</div></div><div style="display:flex;gap:8px;align-items:center"><b>${money(totalMesa(n))}</b>${puedeCobrarEsta(n) ? `<button class="btn-ok" data-act="cobrarmesa" data-n="${n}">Cobrar</button>` : '<span class="mut">' + (puedeCobrarMesa() ? 'Mesa de ' + esc(duenoMesa(n)) : 'Cobra en caja') + '</span>'}</div></div>`; }).join('') || '<p class="mut" style="margin-top:8px">No hay mesas con consumo pendiente.</p>'}</div>`;
 }
 function mostradorHTML() {
   const l = L(), cats = [...new Set(l.menu.filter(i => i.on).map(i => i.c))];
@@ -461,7 +468,7 @@ function garzonDe(n) { const a = abiertas(n).find(c => c.garzon); return a ? a.g
 function garzSel(n) {
   const g = L().garzones.filter(x => x.on); const cur = garzonDe(n);
   if (!g.length) return '<p class="mut" style="margin:6px 0">Sin garzones: agrégalos en "Carta y mesas".</p>';
-  const fijo = abiertas(n).some(c => c.garzon);
+  const fijo = abiertas(n).some(c => c.garzon) || esGarzonRol();
   return `<label class="mut">Atiende<select id="garz" ${fijo ? 'disabled' : ''}><option value="">— elegir garzón —</option>${g.map(x => `<option ${x.n === cur ? 'selected' : ''}>${esc(x.n)}</option>`).join('')}</select></label>`;
 }
 function fechaIso(d) { const z = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()); }
@@ -722,6 +729,11 @@ document.addEventListener('click', async e => {
   const a = b.dataset.act, d = b.dataset;
   if (['mostrador', 'mospagar'].includes(a) && !puedeCobrar()) { alert('La venta por mostrador la cobra la administradora o un garzón autorizado con PIN.'); return; }
   if (['cobrarmesa', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && !puedeCobrarMesa()) { alert('Solo la administradora o los garzones pueden cobrar mesas.'); return; }
+  if (a === 'mesa' && !puedeVerMesa(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede tomar pedidos en esta mesa.'); return; }
+  if (a === 'cobrarmesa' && !puedeCobrarEsta(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede cobrarla.'); return; }
+  if (['enviar', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && S.mesa !== null && !S.mos) {
+    if (a === 'enviar' ? !mesaPropia(S.mesa) : !puedeCobrarEsta(S.mesa)) { alert('Esta mesa la atiende ' + (duenoMesa(S.mesa) || 'otro garzón') + '. Tú no puedes ' + (a === 'enviar' ? 'tomar pedidos' : 'cobrar') + ' en ella.'); return; }
+  }
   let pagoInfo = null;
   if (['pagar', 'pagarparte', 'mospagar'].includes(a)) {
     const b = baseCobro(a);
