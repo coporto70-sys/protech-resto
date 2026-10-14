@@ -565,7 +565,7 @@ function invHTML() {
   ${nuevo}
   <div class="card"><p class="mut" style="margin-bottom:6px">Escribe una cantidad y usa "Controlar" para empezar a llevar el stock de un producto. Cada venta lo descuenta sola. "Entrada" suma mercadería; "Contar" fija el stock real; "Mín." fija el aviso de stock bajo. El código de barras se escanea directo en el campo de cada producto.</p>
   ${l.menu.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="cb-${i.id}" data-keep autocomplete="off" placeholder="Código de barras" style="width:150px" value="${S.f['cb-' + i.id] === undefined ? esc(i.cb) : fv('cb-' + i.id)}"><button class="btn-line" data-act="cb_set" data-id="${i.id}">Guardar código</button>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="pr-${i.id}" data-keep type="number" inputmode="numeric" min="1" placeholder="Precio" style="width:90px" value="${S.f['pr-' + i.id] === undefined ? i.p : fv('pr-' + i.id)}"><button class="btn-line" data-act="pr_set" data-id="${i.id}">Cambiar precio</button><input id="cb-${i.id}" data-keep autocomplete="off" placeholder="Código de barras" style="width:150px" value="${S.f['cb-' + i.id] === undefined ? esc(i.cb) : fv('cb-' + i.id)}"><button class="btn-line" data-act="cb_set" data-id="${i.id}">Guardar código</button>
     <input id="sq-${i.id}" data-keep type="number" inputmode="numeric" placeholder="Cant." style="width:80px" value="${fv('sq-' + i.id)}">
     ${i.s == null ? `<button class="btn" data-act="sk_set" data-id="${i.id}">Controlar</button>` : `<button class="btn-ok" data-act="sk_add" data-id="${i.id}">+ Entrada</button><button class="btn-line" data-act="sk_set" data-id="${i.id}">Contar</button><button class="btn-line" data-act="sk_min" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="sk_off" data-id="${i.id}">Quitar</button>`}</div></div>`).join('') || '<p class="mut">Sin productos.</p>'}</div>`;
 }
@@ -718,6 +718,7 @@ document.addEventListener('keydown', e => {
   if (id === 'lpass' || id === 'lmail') document.querySelector('[data-act=login]').click();
   else if (id === 'scan-mos') { e.preventDefault(); const v = e.target.value; e.target.value = ''; escanMostrador(v); }
   else if (id === 'scan-inv') { e.preventDefault(); const v = e.target.value; e.target.value = ''; escanInventario(v); }
+  else if (id.startsWith('pr-')) { e.preventDefault(); S.f[id] = e.target.value; const b = document.querySelector('[data-act=pr_set][data-id="' + id.slice(3) + '"]'); if (b) b.click(); }
   else if (id.startsWith('cb-')) { e.preventDefault(); S.f[id] = e.target.value; const b = document.querySelector('[data-act=cb_set][data-id="' + id.slice(3) + '"]'); if (b) b.click(); }
   else if (id === 'acb') e.preventDefault();
 });
@@ -937,6 +938,13 @@ document.addEventListener('click', async e => {
             if (!fallo(r)) delete S.f['sq-' + d.id];
           }
         }
+      }
+      else if (a === 'pr_set') {
+        const it = L().menu.find(x => x.id === d.id), raw = S.f['pr-' + d.id], p = Math.round(+raw);
+        if (!it || raw === undefined) { /* sin cambios */ }
+        else if (raw === '' || isNaN(p) || p <= 0) alert('Escribe un precio válido.');
+        else if (p === it.p) { delete S.f['pr-' + d.id]; }
+        else if (!fallo(await sb.from('resto_menu').update({ precio: p }).eq('id', d.id))) { delete S.f['pr-' + d.id]; toast('Precio actualizado · ' + it.n + ' · ' + money(p), 'tk-l'); }
       }
       else if (a === 'cb_set') {
         const cb = (S.f['cb-' + d.id] === undefined ? '' : S.f['cb-' + d.id]).trim(), it = L().menu.find(x => x.id === d.id), otro = cb && L().menu.find(x => x.cb === cb && x.id !== d.id);
