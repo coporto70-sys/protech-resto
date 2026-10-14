@@ -233,7 +233,7 @@ async function cargar() {
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
   D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
-    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0 })),
+    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', t: +new Date(r.created_at) })) };
   D.sesiones = [];
@@ -346,7 +346,9 @@ function mostradorHTML() {
     <div class="q"><button data-act="dec" data-id="${i.id}">−</button><span>${S.cart[i.id] || 0}</span><button data-act="inc" data-id="${i.id}" ${i.s != null && (S.cart[i.id] || 0) >= i.s ? 'disabled style="opacity:.4"' : ''}>+</button></div></div>`).join('')).join('');
   const sel = l.menu.filter(i => S.cart[i.id]), sub = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
   return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="mosvolver">← Mesas</button><h2 style="margin:0">Venta mostrador</h2></div>${porCobrarHTML()}
-  <div class="cols"><div class="card"><b>Productos</b>${carta || '<p class="mut">La carta está vacía.</p>'}</div>
+  <div class="cols"><div class="card"><b>Productos</b>
+    <input id="scan-mos" autocomplete="off" placeholder="Escanear código de barras…" style="width:100%;margin:8px 0">
+    ${carta || '<p class="mut">La carta está vacía.</p>'}</div>
   <div><div class="card"><b>Venta</b>${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega productos.</p>'}
     ${sub > 0 ? camposPago(sub) : ''}
     ${!cajaAbierta() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">La caja está cerrada. La administradora debe abrirla para cobrar.</p>' : ''}
@@ -493,10 +495,23 @@ function turnoHTML() {
 }
 function invHTML() {
   const l = L(), bajos = bajoStock();
+  const nuevo = S.nuevo ? `<div class="card" style="margin-bottom:12px;display:grid;gap:8px;border:2px solid var(--warn)"><b>Código nuevo: ${esc(S.nuevo.cb)}</b>
+    <p class="mut">Ese código no está en tu carta. Completa los datos para crear el producto y registrar su primera entrada.</p>
+    <input id="nn" data-keep placeholder="Nombre del producto" value="${fv('nn')}">
+    <input id="nc" data-keep placeholder="Categoría (Bebidas, Pasteles…)" list="cl2" value="${fv('nc')}"><datalist id="cl2">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+    <input id="np" data-keep type="number" inputmode="numeric" min="0" placeholder="Precio de venta" value="${fv('np')}">
+    <input id="nq" data-keep type="number" inputmode="numeric" min="0" placeholder="Cantidad que ingresa" value="${fv('nq')}">
+    <label class="mut">Se prepara en<select id="ne" data-keep><option value="cocina" ${S.f.ne !== 'cafeteria' ? 'selected' : ''}>Cocina</option><option value="cafeteria" ${S.f.ne === 'cafeteria' ? 'selected' : ''}>Cafetería</option></select></label>
+    <div style="display:flex;gap:8px"><button class="btn-ok" data-act="crearcb">Crear y registrar entrada</button><button class="btn-line" data-act="cancelcb">Cancelar</button></div></div>` : '';
   return `<h2>Inventario</h2>${bajos.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--warn)"><b>Stock bajo o agotado</b>${bajos.map(i => `<div class="row"><span>${esc(i.n)}</span><b style="color:var(--bad)">${i.s}</b></div>`).join('')}</div>` : ''}
-  <div class="card"><p class="mut" style="margin-bottom:6px">Escribe una cantidad y usa "Controlar" para empezar a llevar el stock de un producto. Cada venta lo descuenta sola. "Entrada" suma mercadería; "Contar" fija el stock real; "Mín." fija el aviso de stock bajo.</p>
-  ${l.menu.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}</div></div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="sq-${i.id}" data-keep type="number" inputmode="numeric" placeholder="Cant." style="width:80px" value="${fv('sq-' + i.id)}">
+  <div class="card" style="margin-bottom:12px;display:grid;gap:8px"><b>Ingreso por código de barras</b>
+    <p class="mut">Haz clic en el campo y escanea cada producto: se suma a su stock. Si el código no existe, te pide crear el producto. Cambia la cantidad para ingresar de a varias unidades.</p>
+    <div style="display:flex;gap:8px"><input id="scan-inv" autocomplete="off" placeholder="Escanear código de barras…" style="flex:1"><input id="scan-q" data-keep type="number" inputmode="numeric" min="1" placeholder="Cant." style="width:80px" value="${S.f['scan-q'] === undefined ? 1 : fv('scan-q')}"></div></div>
+  ${nuevo}
+  <div class="card"><p class="mut" style="margin-bottom:6px">Escribe una cantidad y usa "Controlar" para empezar a llevar el stock de un producto. Cada venta lo descuenta sola. "Entrada" suma mercadería; "Contar" fija el stock real; "Mín." fija el aviso de stock bajo. El código de barras se escanea directo en el campo de cada producto.</p>
+  ${l.menu.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="cb-${i.id}" data-keep autocomplete="off" placeholder="Código de barras" style="width:150px" value="${S.f['cb-' + i.id] === undefined ? esc(i.cb) : fv('cb-' + i.id)}"><button class="btn-line" data-act="cb_set" data-id="${i.id}">Guardar código</button>
+    <input id="sq-${i.id}" data-keep type="number" inputmode="numeric" placeholder="Cant." style="width:80px" value="${fv('sq-' + i.id)}">
     ${i.s == null ? `<button class="btn" data-act="sk_set" data-id="${i.id}">Controlar</button>` : `<button class="btn-ok" data-act="sk_add" data-id="${i.id}">+ Entrada</button><button class="btn-line" data-act="sk_set" data-id="${i.id}">Contar</button><button class="btn-line" data-act="sk_min" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="sk_off" data-id="${i.id}">Quitar</button>`}</div></div>`).join('') || '<p class="mut">Sin productos.</p>'}</div>`;
 }
 function resvHTML() {
@@ -532,11 +547,13 @@ function cajaHTML() {
 function cartaHTML() {
   const l = L();
   return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
-    ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}</div></div>
+    ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
       <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
   <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <input id="ap" type="number" inputmode="numeric" placeholder="Precio">
+    <input id="acb" autocomplete="off" placeholder="Código de barras (opcional, escanéalo aquí)">
+    <input id="ast" type="number" inputmode="numeric" min="0" placeholder="Stock inicial (opcional)">
     <label class="mut">Se prepara en<select id="ae"><option value="cocina">Cocina (platos, sándwiches, fríos, pasteles)</option><option value="cafeteria">Cafetería (cafés y bebidas calientes)</option></select></label>
     <button class="btn" data-act="add">Agregar</button></div>
   <div class="card" style="margin-top:12px"><b>Garzones</b>${l.garzones.map(g => `<div class="row ${g.on ? '' : 'off'}"><span>${esc(g.n)}</span><div style="display:flex;gap:6px"><button class="btn-line" data-act="gtoggle" data-id="${g.id}">${g.on ? 'Activo' : 'Inactivo'}</button><button class="btn-bad" data-act="gdel" data-id="${g.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Aún no hay garzones.</p>'}
@@ -578,6 +595,8 @@ function render() {
   const ae = document.activeElement, aid = ae && ae.id, ss = ae && ae.selectionStart;
   try { renderInner(app); } finally {
     if (aid) { const el = document.getElementById(aid); if (el && el !== document.activeElement) { el.focus(); try { el.setSelectionRange(ss, ss); } catch (x) {} } }
+    /* en PC, en la venta mostrador el cursor vuelve solo al campo del lector */
+    else if (S.mos && S.view === 'mesas' && matchMedia('(pointer:fine)').matches) { const sc = document.getElementById('scan-mos'); if (sc) sc.focus(); }
   }
 }
 function renderInner(app) {
@@ -611,7 +630,37 @@ document.addEventListener('change', e => {
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'lpass' || e.target.id === 'lmail')) document.querySelector('[data-act=login]').click(); });
+/* Código de barras: el lector USB escribe el código y pulsa Enter, igual que un teclado */
+function escanMostrador(raw) {
+  const cb = (raw || '').trim(); if (!cb) return;
+  const it = L().menu.find(x => x.cb === cb);
+  if (!it) toast('Código no registrado: ' + cb, 'tk-c');
+  else if (!it.on) toast(it.n + ' está agotado en la carta', 'tk-c');
+  else if (it.s != null && (S.cart[it.id] || 0) >= it.s) toast('Sin stock suficiente de ' + it.n, 'tk-c');
+  else S.cart[it.id] = (S.cart[it.id] || 0) + 1;
+  render();
+}
+async function escanInventario(raw) {
+  const cb = (raw || '').trim(); if (!cb || S.busy) return;
+  const it = L().menu.find(x => x.cb === cb);
+  if (!it) { S.nuevo = { cb }; render(); return; }
+  const q = Math.max(1, Math.round(+S.f['scan-q'] || 1));
+  S.busy = true;
+  try {
+    const r = it.s == null ? await sb.from('resto_menu').update({ stock: q }).eq('id', it.id) : await sb.rpc('resto_stock_mover', { p_menu: it.id, p_delta: q, p_motivo: 'entrada', p_por: S.quien || '', p_log: true });
+    if (!fallo(r)) { if (it.s == null) await sb.from('resto_stock_mov').insert({ local_id: D.id, menu_id: it.id, delta: q, motivo: 'entrada', por: S.quien || '' }); await cargar(); const n = L().menu.find(x => x.id === it.id); toast('+' + q + ' ' + it.n + ' · stock ' + (n && n.s != null ? n.s : q), 'tk-l'); }
+  } catch (x) { console.error(x); }
+  S.busy = false; render();
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const id = e.target.id || '';
+  if (id === 'lpass' || id === 'lmail') document.querySelector('[data-act=login]').click();
+  else if (id === 'scan-mos') { e.preventDefault(); const v = e.target.value; e.target.value = ''; escanMostrador(v); }
+  else if (id === 'scan-inv') { e.preventDefault(); const v = e.target.value; e.target.value = ''; escanInventario(v); }
+  else if (id.startsWith('cb-')) { e.preventDefault(); S.f[id] = e.target.value; const b = document.querySelector('[data-act=cb_set][data-id="' + id.slice(3) + '"]'); if (b) b.click(); }
+  else if (id === 'acb') e.preventDefault();
+});
 const fallo = r => { if (r && r.error) { S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
 
 document.addEventListener('click', async e => {
@@ -794,6 +843,25 @@ document.addEventListener('click', async e => {
           }
         }
       }
+      else if (a === 'cb_set') {
+        const cb = (S.f['cb-' + d.id] === undefined ? '' : S.f['cb-' + d.id]).trim(), it = L().menu.find(x => x.id === d.id), otro = cb && L().menu.find(x => x.cb === cb && x.id !== d.id);
+        if (S.f['cb-' + d.id] === undefined) { /* sin cambios */ }
+        else if (otro) alert('Ese código ya pertenece a "' + otro.n + '".');
+        else if (it && !fallo(await sb.from('resto_menu').update({ codigo: cb || null }).eq('id', d.id))) { delete S.f['cb-' + d.id]; toast(cb ? 'Código guardado · ' + it.n : 'Código quitado · ' + it.n, 'tk-l'); }
+      }
+      else if (a === 'cancelcb') { S.nuevo = null; ['nn', 'nc', 'np', 'nq', 'ne'].forEach(k => delete S.f[k]); }
+      else if (a === 'crearcb' && S.nuevo) {
+        const n = (S.f.nn || '').trim(), c = (S.f.nc || '').trim() || 'General', p = Math.round(+S.f.np || 0), q = S.f.nq === undefined || S.f.nq === '' ? 0 : Math.round(+S.f.nq);
+        if (!n || p <= 0) alert('Escribe el nombre y el precio de venta.');
+        else if (isNaN(q) || q < 0) alert('La cantidad no es válida.');
+        else {
+          const r = await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: p, codigo: S.nuevo.cb, stock: q, ...(S.f.ne === 'cafeteria' ? { estacion: 'cafeteria' } : {}) }).select('id').single();
+          if (!fallo(r)) {
+            if (q > 0 && r.data) await sb.from('resto_stock_mov').insert({ local_id: D.id, menu_id: r.data.id, delta: q, motivo: 'entrada', por: S.quien || '' });
+            S.nuevo = null; ['nn', 'nc', 'np', 'nq', 'ne'].forEach(k => delete S.f[k]); toast('Producto creado · ' + n, 'tk-l');
+          }
+        }
+      }
       else if (a === 'rcrear') {
         const f = S.f, fecha = f.rf || hoyIso(), h = f.rh || '', nom = (f.rn || '').trim(), mesa = f.rm ? +f.rm : null;
         if (!h || !nom) alert('Escribe la hora y el nombre.');
@@ -827,7 +895,9 @@ document.addEventListener('click', async e => {
       else if (a === 'add') {
         const n = $('#an').value.trim(), c = $('#ac').value.trim() || 'General', p = +$('#ap').value;
         const est = ($('#ae') || {}).value === 'cafeteria' ? { estacion: 'cafeteria' } : {};
-        if (n && p > 0) fallo(await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: Math.round(p), ...est }));
+        const cb = (($('#acb') || {}).value || '').trim(), st = (($('#ast') || {}).value || '').trim();
+        if (cb && L().menu.some(x => x.cb === cb)) alert('Ese código de barras ya pertenece a "' + L().menu.find(x => x.cb === cb).n + '".');
+        else if (n && p > 0) fallo(await sb.from('resto_menu').insert({ local_id: D.id, nombre: n, categoria: c, precio: Math.round(p), ...est, ...(cb ? { codigo: cb } : {}), ...(st !== '' && +st >= 0 ? { stock: Math.round(+st) } : {}) }));
       } else if (a === 'mesas') { const n = Math.min(60, Math.max(1, +$('#nm').value || 1)), n2 = Math.min(30, Math.max(0, Math.round(+$('#nm2').value || 0))); fallo(await sb.from('resto_locales').update({ mesas: n, mesas2: n2 }).eq('id', D.id)); }
       await cargar(); S.busy = false;
       if (a === 'pagarparte' && S.mesa && !abiertas(S.mesa).length) S.mesa = null;
