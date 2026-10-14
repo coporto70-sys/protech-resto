@@ -383,7 +383,7 @@ function mostradorHTML() {
   const sel = l.menu.filter(i => S.cart[i.id]), sub = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
   return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="mosvolver">← Mesas</button><h2 style="margin:0">Venta mostrador</h2></div>${porCobrarHTML()}
   <div class="cols"><div class="card"><b>Productos</b>
-    <input id="scan-mos" autocomplete="off" placeholder="Escanear código de barras…" style="width:100%;margin:8px 0">
+    <input id="scan-mos" data-keep autocomplete="off" placeholder="Escanear código de barras…" style="width:100%;margin:8px 0" value="${fv('scan-mos')}">
     ${buscadorHTML()}
     ${carta || '<p class="mut">La carta está vacía.</p>'}</div>
   <div><div class="card"><b>Venta</b>${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega productos.</p>'}
@@ -740,6 +740,8 @@ function renderInner(app) {
 document.addEventListener('input', e => {
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'bus-mos') render();
+  /* si el lector no manda Enter al final, el código se toma solo cuando termina de llegar */
+  if (e.target.id === 'scan-mos') { clearTimeout(scanT); const el = e.target; scanT = setTimeout(() => { const v = el.value; if (S.mos && el.isConnected && v.trim().length >= 6) { el.value = ''; escanMostrador(v); } }, 250); }
   if (e.target.id === 'nota') S.note = e.target.value;
   if (e.target.id === 'pefec') S.pe = e.target.value;
   if (e.target.id === 'recib') { S.rc = e.target.value; actualizaVuelto(); }
@@ -761,18 +763,23 @@ document.addEventListener('change', e => {
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
 /* Código de barras: el lector USB escribe el código y pulsa Enter, igual que un teclado */
+/* compara códigos sin espacios, guiones, mayúsculas ni ceros a la izquierda (EAN-13 y UPC-A del mismo producto) */
+const cbN = t => String(t ?? '').replace(/[\s\-]/g, '').toLowerCase().replace(/^0+/, '');
+const buscaCb = cb => { const n = cbN(cb); return n ? L().menu.find(x => x.cb && cbN(x.cb) === n) : null; };
+let scanT = null;
 function escanMostrador(raw) {
   const cb = (raw || '').trim(); if (!cb) return;
-  const it = L().menu.find(x => x.cb === cb);
+  delete S.f['scan-mos'];
+  const it = buscaCb(cb);
   if (!it) toast('Código no registrado: ' + cb, 'tk-c');
   else if (!it.on) toast(it.n + ' está agotado en la carta', 'tk-c');
   else if (it.s != null && (S.cart[it.id] || 0) >= it.s) toast('Sin stock suficiente de ' + it.n, 'tk-c');
-  else S.cart[it.id] = (S.cart[it.id] || 0) + 1;
+  else { S.cart[it.id] = (S.cart[it.id] || 0) + 1; toast('+1 ' + it.n + ' · ' + money(it.p), 'tk-l'); }
   render();
 }
 async function escanInventario(raw) {
   const cb = (raw || '').trim(); if (!cb || S.busy) return;
-  const it = L().menu.find(x => x.cb === cb);
+  const it = buscaCb(cb);
   if (!it) { S.nuevo = { cb }; render(); return; }
   const q = Math.max(1, Math.round(+S.f['scan-q'] || 1));
   S.busy = true;
@@ -783,10 +790,12 @@ async function escanInventario(raw) {
   S.busy = false; render();
 }
 document.addEventListener('keydown', e => {
+  /* en venta mostrador, si el cursor no está en un campo, lo que escribe el lector va al campo de escaneo */
+  if (S.mos && S.view === 'mesas' && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName || '')) { const sc = document.getElementById('scan-mos'); if (sc) sc.focus(); }
   if (e.key !== 'Enter') return;
   const id = e.target.id || '';
   if (id === 'lpass' || id === 'lmail') document.querySelector('[data-act=login]').click();
-  else if (id === 'scan-mos') { e.preventDefault(); const v = e.target.value; e.target.value = ''; escanMostrador(v); }
+  else if (id === 'scan-mos') { e.preventDefault(); clearTimeout(scanT); const v = e.target.value; e.target.value = ''; escanMostrador(v); }
   else if (id === 'scan-inv') { e.preventDefault(); const v = e.target.value; e.target.value = ''; escanInventario(v); }
   else if (id === 'bus-mos') { e.preventDefault(); const r = busMos(); if (r.length) { addMos(r[0].id); render(); } }
   else if (id.startsWith('bq-')) { e.preventDefault(); S.f[id] = e.target.value; addMos(id.slice(3)); render(); }
