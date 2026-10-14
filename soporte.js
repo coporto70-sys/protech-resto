@@ -219,7 +219,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target &&
 /* =====================================================
    CHAT EN VIVO (lado del local)
    ===================================================== */
-const CH = { open: false, msgs: [], cargado: false, ok: false, modo: 'bot', unread: 0, lid: null, ch: null, busy: false };
+const CH = { open: false, msgs: [], cargado: false, ok: false, modo: 'bot', unread: 0, lid: null, ch: null, busy: false, typing: false, ia: true };
 
 /* ---------- Guía del sistema: el asistente responde con esto ---------- */
 const normTxt = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -228,7 +228,7 @@ const KB = [
   { k: ['se cierra', 'se sale', 'me saca', 'pide clave', 'pide pin', 'sesion', 'cierra sola', 'tengo que entrar otra vez'], r: 'La sesión se mantiene abierta por 16 horas desde el último uso. Si te pide entrar de nuevo: recarga la página una vez para tomar la última versión y revisa que tengas internet estable. Si sigue pasando, escríbenos y lo revisamos: toca "Hablar con una persona".' },
   { k: ['pin', 'quien eres', 'quién eres', 'olvide mi pin', 'cambiar pin', 'crear pin', 'asignar pin'], r: 'Si el local tiene PIN de administradora, cada persona elige quién es y entra con su PIN. La administradora ve todo; los garzones solo Mesas (toman pedidos y cobran sus mesas); la cocina solo Cocina y Cafetería. La administradora crea y asigna los PIN en la pestaña "Garzones". Si olvidaste tu PIN, pídele a la administradora que te asigne uno nuevo.' },
   { k: ['tomar pedido', 'tomar un pedido', 'nuevo pedido', 'abrir mesa', 'pedido de mesa', 'agregar productos', 'enviar pedido', 'enviar a cocina', 'comanda'], r: 'Para tomar un pedido: en "Mesas" toca la mesa, elige los productos (puedes agregar una nota) y toca Enviar. Lo de cocina llega a la pantalla de Cocina con sonido; lo de cafetería (cafés y bebidas calientes) sale directo de la mesa como entregado, sin que tengas que marcar nada.' },
-  { k: ['cobrar', 'cobro', 'cerrar mesa', 'cerrar cuenta', 'pagar', 'pago', 'cuenta de la mesa', 'cobrar mesa'], r: 'Para cobrar: abre la mesa en "Mesas" y toca Cobrar. Elige cómo paga el cliente (efectivo, tarjeta o transferencia). En efectivo escribes cuánto te entrega y la app calcula el vuelto; en tarjeta queda indicado; en transferencia te recuerda confirmar que llegó. Antes de cobrar puedes anotar la propina. Cada garzón cobra las mesas que él tomó.' },
+  { k: ['cobrar', 'cobro', 'como cobro', 'como cobrar', 'cobrar una mesa', 'cerrar mesa', 'cerrar cuenta', 'pagar', 'pago', 'cuenta de la mesa', 'cobrar mesa'], r: 'Para cobrar: abre la mesa en "Mesas" y toca Cobrar. Elige cómo paga el cliente (efectivo, tarjeta o transferencia). En efectivo escribes cuánto te entrega y la app calcula el vuelto; en tarjeta queda indicado; en transferencia te recuerda confirmar que llegó. Antes de cobrar puedes anotar la propina. Cada garzón cobra las mesas que él tomó.' },
   { k: ['propina', 'propinas', 'recargo', 'tarjeta propina'], r: 'Al cobrar hay dos recuadros: propina en efectivo (el cliente se la da directo al garzón; no se suma al total) y propina o recargo con tarjeta (se suma a la cuenta). Quedan registradas por garzón en los reportes y en el CSV de ventas.' },
   { k: ['pago parcial', 'pagar parte', 'se retira', 'se fue', 'dividir', 'separar cuenta', 'cuenta compartida', 'grupo de amigos', 'pago por producto'], r: 'Si en una mesa compartida alguien se retira antes, en el cobro elige "pagar por producto", marca lo que consumió esa persona y cóbralo. Eso se descuenta del total de la mesa y el resto sigue abierto para los demás.' },
   { k: ['cafeteria', 'cafe', 'bebida caliente', 'bebidas calientes', 'capuchino', 'cappuccino', 'estacion'], r: 'En "Carta y mesas" cada producto tiene una estación: Cocina o Cafetería. Los cafés y bebidas calientes se marcan como Cafetería: los preparan los garzones y salen directo de la mesa, sin pasar por cocina. La pestaña "Cafetería" muestra esos pedidos.' },
@@ -258,7 +258,7 @@ function chatBot(texto) {
   if (/(gracias|muchas gracias|ok gracias|listo gracias)/.test(t) && t.split(' ').length <= 4) return { ok: true, r: '¡De nada! Si necesitas algo más, aquí estoy.' };
   let best = null, bs = 0;
   KB.forEach(e => { let s = 0; e.k.forEach(k => { if (t.includes(normTxt(k))) s += k.includes(' ') ? 3 : 2; }); if (s > bs) { bs = s; best = e; } });
-  return bs >= 2 ? { ok: true, r: best.r } : { ok: false };
+  return bs >= 2 ? { ok: true, r: best.r, s: bs } : { ok: false };
 }
 const SUGERENCIAS = ['¿Cómo cobro una mesa?', '¿Cómo cierro la caja?', '¿Cómo agrego un producto?', '¿Cómo registro propinas?', 'No me suena la cocina'];
 
@@ -298,8 +298,8 @@ function chatPintar() {
   r.querySelector('#chat-modo').textContent = CH.modo === 'humano' ? 'Hablando con soporte · te responden aquí mismo' : 'Asistente automático · respondo dudas del sistema';
   const box = r.querySelector('#chat-msgs'), cerca = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   const inicial = !CH.msgs.length ? `<div style="align-self:flex-start;max-width:85%;padding:9px 12px;border-radius:14px;background:#e2e8f0;font-size:.93rem;line-height:1.35">¡Hola! Soy el asistente de Protech Resto. Pregúntame lo que necesites del sistema. Si no tengo la respuesta, te conecto con una persona de soporte.</div>` : '';
-  box.innerHTML = inicial + CH.msgs.map(chatBurbuja).join('');
-  if (cerca || CH.open) box.scrollTop = box.scrollHeight;
+  box.innerHTML = inicial + CH.msgs.map(chatBurbuja).join('') + (CH.typing ? '<div style="align-self:flex-start;padding:9px 12px;border-radius:14px;background:#e2e8f0;font-size:.9rem;color:var(--mut)">Escribiendo…</div>' : '');
+  if (cerca || CH.open || CH.typing) box.scrollTop = box.scrollHeight;
   const chips = r.querySelector('#chat-chips');
   chips.innerHTML = (CH.modo === 'humano' ? '<button class="btn-line" style="padding:5px 10px;font-size:.8rem" data-b="1">Volver al asistente</button>' : (CH.msgs.length < 3 ? SUGERENCIAS.map(s => `<button class="btn-line" style="padding:5px 10px;font-size:.8rem">${esc(s)}</button>`).join('') : '') + '<button class="btn-line" style="padding:5px 10px;font-size:.8rem" data-h="1">👤 Hablar con una persona</button>') + `<a class="btn-line" style="padding:5px 10px;font-size:.8rem;border-radius:10px;text-decoration:none;color:var(--ink);border:1.5px solid var(--line);font-weight:600" href="${WA_SOPORTE}" target="_blank" rel="noopener">WhatsApp</a>`;
 }
@@ -316,6 +316,24 @@ async function chatInsertar(autor, texto, extra) {
   chatAgregar(r.data); return r.data;
 }
 function chatAgregar(m) { if (!m || CH.msgs.some(x => x.id === m.id)) return false; CH.msgs.push(m); return true; }
+/* Pregunta a la IA (función Edge resto-ayuda). Devuelve {texto, humano} o null si no está disponible. */
+async function chatIA() {
+  if (!CH.ia) return null;
+  try {
+    const hist = CH.msgs.slice(-10).map(m => ({ role: m.autor === 'cliente' ? 'user' : 'assistant', content: m.texto }));
+    const r = await sb.functions.invoke('resto-ayuda', { body: { messages: hist } });
+    if (r.error || !r.data || !r.data.texto) {
+      const cod = r.data && r.data.error;
+      if (cod === 'sin_clave' || cod === 'sin_local') CH.ia = false; /* aún no está configurada: no insistir en esta sesión */
+      return null;
+    }
+    return r.data;
+  } catch (e) { return null; }
+}
+async function chatEscalar(motivo) {
+  CH.modo = 'humano';
+  await chatInsertar('cliente', motivo || 'Necesito ayuda de una persona con mi consulta anterior.', { humano: true });
+}
 async function chatEnviar(texto) {
   texto = (texto || '').trim(); if (!texto || CH.busy || !D) return;
   CH.busy = true;
@@ -323,14 +341,23 @@ async function chatEnviar(texto) {
     if (CH.modo === 'humano') { await chatInsertar('cliente', texto, { humano: true }); }
     else {
       const resp = chatBot(texto);
-      if (resp.ok) { await chatInsertar('cliente', texto); chatPintar(); await chatInsertar('bot', resp.r); }
+      await chatInsertar('cliente', texto); chatPintar();
+      if (resp.ok && resp.s >= 3) { await chatInsertar('bot', resp.r); }
       else {
-        await chatInsertar('cliente', texto, { humano: true }); chatPintar();
-        CH.modo = 'humano';
-        await chatInsertar('bot', 'No encontré esa respuesta en mi guía. Ya avisé a soporte de Protech con tu mensaje: te responden en este mismo chat. Si es urgente, también puedes escribir por WhatsApp.');
+        CH.typing = true; chatPintar();
+        const ia = await chatIA();
+        CH.typing = false;
+        if (ia) {
+          await chatInsertar('bot', ia.texto);
+          if (ia.humano) { chatPintar(); await chatEscalar(); await chatInsertar('bot', 'Ya avisé a soporte de Protech: te responden en este mismo chat.'); }
+        } else if (resp.ok) { await chatInsertar('bot', resp.r); }
+        else {
+          chatPintar(); await chatEscalar(texto);
+          await chatInsertar('bot', 'No encontré esa respuesta en mi guía. Ya avisé a soporte de Protech con tu mensaje: te responden en este mismo chat. Si es urgente, también puedes escribir por WhatsApp.');
+        }
       }
     }
-  } finally { CH.busy = false; chatPintar(); }
+  } finally { CH.busy = false; CH.typing = false; chatPintar(); }
 }
 async function chatHumano() {
   if (CH.busy || !D) return; CH.busy = true;
@@ -356,7 +383,7 @@ async function chatCargar() {
   }).subscribe();
   chatPintar();
 }
-function chatLimpiar() { if (CH.ch) { sb.removeChannel(CH.ch); CH.ch = null; } CH.lid = null; CH.msgs = []; CH.cargado = false; CH.ok = false; CH.open = false; CH.unread = 0; CH.modo = 'bot'; }
+function chatLimpiar() { CH.ia = true; CH.typing = false; if (CH.ch) { sb.removeChannel(CH.ch); CH.ch = null; } CH.lid = null; CH.msgs = []; CH.cargado = false; CH.ok = false; CH.open = false; CH.unread = 0; CH.modo = 'bot'; }
 
 /* Se llama al final de cada render(): decide qué chat mostrar según quién entró */
 function chatSync() {
