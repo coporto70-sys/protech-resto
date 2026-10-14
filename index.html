@@ -84,7 +84,10 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
 const rolesOn = () => !!(D && D.adminPin);
 const esAdm = () => !rolesOn() || S.rol === 'admin';
 const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'garz', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
-const misTabs = () => !rolesOn() ? TABS.admin : (TABS[S.rol] || []);
+/* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
+const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
+const puedeCobrar = () => !rolesOn() || S.rol === 'admin' || (S.rol === 'garzon' && cajaGarzon());
+const misTabs = () => !rolesOn() ? TABS.admin : S.rol === 'garzon' && cajaGarzon() ? ['mesas', 'turno'] : (TABS[S.rol] || []);
 async function hpin(scope, pin) {
   const b = new TextEncoder().encode(D.id + ':' + scope + ':' + pin);
   const h = await crypto.subtle.digest('SHA-256', b);
@@ -232,7 +235,7 @@ async function cargar() {
   if (loc.error) { S.err = 'No se pudo cargar el local.'; return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
   D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
-    garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
+    garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', t: +new Date(r.created_at) })) };
@@ -327,7 +330,7 @@ function mesasHTML() {
     <input id="np-t" data-keep type="tel" inputmode="tel" placeholder="Teléfono" value="${fv('np-t')}">
     ${S.np.tipo === 'delivery' ? `<input id="np-d" data-keep placeholder="Dirección de entrega" value="${fv('np-d')}">` : ''}
     <div style="display:flex;gap:8px"><button class="btn" data-act="crearped">Crear y tomar pedido</button><button class="btn-line" data-act="cancelnp">Cancelar</button></div></div>` : '';
-  const cartaPed = `<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b style="flex:1">Mostrador, para llevar y delivery</b><button class="btn-ok" data-act="mostrador">+ Venta mostrador</button><button class="btn" data-act="nuevoped" data-t="llevar">+ Para llevar</button><button class="btn" data-act="nuevoped" data-t="delivery">+ Delivery</button></div>${fnp}
+  const cartaPed = `<div class="card" style="margin-bottom:12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b style="flex:1">Mostrador, para llevar y delivery</b>${puedeCobrar() ? '<button class="btn-ok" data-act="mostrador">+ Venta mostrador</button>' : ''}<button class="btn" data-act="nuevoped" data-t="llevar">+ Para llevar</button><button class="btn" data-act="nuevoped" data-t="delivery">+ Delivery</button></div>${fnp}
     ${(l.pedidos || []).map(p => { const a = abiertas(p.num), lis = a.some(c => c.estado === 'listo'); return `<div class="row"><div>${p.tipo === 'delivery' ? '🛵' : '🥡'} <b>#${p.num - 1000}</b> ${esc(p.cliente || '')}<div class="mut">${a.length ? (lis ? 'Listo · ' : 'En preparación · ') + money(totalMesa(p.num)) : 'Sin pedido enviado'}${p.direccion ? ' · ' + esc(p.direccion) : ''}</div></div><button class="${lis ? 'btn-ok' : 'btn-line'}" data-act="mesa" data-n="${p.num}">Abrir</button></div>`; }).join('')}</div>`;
   const ocup = []; for (let n = 1; n <= l.mesas; n++) ocup.push(n); for (let k = 1; k <= l.mesas2; k++) ocup.push(100 + k);
   const oc = ocup.filter(n => abiertas(n).length), enMesas = oc.reduce((a, n) => a + totalMesa(n), 0);
@@ -337,7 +340,7 @@ function mesasHTML() {
 const mesasAbiertas = () => [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0).map(c => c.mesa))].sort((a, b) => a - b);
 function porCobrarHTML() {
   const ms = mesasAbiertas();
-  return `<div class="card" style="margin-bottom:12px"><b>Mesas por cobrar</b><p class="mut" style="margin:4px 0">Cuando un cliente termina y viene a pagar a la caja, cóbralo aquí.</p>${ms.map(n => { const a = abiertas(n), g = (a.find(c => c.garzon) || {}).garzon; return `<div class="row"><div><b>${nm(n)}</b>${g ? ' <small class="mut">' + esc(g) + '</small>' : ''}<div class="mut">${a.map(c => c.items.map(i => (i.q - (i.pg || 0)) + '× ' + esc(i.n)).join(', ')).join(' · ')}</div></div><div style="display:flex;gap:8px;align-items:center"><b>${money(totalMesa(n))}</b><button class="btn-ok" data-act="cobrarmesa" data-n="${n}">Cobrar</button></div></div>`; }).join('') || '<p class="mut" style="margin-top:8px">No hay mesas con consumo pendiente.</p>'}</div>`;
+  return `<div class="card" style="margin-bottom:12px"><b>Mesas por cobrar</b><p class="mut" style="margin:4px 0">Cuando un cliente termina y viene a pagar a la caja, cóbralo aquí.</p>${ms.map(n => { const a = abiertas(n), g = (a.find(c => c.garzon) || {}).garzon; return `<div class="row"><div><b>${nm(n)}</b>${g ? ' <small class="mut">' + esc(g) + '</small>' : ''}<div class="mut">${a.map(c => c.items.map(i => (i.q - (i.pg || 0)) + '× ' + esc(i.n)).join(', ')).join(' · ')}</div></div><div style="display:flex;gap:8px;align-items:center"><b>${money(totalMesa(n))}</b>${puedeCobrar() ? `<button class="btn-ok" data-act="cobrarmesa" data-n="${n}">Cobrar</button>` : '<span class="mut">Cobra en caja</span>'}</div></div>`; }).join('') || '<p class="mut" style="margin-top:8px">No hay mesas con consumo pendiente.</p>'}</div>`;
 }
 function mostradorHTML() {
   const l = L(), cats = [...new Set(l.menu.filter(i => i.on).map(i => i.c))];
@@ -389,7 +392,7 @@ function mesaDetalle() {
   const pinfo = pd ? `<div class="card" style="margin-bottom:12px"><b>${pd.tipo === 'delivery' ? '🛵 Delivery' : '🥡 Para llevar'}</b> · ${esc(pd.cliente || '')}${pd.telefono ? ' · ' + esc(pd.telefono) : ''}${pd.direccion ? `<div class="mut">${esc(pd.direccion)}</div>` : ''}${!ab.length ? `<button class="btn-bad" style="margin-top:8px" data-act="cancelped">Cancelar pedido</button>` : ''}</div>` : '';
   const rvm = resDe(n);
   const rinfo = rvm ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--brand)"><b>Reserva ${esc(rvm.hora)}</b> · ${esc(rvm.nombre)} · ${rvm.personas} personas${rvm.nota ? `<div class="mut">${esc(rvm.nota)}</div>` : ''}</div>` : '';
-  const sinCaja = !cajaAbierta() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">La caja está cerrada. La administradora debe abrir la caja para poder cobrar.</p>' : '';
+  const sinCaja = !puedeCobrar() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">Tú no cobras: el cliente paga en la caja. La administradora puede autorizarte desde Carta y mesas.</p>' : !cajaAbierta() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">La caja está cerrada. La administradora debe abrir la caja para poder cobrar.</p>' : '';
   return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="btn-line" data-act="volver">← Mesas</button><h2 style="margin:0">${nm(n)}</h2></div>${pinfo}${rinfo}
   <div class="cols"><div class="card"><b>Carta</b>${carta || '<p class="mut">La carta está vacía. Agrega platos en "Carta y mesas".</p>'}</div>
   <div><div class="card"><b>Nuevo pedido</b>
@@ -400,8 +403,8 @@ function mesaDetalle() {
     <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>${sel.length && sel.every(i => i.e === 'cafeteria') ? 'Anotar cafetería (sale directo)' : sel.some(i => i.e === 'cafeteria') ? 'Enviar a cocina y anotar cafetería' : 'Enviar a cocina'}</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
   <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
     <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
-    <button class="btn-line" style="width:100%;margin-top:8px" data-act="parcial" ${tot > 0 && cajaAbierta() ? '' : 'disabled'}>Cobrar parte (alguien se retira)</button>
-    <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() ? '' : 'disabled'}>Cerrar cuenta</button>${sinCaja}</div>${cierre}${parcial}</div></div>`;
+    <button class="btn-line" style="width:100%;margin-top:8px" data-act="parcial" ${tot > 0 && cajaAbierta() && puedeCobrar() ? '' : 'disabled'}>Cobrar parte (alguien se retira)</button>
+    <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() && puedeCobrar() ? '' : 'disabled'}>Cerrar cuenta</button>${sinCaja}</div>${cierre}${parcial}</div></div>`;
 }
 function estacionHTML(esta) {
   const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && (esCafe(c) ? 'cafeteria' : 'cocina') === esta).sort((a, b) => a.t - b.t);
@@ -474,7 +477,17 @@ function cajerosHTML(t) {
   return nombres.map(n => { const ses = (D.sesiones || []).filter(x => x.usuario === n), o = por[n] || { n: 0, v: 0 }; const activo = ses.some(x => !x.salida);
     return `<div class="row"><div><b>${esc(n)}</b> ${activo ? '<span class="pill" style="background:#dcfce7;color:var(--ok)">en caja</span>' : ''}<div class="mut">${ses.map(x => h(x.entrada) + (x.salida ? '–' + h(x.salida) : ' en adelante')).join(' · ') || 'sin registro de entrada'} · ${o.n} cobro${o.n === 1 ? '' : 's'}</div></div><b>${money(o.v)}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún nadie ha cobrado en este turno.</p>';
 }
+/* Vista de Caja para un garzón autorizado: cobra mesas y mostrador, y ve solo sus propios cobros (sin totales del local ni cierre) */
+function turnoCajeroHTML() {
+  const t = D.turno;
+  if (!t) return `<h2>Caja</h2><div class="card"><b>Caja cerrada</b><p class="mut" style="margin-top:6px">La administradora debe abrir la caja para que puedas cobrar.</p></div>`;
+  const mis = D.cuentas.filter(c => c.turno_id === t.id && (c.cobrado_por || '') === S.quien);
+  return `<h2>Caja · ${esc(S.quien)}</h2><div style="margin-bottom:12px"><button class="btn-ok" data-act="mostrador">+ Venta mostrador</button></div>${porCobrarHTML()}
+  <div class="card"><b>Mis cobros de este turno</b>${mis.map(c => `<div class="row"><div>${nm(c.mesa)}<div class="mut">${hora(c.t)} · ${esc(c.metodo)}</div></div><b>${money(c.total + c.propina + c.pt)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no has cobrado en este turno.</p>'}
+  ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>`;
+}
 function turnoHTML() {
+  if (!esAdm()) return turnoCajeroHTML();
   const t = D.turno;
   if (S.th === null) { turnoCargar().then(render); }
   const hist = (S.th || []).map(h => `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
@@ -566,7 +579,7 @@ function cartaHTML() {
     <p class="mut">${l.adminPin ? 'Activado: cada persona entra con su PIN. Los garzones solo ven Mesas y cobros; las ventas son solo para la administradora.' : 'Aún sin PIN: todos ven todo. Crea el PIN de la administradora para activar los accesos por usuario.'}</p>
     <label class="mut">${l.adminPin ? 'Cambiar PIN de la administradora' : 'PIN de la administradora (4 a 8 números)'}<input id="apin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••"></label>
     <button class="btn" data-act="setadminpin">Guardar PIN de administradora</button>
-    ${l.adminPin ? `<p class="mut">PIN de cada garzón (vacío = entra sin PIN):</p>${l.garzones.map(g => `<div class="row"><span>${esc(g.n)} <small class="mut">${g.pin ? 'con PIN' : 'sin PIN'}</small></span><div style="display:flex;gap:6px"><input id="gp-${g.id}" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:90px"><button class="btn-line" data-act="setgpin" data-id="${g.id}">Guardar</button></div></div>`).join('') || ''}
+    ${l.adminPin ? `<p class="mut">PIN de cada garzón (vacío = entra sin PIN). Un garzón con "Cobra en caja" puede cobrar en efectivo, tarjeta o transferencia; para autorizarlo necesita PIN. Los demás solo toman pedidos.</p>${l.garzones.map(g => `<div class="row"><div>${esc(g.n)}<div class="mut">${g.pin ? 'con PIN' : 'sin PIN'} · ${g.pin && g.cj ? '<b style="color:var(--ok)">cobra en caja</b>' : 'no cobra'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="gp-${g.id}" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:90px"><button class="btn-line" data-act="setgpin" data-id="${g.id}">Guardar PIN</button><button class="${g.pin && g.cj ? 'btn-bad' : 'btn-ok'}" data-act="gcaja" data-id="${g.id}">${g.pin && g.cj ? 'Quitar caja' : 'Autorizar caja'}</button></div></div>`).join('') || ''}
     <button class="btn-bad" data-act="quitarpin">Desactivar accesos por usuario</button>` : ''}</div></div></div>`;
 }
 function adminShell() {
@@ -667,6 +680,7 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
   if (S.busy) return;
   const a = b.dataset.act, d = b.dataset;
+  if (['cobrarmesa', 'mostrador', 'cerrar', 'parcial', 'pagar', 'pagarparte', 'mospagar'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado puede cobrar.'); return; }
   try {
     if (a === 'login') {
       const email = $('#lmail').value.trim(), password = $('#lpass').value;
@@ -774,6 +788,7 @@ document.addEventListener('click', async e => {
         const pick = [];
         abiertas(S.mesa).forEach(c => c.items.forEach((i, ix) => { const q = Math.min(S.sel[c.id + ':' + ix] || 0, i.q - (i.pg || 0)); if (q > 0) pick.push({ c, ix, q, i }); }));
         if (pick.length) {
+          await ensureSes();
           const sub = pick.reduce((s, x) => s + x.q * x.i.p, 0);
           const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
           const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: sub, propina: S.propina ? Math.round(sub * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: pick.map(x => ({ n: x.i.n, q: x.q, p: x.i.p, e: x.i.e })), ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) });
@@ -787,6 +802,7 @@ document.addEventListener('click', async e => {
           }
         }
       } else if (a === 'pagar') {
+        await ensureSes();
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
         const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
@@ -881,7 +897,13 @@ document.addEventListener('click', async e => {
       else if (a === 'setgpin' && esAdm()) {
         const p = ($('#gp-' + d.id) || {}).value || '';
         if (p && !/^\d{4,8}$/.test(p)) alert('El PIN debe tener de 4 a 8 números.');
-        else fallo(await sb.from('resto_garzones').update({ pin: p ? await hpin('g:' + d.id, p) : null }).eq('id', d.id));
+        else fallo(await sb.from('resto_garzones').update(p ? { pin: await hpin('g:' + d.id, p) } : { pin: null, caja: false }).eq('id', d.id));
+      }
+      else if (a === 'gcaja' && esAdm()) {
+        const g = L().garzones.find(x => x.id === d.id), dar = !(g && g.pin && g.cj);
+        if (!g) { /* ya no existe */ }
+        else if (dar && !g.pin) alert('Primero asígnale un PIN a ' + g.n + ' y luego autorízalo para cobrar.');
+        else fallo(await sb.from('resto_garzones').update({ caja: dar }).eq('id', d.id));
       }
       else if (a === 'quitarpin') {
         if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id));
