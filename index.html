@@ -120,13 +120,15 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
    Administradora: todo. Garzón: solo Mesas (tomar pedidos y cobrar). Cocina: Cocina y Cafetería.
    Si el local aún no configuró PIN, funciona como siempre (todo visible). */
 const rolesOn = () => !!(D && D.adminPin);
-const esAdm = () => !rolesOn() || S.rol === 'admin';
+const esIng = () => S.rol === 'ingeniero';
+const esAdm = () => !rolesOn() || S.rol === 'admin' || esIng();
 const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'garz', 'coms', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos los paneles */
 /* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
-const puedeCobrar = () => !rolesOn() || S.rol === 'admin' || (S.rol === 'garzon' && cajaGarzon());
+const puedeCobrar = () => !rolesOn() || S.rol === 'admin' || esIng() || (S.rol === 'garzon' && cajaGarzon());
 /* Todos los garzones cobran sus mesas; la venta por mostrador y la pestaña Caja son solo para la administradora y los garzones autorizados con PIN */
-const puedeCobrarMesa = () => !rolesOn() || S.rol === 'admin' || S.rol === 'garzon';
+const puedeCobrarMesa = () => !rolesOn() || S.rol === 'admin' || esIng() || S.rol === 'garzon';
 /* Mesas propias: cada mesa es de quien la tomó. Un garzón no entra a la mesa de otro; solo quien tiene caja (PIN autorizado) puede abrirla para cobrarla. */
 const duenoMesa = n => ((abiertas(n).find(c => c.garzon) || {}).garzon) || '';
 const esGarzonRol = () => rolesOn() && S.rol === 'garzon';
@@ -143,7 +145,7 @@ function entrar(rol, quien) {
   S.rol = rol; S.quien = quien; S.qk = null; S.pinErr = ''; S.mesa = null;
   S.garzon = rol === 'garzon' ? quien : '';
   S.view = misTabs()[0];
-  guardarRol(D.id, rol, quien);
+  if (rol !== 'ingeniero') guardarRol(D.id, rol, quien); /* el ingeniero pide su clave cada vez */
   /* el dispositivo de la cocina queda abierto: si se recarga, vuelve solo a Cocina con la misma cocinera */
   try { if (rol === 'cocina') localStorage.setItem('pr-cocina', JSON.stringify({ lid: D.id, quien })); else localStorage.removeItem('pr-cocina'); } catch (e) {}
   S.ses = null; S.mos = false; ensureSes().then(render); pantalla();
@@ -168,14 +170,14 @@ function quienHTML() {
   const opt = (k, n, sub) => `<button class="mesa" style="width:100%" data-act="qsel" data-k="${esc(k)}"><b style="font-size:1.1rem">${esc(n)}</b><span>${sub}</span></button>`;
   let sel = '';
   if (S.qk) {
-    const nombre = S.qk === 'admin' ? 'Administradora' : S.qk.slice(2);
+    const ing = S.qk === 'ing', nombre = ing ? 'Carlos Oporto' : S.qk === 'admin' ? 'Administradora' : S.qk.slice(2);
     sel = `<div class="card" style="margin-top:12px;display:grid;gap:10px"><b>${esc(nombre)}</b>
-      <label class="mut">Tu PIN<input id="qpin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••" autofocus></label>
+      <label class="mut">${ing ? 'Tu clave' : 'Tu PIN'}<input id="qpin" type="password" ${ing ? 'autocomplete="off" placeholder="Clave"' : 'inputmode="numeric" autocomplete="off" placeholder="••••"'} autofocus></label>
       ${S.pinErr ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.pinErr)}</div>` : ''}
       <div style="display:flex;gap:8px"><button class="btn" style="flex:1" data-act="qok">Entrar</button><button class="btn-line" data-act="qback">Volver</button></div></div>`;
   }
   return `<header><div><b>${esc(D.name)}</b><small>Protech Resto</small></div><nav></nav><button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header>
-  <main><h2>¿Quién eres?</h2><div class="grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${coc.length ? coc.map(x => opt('c:' + x.n, x.n, 'Cocina · comandas')).join('') : opt('cocina', 'Cocina', 'Comandas')}</div>${sel}</main>`;
+  <main><h2>¿Quién eres?</h2><div class="grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${coc.length ? coc.map(x => opt('c:' + x.n, x.n, 'Cocina · comandas')).join('') : opt('cocina', 'Cocina', 'Comandas')}${opt('ing', 'Carlos Oporto', 'Ingeniero de Software')}</div>${sel}</main>`;
 }
 
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
@@ -225,7 +227,7 @@ document.addEventListener('click', e => { if (e.target.closest('#toast')) $('#to
    Garzón: solo sus pedidos listos. Cocina: solo comandas nuevas. */
 let EX = null;
 function avisar(prev) {
-  const rol = rolesOn() ? S.rol : 'admin', adm = rol === 'admin';
+  const rol = rolesOn() ? S.rol : 'admin', adm = rol === 'admin' || rol === 'ingeniero';
   const modo = adm ? (SND === 'off' ? 'off' : 'ambos') : SND;
   const por = c => nm(c.mesa) + (c.garzon ? ' (' + c.garzon + ')' : '');
   const nuevos = D.comandas.filter(c => !prev.has(c.id) && c.estado === 'pendiente' && !esCafe(c));
@@ -393,7 +395,7 @@ function shell(inner) {
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
     <button class="btn-line" style="padding:6px 12px" data-act="sonido">Sonido: ${SNDL[SND]}${SND !== 'off' && !(AC && AC.state === 'running') ? ' (toca para activar)' : ''}</button>
-    ${rolesOn() ? `<button class="btn-line" style="padding:6px 12px" data-act="cambiar">${esc(S.rol === 'admin' ? 'Administradora' : S.rol === 'cocina' ? (S.quien && S.quien !== 'Cocina' ? 'Cocina · ' + S.quien : 'Cocina') : S.quien)} · cambiar</button>` : ''}
+    ${rolesOn() ? `<button class="btn-line" style="padding:6px 12px" data-act="cambiar">${esc(S.rol === 'ingeniero' ? 'Carlos Oporto · Ingeniero' : S.rol === 'admin' ? 'Administradora' : S.rol === 'cocina' ? (S.quien && S.quien !== 'Cocina' ? 'Cocina · ' + S.quien : 'Cocina') : S.quien)} · cambiar</button>` : ''}
     <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${S.rol === 'cocina' && SND !== 'off' && !(AC && AC.state === 'running') ? '<button class="btn" style="width:100%;margin-bottom:12px;padding:14px;font-size:1.1rem" data-act="activarsonido">🔔 Toca aquí para activar el sonido de las comandas</button>' : ''}${inner}</main>`;
 }
 function mesasHTML() {
@@ -926,6 +928,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   const id = e.target.id || '';
   if (id === 'lpass' || id === 'lmail') document.querySelector('[data-act=login]').click();
+  else if (id === 'qpin') { e.preventDefault(); const b = document.querySelector('[data-act=qok]'); if (b) b.click(); }
   else if (id === 'scan-mos') { e.preventDefault(); clearTimeout(scanT); const v = e.target.value; e.target.value = ''; escanMostrador(v); }
   else if (id === 'scan-inv') { e.preventDefault(); const v = e.target.value; e.target.value = ''; escanInventario(v); }
   else if (id === 'bus-mos') { e.preventDefault(); const r = busMos(); if (r.length) { addMos(r[0].id); render(); } }
@@ -1030,6 +1033,12 @@ document.addEventListener('click', async e => {
     if (a === 'qback') { S.qk = null; S.pinErr = ''; render(); return; }
     if (a === 'qok') {
       const pin = ($('#qpin') || {}).value || '', k = S.qk; if (!k) return;
+      if (k === 'ing') {
+        const r = await sb.rpc('resto_verificar_ingeniero', { p_clave: pin });
+        if (r.error) { S.pinErr = 'No se pudo verificar la clave. Intenta de nuevo.'; render(); return; }
+        if (r.data !== true) { S.pinErr = 'Clave incorrecta'; render(); return; }
+        entrar('ingeniero', 'Carlos Oporto'); render(); return;
+      }
       if (k.startsWith('c:')) {
         const c = D.cocineras.find(x => x.n === k.slice(2) && x.on);
         if (!(c && c.pin && (await hpin('c:' + c.id, pin)) === c.pin)) { S.pinErr = 'PIN incorrecto'; render(); return; }
