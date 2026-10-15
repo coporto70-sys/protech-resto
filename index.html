@@ -251,6 +251,30 @@ function avisarExtra() {
   }
   EX = { lid: D.id, ped: ids, low: bajos };
 }
+/* Anulaciones: la administradora recibe las solicitudes; el garzón, la respuesta; la cocina, el aviso de lo que ya no debe preparar */
+let EXA = null;
+function avisarAnu() {
+  const an = D.anulaciones || [], rol = rolesOn() ? S.rol : 'admin', adm = rol === 'admin' || rol === 'ingeniero';
+  if (EXA && EXA.lid === D.id) {
+    const modo = adm ? (SND === 'off' ? 'off' : 'ambos') : SND;
+    const cambio = an.filter(a => EXA.m.get(a.id) !== a.estado);
+    const txt = a => nm(a.mesa) + ' · ' + a.cantidad + '× ' + a.item_n;
+    const pend = cambio.filter(a => a.estado === 'pendiente'), apro = cambio.filter(a => a.estado === 'aprobada'), rech = cambio.filter(a => a.estado === 'rechazada');
+    if (adm && modo !== 'off') {
+      if (pend.length) { sonarListo(); toast('SOLICITUD DE ANULACIÓN · ' + pend.map(a => txt(a) + (a.garzon ? ' (' + a.garzon + ')' : '')).join(', '), 'tk-c'); }
+      const o = apro.filter(a => a.resuelta_por !== (S.quien || 'Administradora'));
+      if (o.length) toast('ANULACIÓN AUTORIZADA · ' + o.map(a => txt(a) + (a.resuelta_por ? ' (' + a.resuelta_por + ')' : '')).join(', '), 'tk-l');
+    }
+    if (rol === 'garzon' && modo !== 'off') {
+      const ap = apro.filter(a => a.garzon === S.quien), rc = rech.filter(a => a.garzon === S.quien);
+      if (ap.length) { sonarListo(); toast('ANULACIÓN APROBADA · ' + ap.map(txt).join(', '), 'tk-l'); }
+      if (rc.length) { sonarListo(); toast('ANULACIÓN RECHAZADA · ' + rc.map(txt).join(', '), 'tk-c'); }
+    }
+    const coc = apro.filter(a => a.estacion === 'cocina');
+    if (coc.length && rol === 'cocina' && (modo === 'cocina' || modo === 'ambos')) { sonarCocina(); toast('ANULADO · NO PREPARAR · ' + coc.map(a => txt(a) + (a.perdida ? ' (ya estaba en preparación)' : '')).join(', '), 'tk-c'); }
+  }
+  EXA = { lid: D.id, m: new Map(an.map(a => [a.id, a.estado])) };
+}
 const RESAL = new Set();
 setInterval(() => {
   if (!S.user || !D || !esAdm() || SND === 'off') return;
@@ -287,7 +311,7 @@ async function cargar() {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res, coc] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu] = await Promise.all([
     sb.from('resto_locales').select('*').eq('id', id).single(),
     sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
     sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
@@ -296,7 +320,8 @@ async function cargar() {
     sb.from('resto_turnos').select('*').eq('local_id', id).is('cerrado_at', null).order('abierto_at', { ascending: false }).limit(1),
     sb.from('resto_pedidos').select('*').eq('local_id', id).eq('cerrado', false).order('num'),
     sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora'),
-    sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre')
+    sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre'),
+    sb.from('resto_anulaciones').select('*').eq('local_id', id).gte('created_at', desde.toISOString()).order('created_at')
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
@@ -306,10 +331,13 @@ async function cargar() {
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', t: +new Date(r.created_at) })) };
+  D.anuOk = !!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
+  D.anulaciones = D.anuOk ? (anu.data || []) : [];
   D.sesiones = [];
   if (D.turno) { const ss = await sb.from('resto_sesiones').select('*').eq('turno_id', D.turno.id).order('entrada'); D.sesiones = ss.data || []; await ensureSes(); }
   if (prev) avisar(prev);
   avisarExtra();
+  avisarAnu();
 }
 /* ---------- Registro de quién está en caja ---------- */
 async function ensureSes() {
@@ -349,7 +377,7 @@ function suscribir() {
   if (rt || !D) return;
   const refresca = () => { clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; await cargar(); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
-  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
   rt.subscribe();
 }
 const _h = location.hash || '';
@@ -427,7 +455,7 @@ function mesasHTML() {
   const ocup = []; for (let n = 1; n <= l.mesas; n++) ocup.push(n); for (let k = 1; k <= l.mesas2; k++) ocup.push(100 + k);
   const oc = ocup.filter(n => abiertas(n).length), enMesas = oc.reduce((a, n) => a + totalMesa(n), 0);
   const resumen = `<p class="mut" style="margin-bottom:10px"><b>${oc.length}</b> de ${ocup.length} mesas ocupadas · por cobrar en mesas <b>${money(enMesas)}</b></p>`;
-  return `<h2>Mesas</h2>${resumen}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  return `<h2>Mesas</h2>${resumen}${anuPendientesHTML()}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
 }
 const mesasAbiertas = () => [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0).map(c => c.mesa))].sort((a, b) => a - b);
 function porCobrarHTML() {
@@ -502,6 +530,74 @@ function baseCobro(a) {
   if (a === 'mospagar') return L().menu.filter(i => S.cart[i.id]).reduce((s, i) => s + i.p * S.cart[i.id], 0);
   return abiertas(S.mesa).reduce((s, c) => s + c.items.reduce((t, i, ix) => t + Math.min(S.sel[c.id + ':' + ix] || 0, i.q - (i.pg || 0)) * i.p, 0), 0);
 }
+/* ---------- Anulación de productos ya enviados ----------
+   El garzón solicita; la administradora aprueba (en su pantalla o con su PIN en el equipo del garzón).
+   Cafetería sale directo de la mesa: se quita sin autorización, pero queda registrado. */
+const ANU_MOTIVOS = ['El cliente cambió de opinión', 'Error al anotar el pedido', 'Demora en la entrega', 'Producto no disponible', 'Otro'];
+const anuPend = (cid, n) => ((D && D.anulaciones) || []).find(a => a.comanda_id === cid && a.item_n === n && a.estado === 'pendiente');
+const anuLibre = i => i.q - (i.pg || 0);
+const anuDirecto = c => esAdm() || esCafe(c);
+const ahoraIso = () => new Date().toISOString();
+async function anuAplicar(a, por) {
+  const cierra = async (estado, quien) => fallo(await sb.from('resto_anulaciones').update({ estado, resuelta_por: quien, resuelta_at: ahoraIso() }).eq('id', a.id));
+  const c = D.comandas.find(x => x.id === a.comanda_id && !x.cerrada), it = c && c.items.find(i => i.n === a.item_n);
+  const cant = it ? Math.min(a.cantidad, anuLibre(it)) : 0;
+  if (!c || !it || cant <= 0) { alert('Ese producto ya no está en una mesa abierta (se cobró o ya se quitó). La solicitud se cierra.'); await cierra('rechazada', 'Sistema'); return false; }
+  const items = c.items.map(i => i === it ? { ...i, q: i.q - cant } : i).filter(i => i.q > 0);
+  const lista = !items.length || (items.every(i => (i.pg || 0) >= i.q) && c.estado === 'entregado');
+  if (fallo(await sb.from('resto_comandas').update({ items, ...(lista ? { cerrada: true } : {}) }).eq('id', c.id))) return false;
+  /* si cocina todavía no lo tocaba, el producto vuelve al stock; si ya lo preparaba, queda como pérdida */
+  const perdida = c.estado !== 'pendiente' && !esCafe(c);
+  if (!perdida) { const m = D.menu.find(x => x.n === a.item_n && x.s != null); if (m) await sb.rpc('resto_stock_mover', { p_menu: m.id, p_delta: cant, p_motivo: 'anulación', p_por: por, p_log: true }); }
+  fallo(await sb.from('resto_anulaciones').update({ estado: 'aprobada', cantidad: cant, perdida, resuelta_por: por, resuelta_at: ahoraIso() }).eq('id', a.id));
+  return true;
+}
+function anuItemHTML(c, i, ix) {
+  const pen = anuPend(c.id, i.n);
+  const pg = i.pg ? ' <small class="mut">(' + (i.pg >= i.q ? 'pagado' : i.pg + ' pagado') + ')</small>' : '';
+  const mini = 'padding:2px 8px;font-size:.8rem';
+  let acc = '';
+  if (D.anuOk && pen) {
+    acc = ` <span class="pill" style="background:#fef3c7;color:#92400e">anulación pendiente (${pen.cantidad})</span>` + (esAdm()
+      ? ` <button class="btn-ok" style="${mini}" data-act="anuaprobar" data-id="${pen.id}">Aprobar</button> <button class="btn-bad" style="${mini}" data-act="anurech" data-id="${pen.id}">Rechazar</button>`
+      : ` <button class="btn-line" style="${mini}" data-act="anupin" data-id="${pen.id}">Autorizar con PIN</button>`);
+  } else if (D.anuOk && anuLibre(i) > 0 && !S.mos) acc = ` <button class="btn-line" style="${mini}" data-act="anuabrir" data-c="${c.id}" data-i="${ix}">${anuDirecto(c) ? 'Quitar' : 'Solicitar anulación'}</button>`;
+  return `<div style="margin-top:4px">${i.q}× ${esc(i.n)}${pg}${acc}</div>`;
+}
+function anuFormHTML(n) {
+  let h = '';
+  if (S.an) {
+    const f = S.an, c = abiertas(n).find(x => x.id === f.c), it = c && c.items.find(x => x.n === f.n);
+    if (!c || !it) S.an = null;
+    else {
+      const max = anuLibre(it), directo = anuDirecto(c);
+      h += `<div class="card" style="margin:8px 0;border:2px solid var(--warn);display:grid;gap:8px"><b>${directo ? 'Quitar de la cuenta' : 'Solicitar anulación de'} «${esc(it.n)}»</b>
+        <label class="mut">Cantidad a anular (hay ${max})<input id="anu-q" data-keep type="number" inputmode="numeric" min="1" max="${max}" value="${S.f['anu-q'] === undefined ? 1 : fv('anu-q')}"></label>
+        <label class="mut">Motivo<select id="anu-m" data-keep>${ANU_MOTIVOS.map(m => `<option ${S.f['anu-m'] === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>
+        <input id="anu-t" data-keep placeholder="Detalle (opcional)" value="${fv('anu-t')}">
+        ${c.estado !== 'pendiente' && !esCafe(c) ? '<p class="mut" style="color:var(--bad)">Cocina ya empezó o terminó este pedido: quedará registrado como pérdida.</p>' : ''}
+        ${directo ? '' : '<p class="mut">La administradora recibe la solicitud y debe aprobarla. Mientras tanto, el producto sigue en la cuenta.</p>'}
+        <div style="display:flex;gap:8px"><button class="btn" data-act="anuok">${directo ? 'Quitar ahora' : 'Enviar solicitud'}</button><button class="btn-line" data-act="anucancel">Cancelar</button></div></div>`;
+    }
+  }
+  if (S.anp) {
+    const a = (D.anulaciones || []).find(x => x.id === S.anp && x.estado === 'pendiente');
+    if (!a) S.anp = null;
+    else h += `<div class="card" style="margin:8px 0;border:2px solid var(--warn);display:grid;gap:8px"><b>Autorizar anulación · ${a.cantidad}× ${esc(a.item_n)}</b>
+      <label class="mut">PIN de la administradora<input id="anu-pin" data-keep type="password" inputmode="numeric" autocomplete="off" placeholder="••••" value="${fv('anu-pin')}"></label>
+      ${S.anpE ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.anpE)}</div>` : ''}
+      <div style="display:flex;gap:8px"><button class="btn" data-act="anupinok">Autorizar</button><button class="btn-line" data-act="anucancel">Cancelar</button></div></div>`;
+  }
+  return h;
+}
+/* solicitudes pendientes, a la vista de la administradora en la pantalla de Mesas */
+function anuPendientesHTML() {
+  if (!esAdm() || !D.anuOk) return '';
+  const p = (D.anulaciones || []).filter(a => a.estado === 'pendiente' && D.comandas.some(c => c.id === a.comanda_id && !c.cerrada));
+  if (!p.length) return '';
+  return `<div class="card" style="margin-bottom:12px;border:2px solid var(--bad)"><b>Solicitudes de anulación (${p.length})</b>${p.map(a => { const c = D.comandas.find(x => x.id === a.comanda_id); const ya = c && c.estado !== 'pendiente' && !esCafe(c);
+    return `<div class="row"><div><b>${nm(a.mesa)}</b> · ${a.cantidad}× ${esc(a.item_n)}${a.garzon ? ' <small class="mut">' + esc(a.garzon) + '</small>' : ''}<div class="mut">${esc(a.motivo || '')}${ya ? ' · <b style="color:var(--bad)">cocina ya lo preparó: quedará como pérdida</b>' : ''}</div></div><div style="display:flex;gap:6px"><button class="btn-ok" data-act="anuaprobar" data-id="${a.id}">Aprobar</button><button class="btn-bad" data-act="anurech" data-id="${a.id}">Rechazar</button></div></div>`; }).join('')}</div>`;
+}
 function mesaDetalle() {
   const l = L(), n = S.mesa;
   const cats = [...new Set(l.menu.filter(i => i.on).map(i => i.c))];
@@ -511,7 +607,7 @@ function mesaDetalle() {
   const sel = l.menu.filter(i => S.cart[i.id]);
   const subt = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
   const ab = abiertas(n), tot = totalMesa(n);
-  const env = ab.map(c => `<div class="row"><div><span class="pill">${c.estado}</span>${esCafe(c) ? ' <small class="mut">cafetería</small>' : ''}${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''} ${c.items.map(i => i.q + '× ' + esc(i.n) + (i.pg ? ' <small class="mut">(' + (i.pg >= i.q ? 'pagado' : i.pg + ' pagado') + ')</small>' : '')).join(', ')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
+  const env = ab.map(c => `<div class="row" style="align-items:flex-start"><div><span class="pill">${c.estado}</span>${esCafe(c) ? ' <small class="mut">cafetería</small>' : ''}${c.garzon ? ' <small class="mut">' + esc(c.garzon) + '</small>' : ''}${c.items.map((i, ix) => anuItemHTML(c, i, ix)).join('')}</div>${c.estado === 'listo' ? `<button class="btn-ok" data-act="avanzar" data-id="${c.id}" data-to="entregado">Entregado</button>` : ''}</div>`).join('');
   const resta = ab.some(c => c.items.some(i => i.pg));
   const cierre = S.cerrando ? `<div class="card" style="margin-top:12px"><b>Cerrar cuenta · ${nm(n)}</b>
     <div class="row"><span>${resta ? 'Consumo restante' : 'Consumo'}</span><b>${money(tot)}</b></div>
@@ -537,7 +633,7 @@ function mesaDetalle() {
     <input id="nota" placeholder="Nota (sin cebolla, sin azúcar, etc.)" value="${esc(S.note)}" style="margin-top:8px">
     <div class="total"><span>Subtotal</span><span>${money(subt)}</span></div>
     <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>${sel.length && sel.every(i => i.e === 'cafeteria') ? 'Anotar cafetería (sale directo)' : sel.some(i => i.e === 'cafeteria') ? 'Enviar a cocina y anotar cafetería' : 'Enviar a cocina'}</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
-  <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
+  <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${anuFormHTML(n)}${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
     <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
     <button class="btn-line" style="width:100%;margin-top:8px" data-act="parcial" ${tot > 0 && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cobrar parte (alguien se retira)</button>
     <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cerrar cuenta</button>${sinCaja}</div>${cierre}${parcial}</div></div>`;
@@ -608,17 +704,24 @@ async function cmPagina(tabla, d, h) {
 async function cmCargar() {
   if (!S.cmd) S.cmd = fechaIso(new Date()); if (!S.cmh) S.cmh = S.cmd;
   const d = new Date(S.cmd + 'T00:00:00'), h = new Date(S.cmh + 'T00:00:00'); h.setDate(h.getDate() + 1);
-  const [a, b] = await Promise.all([cmPagina('resto_comandas', d, h), cmPagina('resto_cuentas', d, h)]);
+  const [a, b, an] = await Promise.all([cmPagina('resto_comandas', d, h), cmPagina('resto_cuentas', d, h), cmPagina('resto_anulaciones', d, h)]);
   S.cm = {
     err: a.err || b.err,
     rows: a.rows.map(r => ({ id: r.id, mesa: r.mesa, items: r.items || [], nota: r.nota || '', garzon: r.garzon || '(sin garzón)', estado: r.estado, cerrada: !!r.cerrada, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', t: +new Date(r.created_at) })),
-    cuentas: b.rows.map(r => ({ mesa: r.mesa, total: r.total, garzon: r.garzon || '(sin garzón)' }))
+    cuentas: b.rows.map(r => ({ mesa: r.mesa, total: r.total, garzon: r.garzon || '(sin garzón)' })),
+    anu: an.err ? [] : an.rows.map(r => ({ t: +new Date(r.created_at), mesa: r.mesa, garzon: r.garzon || '(sin garzón)', n: r.item_n, q: r.cantidad, p: r.precio, motivo: r.motivo || '', estado: r.estado, por: r.resuelta_por || '', pedida: r.pedida_por || '', perdida: !!r.perdida }))
   };
 }
 const cmValor = c => c.items.reduce((s, i) => s + i.q * i.p, 0);
 const cmPend = c => c.cerrada ? 0 : c.items.reduce((s, i) => s + (i.q - (i.pg || 0)) * i.p, 0);
 const cmMesaTxt = m => m === 0 ? 'Mostrador' : m >= 1000 ? 'Pedido ' + (m - 1000) : m > 100 ? 'Piso 2 · Mesa ' + (m - 100) : 'Mesa ' + m;
 function cmFiltradas() { const g = S.f.cmg || ''; return S.cm.rows.filter(c => !g || c.garzon === g); }
+const cmAnu = () => (S.cm.anu || []).filter(x => !(S.f.cmg || '') || x.garzon === S.f.cmg);
+function anuListaHTML() {
+  const l = cmAnu(); if (!l.length) return '';
+  const col = { aprobada: 'var(--ok)', rechazada: 'var(--bad)', pendiente: '#92400e' };
+  return `<div class="card" style="margin-top:12px"><b>Anulaciones de productos (${l.length})</b><p class="mut" style="margin:4px 0">Productos que se quitaron de la cuenta después de enviarlos, con el motivo y quién lo autorizó.</p>${l.map(x => `<div class="row" style="align-items:flex-start"><div><b>${esc(cmMesaTxt(x.mesa))}</b> · ${hora(x.t)} · ${esc(x.garzon)}<div>${x.q}× ${esc(x.n)} <span class="mut">${money(x.p)}</span></div><div class="mut">${esc(x.motivo)}${x.por ? ' · autorizó ' + esc(x.por) : ''}${x.perdida ? ' · <b style="color:var(--bad)">pérdida (ya preparado)</b>' : ''}</div></div><b style="color:${col[x.estado] || 'inherit'}">${esc(x.estado)}</b></div>`).join('')}</div>`;
+}
 function comsHTML() {
   if (!S.cmd) S.cmd = fechaIso(new Date()); if (!S.cmh) S.cmh = S.cmd;
   if (S.cm === null || S.cm === undefined) { cmCargar().then(render); return '<h2>Comandas</h2><p class="mut">Cargando…</p>'; }
@@ -637,11 +740,11 @@ function comsHTML() {
   ${S.cm.err ? '<div class="card" style="margin-top:12px;color:var(--bad)">No se pudieron cargar todos los datos. Intenta de nuevo con "Ver".</div>' : ''}
   <div class="card" style="margin-top:12px"><b>Resumen por garzón</b>${res.map(x => { const dif = x.env - x.pend - x.cob; return `<div class="row"><div>${esc(x.n)}<div class="mut">${x.cant} comanda${x.cant === 1 ? '' : 's'} · enviado ${money(x.env)} · cobrado ${money(x.cob)}${x.pend ? ' · mesas abiertas ' + money(x.pend) : ''}</div></div><b style="color:${dif === 0 ? 'var(--ok)' : 'var(--bad)'}">${dif === 0 ? 'Cuadra' : (dif > 0 ? 'Falta cobrar ' : 'Cobró de más ') + money(Math.abs(dif))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Sin comandas en ese período.</p>'}
     <p class="mut" style="margin-top:8px">"Cuadra" significa que lo enviado coincide con lo cobrado más lo que sigue en mesas abiertas. Si no cuadra, revisa las comandas de ese garzón abajo (ítems anotados de más o de menos, descuentos, cobros distintos). Las ventas por mostrador no se comparan porque no pasan por comanda.</p></div>
-  <div class="card" style="margin-top:12px"><b>Detalle de comandas${sel ? ' · ' + esc(sel) : ''} (${fil.length})</b>${fil.map(c => `<div class="row" style="align-items:flex-start"><div><b>${esc(cmMesaTxt(c.mesa))}</b> · ${hora(c.t)} · ${esc(c.garzon)}<div style="margin:4px 0">${estPill(c)}</div>${c.items.map(i => `<div>${i.q}× ${esc(i.n)} <span class="mut">${money(i.p)}</span></div>`).join('')}${c.nota ? `<div class="mut">Nota: ${esc(c.nota)}</div>` : ''}</div><b>${money(cmValor(c))}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin comandas para mostrar.</p>'}</div>`;
+  <div class="card" style="margin-top:12px"><b>Detalle de comandas${sel ? ' · ' + esc(sel) : ''} (${fil.length})</b>${fil.map(c => `<div class="row" style="align-items:flex-start"><div><b>${esc(cmMesaTxt(c.mesa))}</b> · ${hora(c.t)} · ${esc(c.garzon)}<div style="margin:4px 0">${estPill(c)}</div>${c.items.map(i => `<div>${i.q}× ${esc(i.n)} <span class="mut">${money(i.p)}</span></div>`).join('')}${c.nota ? `<div class="mut">Nota: ${esc(c.nota)}</div>` : ''}</div><b>${money(cmValor(c))}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin comandas para mostrar.</p>'}</div>${anuListaHTML()}`;
 }
 function cmCSV() {
   const q = v => '"' + String(v).replace(/"/g, '""') + '"';
-  const t = '﻿Fecha;Mesa;Garzón;Estación;Estado;Cobrada;Detalle;Nota;Valor\n' + cmFiltradas().map(c => [new Date(c.t).toLocaleString('es-CL'), q(cmMesaTxt(c.mesa)), q(c.garzon), c.est === 'cafeteria' ? 'Cafetería' : 'Cocina', c.estado || '', c.cerrada ? 'Sí' : 'No', q(c.items.map(i => i.q + 'x ' + i.n + ' (' + i.p + ')').join(', ')), q(c.nota), cmValor(c)].join(';')).join('\n');
+  const t = '﻿Fecha;Mesa;Garzón;Estación;Estado;Cobrada;Detalle;Nota;Valor\n' + cmFiltradas().map(c => [new Date(c.t).toLocaleString('es-CL'), q(cmMesaTxt(c.mesa)), q(c.garzon), c.est === 'cafeteria' ? 'Cafetería' : 'Cocina', c.estado || '', c.cerrada ? 'Sí' : 'No', q(c.items.map(i => i.q + 'x ' + i.n + ' (' + i.p + ')').join(', ')), q(c.nota), cmValor(c)].join(';')).join('\n') + (cmAnu().length ? '\n\nAnulaciones\nFecha;Mesa;Garzón;Producto;Cantidad;Precio;Motivo;Estado;Autorizó;Pérdida\n' + cmAnu().map(x => [new Date(x.t).toLocaleString('es-CL'), q(cmMesaTxt(x.mesa)), q(x.garzon), q(x.n), x.q, x.p, q(x.motivo), x.estado, q(x.por), x.perdida ? 'Sí' : 'No'].join(';')).join('\n') : '');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
   a.download = 'comandas_' + S.cmd + '_a_' + S.cmh + '.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
@@ -1078,13 +1181,16 @@ document.addEventListener('click', async e => {
       entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n); render(); return;
     }
     if (a === 'cambiar') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; olvidarRol(); render(); return; }
-    if (a === 'logout') { S.saliendo = true; EX = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
+    if (a === 'logout') { S.saliendo = true; EX = null; EXA = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; S.mos = d.v === 'turno' && puedeCobrar(); if (S.mos) { S.propina = false; S.metodo = 'Efectivo'; S.pe = ''; S.pt = ''; S.rc = ''; } }
-    else if (a === 'mesa') { delete S.f['bus-mos']; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
-    else if (a === 'volver') { delete S.f['bus-mos']; if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'mesa') { S.an = null; S.anp = null; delete S.f['bus-mos']; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'volver') { S.an = null; S.anp = null; delete S.f['bus-mos']; if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
+    else if (a === 'anuabrir') { const c = abiertas(S.mesa).find(x => x.id === d.c), it = c && c.items[+d.i]; if (c && it && puedeVerMesa(S.mesa)) { S.an = { c: c.id, n: it.n }; S.anp = null; ['anu-q', 'anu-m', 'anu-t'].forEach(k => delete S.f[k]); } }
+    else if (a === 'anucancel') { S.an = null; S.anp = null; S.anpE = ''; delete S.f['anu-pin']; }
+    else if (a === 'anupin') { S.anp = d.id; S.an = null; S.anpE = ''; delete S.f['anu-pin']; }
     else if (a === 'mosadd') addMos(d.id);
     else if (a === 'vaciar') { S.cart = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
@@ -1148,6 +1254,30 @@ document.addEventListener('click', async e => {
       } else if (a === 'avanzar') {
         const c = L().comandas.find(x => x.id === d.id);
         fallo(await sb.from('resto_comandas').update({ estado: d.to, ...(d.to === 'entregado' && c && pagada(c) ? { cerrada: true } : {}) }).eq('id', d.id));
+      }
+      else if (a === 'anuok') {
+        const f = S.an, c = f && abiertas(S.mesa).find(x => x.id === f.c), it = c && c.items.find(x => x.n === f.n);
+        if (c && it && puedeVerMesa(S.mesa) && !anuPend(c.id, it.n)) {
+          const cant = Math.min(anuLibre(it), Math.max(1, Math.round(+S.f['anu-q'] || 1)));
+          const det = (S.f['anu-t'] || '').trim(), motivo = ((S.f['anu-m'] || ANU_MOTIVOS[0]) + (det ? ' · ' + det : '')).slice(0, 200);
+          const directo = anuDirecto(c), por = esAdm() ? (S.quien || 'Administradora') : 'Sin autorización (cafetería)';
+          const fila = { local_id: D.id, comanda_id: c.id, item_n: it.n, cantidad: cant, precio: it.p, mesa: c.mesa, garzon: c.garzon || (S.rol === 'garzon' ? S.quien : null), estacion: esCafe(c) ? 'cafeteria' : 'cocina', estado_comanda: c.estado, motivo, pedida_por: S.quien || 'Administradora', estado: directo ? 'aprobada' : 'pendiente', ...(directo ? { resuelta_por: por, resuelta_at: ahoraIso() } : {}) };
+          const r = await sb.from('resto_anulaciones').insert(fila).select().single();
+          if (!fallo(r)) {
+            if (directo) await anuAplicar(r.data, por);
+            S.an = null; ['anu-q', 'anu-m', 'anu-t'].forEach(k => delete S.f[k]);
+            toast(directo ? 'Producto quitado de la cuenta' : 'Solicitud enviada a la administradora', 'tk-l');
+          }
+        }
+      }
+      else if (a === 'anuaprobar' && esAdm()) { const x = (D.anulaciones || []).find(y => y.id === d.id && y.estado === 'pendiente'); if (x && await anuAplicar(x, S.quien || 'Administradora')) toast('Anulación aprobada', 'tk-l'); }
+      else if (a === 'anurech' && esAdm()) { const x = (D.anulaciones || []).find(y => y.id === d.id && y.estado === 'pendiente'); if (x && !fallo(await sb.from('resto_anulaciones').update({ estado: 'rechazada', resuelta_por: S.quien || 'Administradora', resuelta_at: ahoraIso() }).eq('id', x.id))) toast('Solicitud rechazada', 'tk-l'); }
+      else if (a === 'anupinok') {
+        const x = (D.anulaciones || []).find(y => y.id === S.anp && y.estado === 'pendiente'), pin = S.f['anu-pin'] || '';
+        if (!x) S.anp = null;
+        else if ((S.anpN || 0) >= 5) S.anpE = 'Demasiados intentos. Pide a la administradora que la apruebe desde su pantalla.';
+        else if (!/^\d{4,8}$/.test(pin) || !D.adminPin || (await hpin('admin', pin)) !== D.adminPin) { S.anpN = (S.anpN || 0) + 1; S.anpE = 'PIN incorrecto'; }
+        else if (await anuAplicar(x, 'Administradora (PIN en el equipo de ' + (S.quien || 'garzón') + ')')) { S.anpN = 0; S.anp = null; S.anpE = ''; delete S.f['anu-pin']; toast('Anulación autorizada', 'tk-l'); }
       }
       else if (a === 'mospagar') {
         const sel = L().menu.filter(i => S.cart[i.id]), sub = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
