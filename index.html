@@ -491,6 +491,7 @@ function mostradorHTML() {
     ${buscadorHTML()}
     ${carta || '<p class="mut">La carta está vacía.</p>'}</div>
   <div><div class="card"><b>Venta</b>${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega productos.</p>'}
+    ${sub > 0 ? `<input id="nota" placeholder="Observación para cocina (sin mayonesa, sin cebolla, etc.)" value="${esc(S.note)}" style="margin-top:8px">` : ''}
     ${sub > 0 ? camposPago(sub) : ''}
     ${!cajaAbierta() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">La caja está cerrada. La administradora debe abrirla para cobrar.</p>' : ''}
     <button class="btn-ok" style="width:100%;margin-top:10px" data-act="mospagar" ${sub > 0 && cajaAbierta() ? '' : 'disabled'}>Cobrar ${sub > 0 ? money(sub) : ''}</button></div></div></div>`;
@@ -727,7 +728,7 @@ function comsHTML() {
   if (S.cm === null || S.cm === undefined) { cmCargar().then(render); return '<h2>Comandas</h2><p class="mut">Cargando…</p>'; }
   const garz = [...new Set(S.cm.rows.map(c => c.garzon))].sort();
   const por = {};
-  S.cm.rows.forEach(c => { const o = por[c.garzon] || (por[c.garzon] = { n: c.garzon, cant: 0, env: 0, pend: 0, cob: 0 }); o.cant++; o.env += cmValor(c); o.pend += cmPend(c); });
+  S.cm.rows.forEach(c => { const o = por[c.garzon] || (por[c.garzon] = { n: c.garzon, cant: 0, env: 0, pend: 0, cob: 0 }); o.cant++; if (c.mesa !== 0) { o.env += cmValor(c); o.pend += cmPend(c); } });
   S.cm.cuentas.filter(c => c.mesa !== 0).forEach(c => { const o = por[c.garzon] || (por[c.garzon] = { n: c.garzon, cant: 0, env: 0, pend: 0, cob: 0 }); o.cob += c.total; });
   const res = Object.values(por).sort((a, b) => b.env - a.env);
   const fil = cmFiltradas(), sel = S.f.cmg || '';
@@ -739,7 +740,7 @@ function comsHTML() {
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="cmver">Ver</button><button class="btn-line" data-act="cmhoy">Hoy</button><button class="btn-line" data-act="cmsem">Últimos 7 días</button><button class="btn-line" data-act="cmmes">Este mes</button><button class="btn-ok" data-act="cmcsv">Descargar Excel (CSV)</button></div></div>
   ${S.cm.err ? '<div class="card" style="margin-top:12px;color:var(--bad)">No se pudieron cargar todos los datos. Intenta de nuevo con "Ver".</div>' : ''}
   <div class="card" style="margin-top:12px"><b>Resumen por garzón</b>${res.map(x => { const dif = x.env - x.pend - x.cob; return `<div class="row"><div>${esc(x.n)}<div class="mut">${x.cant} comanda${x.cant === 1 ? '' : 's'} · enviado ${money(x.env)} · cobrado ${money(x.cob)}${x.pend ? ' · mesas abiertas ' + money(x.pend) : ''}</div></div><b style="color:${dif === 0 ? 'var(--ok)' : 'var(--bad)'}">${dif === 0 ? 'Cuadra' : (dif > 0 ? 'Falta cobrar ' : 'Cobró de más ') + money(Math.abs(dif))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Sin comandas en ese período.</p>'}
-    <p class="mut" style="margin-top:8px">"Cuadra" significa que lo enviado coincide con lo cobrado más lo que sigue en mesas abiertas. Si no cuadra, revisa las comandas de ese garzón abajo (ítems anotados de más o de menos, descuentos, cobros distintos). Las ventas por mostrador no se comparan porque no pasan por comanda.</p></div>
+    <p class="mut" style="margin-top:8px">"Cuadra" significa que lo enviado coincide con lo cobrado más lo que sigue en mesas abiertas. Si no cuadra, revisa las comandas de ese garzón abajo (ítems anotados de más o de menos, descuentos, cobros distintos). Las comandas del mostrador llegan a cocina ya pagadas, por eso no entran en esta comparación.</p></div>
   <div class="card" style="margin-top:12px"><b>Detalle de comandas${sel ? ' · ' + esc(sel) : ''} (${fil.length})</b>${fil.map(c => `<div class="row" style="align-items:flex-start"><div><b>${esc(cmMesaTxt(c.mesa))}</b> · ${hora(c.t)} · ${esc(c.garzon)}<div style="margin:4px 0">${estPill(c)}</div>${c.items.map(i => `<div>${i.q}× ${esc(i.n)} <span class="mut">${money(i.p)}</span></div>`).join('')}${c.nota ? `<div class="mut">Nota: ${esc(c.nota)}</div>` : ''}</div><b>${money(cmValor(c))}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin comandas para mostrar.</p>'}</div>${anuListaHTML()}`;
 }
 function cmCSV() {
@@ -829,6 +830,7 @@ function posHTML() {
     ${sel.length ? sel.map(i => `<div class="pos-line"><span>${esc(i.n)}<div class="mut">${money(i.p)} c/u</div></span><div class="q"><button data-act="dec" data-id="${i.id}">−</button><span>${S.cart[i.id]}</span><button data-act="inc" data-id="${i.id}" ${i.s != null && S.cart[i.id] >= i.s ? 'disabled style="opacity:.4"' : ''}>+</button></div><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') : '<div class="pos-empty"><div class="e">🛍️</div><b>El carrito está vacío</b>Toca un producto o escanea un código.</div>'}
     <div class="pos-body"><div class="pos-tot"><span>Neto</span><span>${money(neto)}</span></div><div class="pos-tot"><span>IVA (19%) incluido</span><span>${money(sub - neto)}</span></div>
     <div class="pos-big"><span>Total</span><span>${money(sub)}</span></div>
+    ${sub > 0 ? `<input id="nota" placeholder="Observación para cocina (sin mayonesa, sin cebolla, etc.)" value="${esc(S.note)}" style="margin-top:8px;width:100%">` : ''}
     ${sub > 0 ? camposPago(sub) : ''}
     ${!cajaAbierta() ? '<p class="mut" style="margin:8px 0;color:var(--bad)">La caja está cerrada. Ábrela para cobrar.</p>' : ''}
     <button class="pos-cobrar" style="margin-top:10px" data-act="mospagar" ${sub > 0 && cajaAbierta() ? '' : 'disabled'}>💰 Cobrar ${sub > 0 ? money(sub) : ''}</button></div></div></div>`;
@@ -1195,7 +1197,7 @@ document.addEventListener('click', async e => {
     else if (a === 'vaciar') { S.cart = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
     else if (a === 'cobrarmesa') { S.back = S.mos ? 'mesas' : S.view; S.mos = false; S.view = 'mesas'; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = true; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; S.propina = true; S.metodo = 'Efectivo'; }
-    else if (a === 'mostrador') { delete S.f['bus-mos']; S.back = S.view; S.view = 'mesas'; S.mos = true; S.cart = {}; S.propina = false; S.metodo = 'Efectivo'; S.pe = ''; S.pt = ''; S.rc = ''; }
+    else if (a === 'mostrador') { delete S.f['bus-mos']; S.back = S.view; S.view = 'mesas'; S.mos = true; S.cart = {}; S.note = ''; S.propina = false; S.metodo = 'Efectivo'; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'mosvolver') { delete S.f['bus-mos']; Object.keys(S.f).forEach(k => { if (k.startsWith('bq-')) delete S.f[k]; }); if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.mos = false; S.cart = {}; S.propina = true; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'nuevoped') { S.np = { tipo: d.t }; S.f = {}; }
     else if (a === 'cancelnp') { S.np = null; S.f = {}; }
@@ -1287,6 +1289,11 @@ document.addEventListener('click', async e => {
           const r = await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: 0, total: sub, propina: S.propina ? Math.round(sub * 0.1) : 0, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) });
           if (!fallo(r)) {
             for (const i of sel) if (i.s != null) await sb.rpc('resto_stock_mover', { p_menu: i.id, p_delta: -S.cart[i.id], p_motivo: 'venta', p_por: S.quien || '', p_log: false });
+            /* lo que lleva preparación va a Cocina como comanda del mostrador (ya pagada), con la observación del cliente.
+               Cafetería la preparan los garzones y los productos con código de barras salen empacados: no pasan por cocina. */
+            const aCocina = sel.filter(i => i.e !== 'cafeteria' && !i.cb).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e, pg: S.cart[i.id] }));
+            if (aCocina.length) fallo(await sb.from('resto_comandas').insert({ local_id: D.id, mesa: 0, items: aCocina, nota: (S.note || '').trim(), garzon: S.rol === 'garzon' ? S.quien : null, estado: 'pendiente' }));
+            S.note = '';
             const enCaja = S.view === 'turno'; S.mos = enCaja; if (!enCaja && S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.cart = {}; S.propina = !enCaja; S.pe = ''; S.pt = ''; S.rc = '';
           }
         }
