@@ -96,6 +96,7 @@ table{border-collapse:collapse}
 <div id="app"></div>
 <div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script src="soporte.js?v=1"></script>
 <script>
 /* =====================================================
@@ -235,6 +236,9 @@ function avisar(prev) {
   const listos = D.comandas.filter(c => c.estado === 'listo' && prev.get(c.id) !== 'listo' && !esCafe(c) && (rol !== 'garzon' || c.garzon === S.quien));
   if (nuevos.length && (adm || rol === 'cocina') && (modo === 'cocina' || modo === 'ambos')) { sonarCocina(); toast('NUEVA COMANDA · ' + nuevos.map(por).join(', '), 'tk-c'); }
   if (listos.length && (adm || rol === 'garzon') && (modo === 'salon' || modo === 'ambos')) { sonarListo(); toast('PEDIDO LISTO · ' + listos.map(por).join(', '), 'tk-l'); }
+  const esQR = c => (c.note || '').startsWith('📱');
+  const qrs = D.comandas.filter(c => !prev.has(c.id) && esQR(c) && !c.garzon);
+  if (qrs.length && rol === 'garzon' && modo !== 'off') { sonarListo(); toast('PEDIDO QR · ' + [...new Set(qrs.map(c => nm(c.mesa)))].join(', '), 'tk-l'); }
   if (adm && modo !== 'off' && cafes.length) toast('CAFETERÍA · ' + cafes.map(por).join(', '), 'tk-l');
 }
 function avisarExtra() {
@@ -296,7 +300,7 @@ async function cargar() {
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
@@ -821,6 +825,10 @@ function cartaHTML() {
     <p class="mut" style="margin:4px 0 6px">${l.adminPin ? 'Cada cocinera entra con su PIN en el dispositivo de la cocina. Ese dispositivo se queda en Cocina y suena con cada comanda nueva. Si no hay cocineras, entra el botón "Cocina" sin PIN.' : 'Primero crea el PIN de la administradora (más abajo): las cocineras entran con su PIN cuando el local tiene accesos por usuario.'}</p>
     ${(l.cocineras || []).map(c => `<div class="row ${c.on ? '' : 'off'}"><div>${esc(c.n)}<div class="mut">${c.pin ? 'con PIN' : 'sin PIN'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${l.adminPin ? `<input id="cp-${c.id}" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:90px"><button class="btn-line" data-act="setcpin" data-id="${c.id}">Guardar PIN</button>` : ''}<button class="btn-line" data-act="ctoggle" data-id="${c.id}">${c.on ? 'Activa' : 'Inactiva'}</button><button class="btn-bad" data-act="cdel" data-id="${c.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:6px 0">Aún no hay cocineras.</p>'}
     <div style="display:flex;gap:8px;margin-top:8px"><input id="cn" placeholder="Nombre de la cocinera"><button class="btn" data-act="cadd">Agregar</button></div></div>
+  <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Pedido por QR</b>
+    <p class="mut">${l.qr ? 'Activado: el cliente escanea el QR de su mesa, elige y el pedido llega solo a cocina (y a cafetería), con aviso sonoro. Sin cuenta ni descarga.' : 'Apagado. Al activarlo, cada mesa tendrá un QR para que el cliente pida desde su celular.'}</p>
+    <button class="${l.qr ? 'btn-bad' : 'btn-ok'}" data-act="qrtoggle">${l.qr ? 'Desactivar pedido por QR' : 'Activar pedido por QR'}</button>
+    <button class="btn-line" data-act="qrimprimir">Imprimir QR de las mesas</button></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b>
     <label class="mut">Mesas del primer piso<input id="nm" type="number" min="1" max="60" value="${l.mesas}"></label>
     <label class="mut">Mesas del segundo piso (0 si no tiene)<input id="nm2" type="number" min="0" max="30" value="${l.mesas2}"></label>
@@ -871,6 +879,21 @@ function renderInner(app) {
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
   const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
+}
+
+/* ---------- QR de las mesas: una hoja imprimible, un QR por mesa ---------- */
+function imprimirQR() {
+  const l = L(), base = location.origin + location.pathname.replace(/[^/]*$/, '') + 'pedir.html?l=' + encodeURIComponent(l.id) + '&m=';
+  const mesas = []; for (let n = 1; n <= l.mesas; n++) mesas.push(n); for (let k = 1; k <= (l.mesas2 || 0); k++) mesas.push(100 + k);
+  const svg = m => { const q = qrcode(0, 'M'); q.addData(base + m); q.make(); return q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); };
+  const w = window.open('', '_blank'); if (!w) { alert('Permite las ventanas emergentes para imprimir los QR.'); return; }
+  w.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>QR de mesas · ' + esc(l.name) + '</title><style>' +
+    'body{font-family:system-ui,sans-serif;margin:0;padding:12px}h1{font-size:1rem;margin:0 0 10px}.g{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}' +
+    '.t{border:2px solid #0f172a;border-radius:14px;padding:14px;text-align:center;break-inside:avoid}.t svg{width:100%;max-width:220px;height:auto}' +
+    '.t b{display:block;font-size:1.5rem;margin-top:6px}.t span{display:block;font-size:.95rem;color:#475569;margin-top:2px}' +
+    '@media print{h1{display:none}body{padding:0}}</style></head><body><h1>Imprime esta hoja (Ctrl+P) y recorta un QR por mesa.</h1><div class="g">' +
+    mesas.map(m => '<div class="t">' + svg(m) + '<b>' + esc(nm(m)) + '</b><span>Escanea y pide desde tu mesa</span><span>' + esc(l.name) + '</span></div>').join('') + '</div></body></html>');
+  w.document.close();
 }
 
 /* ---------- Acciones ---------- */
@@ -1245,6 +1268,8 @@ document.addEventListener('click', async e => {
       else if (a === 'quitarpin') {
         if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id));
       }
+      else if (a === 'qrtoggle' && esAdm()) { fallo(await sb.from('resto_locales').update({ qr_activo: !L().qr }).eq('id', D.id)); }
+      else if (a === 'qrimprimir' && esAdm()) { imprimirQR(); }
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
       else if (a === 'est') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ estacion: i.e === 'cafeteria' ? 'cocina' : 'cafeteria' }).eq('id', d.id)); }
       else if (a === 'cadd' && esAdm()) { const n = ($('#cn') || {}).value.trim(); if (n) fallo(await sb.from('resto_cocineras').insert({ local_id: D.id, nombre: n })); }
