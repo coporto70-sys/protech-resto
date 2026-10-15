@@ -47,7 +47,7 @@ h2{font-size:1.25rem;margin-bottom:12px}
 .login .card{display:grid;gap:12px}
 .stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:16px}
 .stat b{display:block;font-size:1.6rem}
-.dnrow{display:grid;grid-template-columns:1fr 84px 96px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.dnrow{display:grid;grid-template-columns:1fr 110px 84px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
 .dnrow b{text-align:right}.dnrow input{text-align:right}
 .cols2{display:grid;gap:16px;grid-template-columns:320px 1fr}
 .pos{--pc:#4f46e5;--pc2:#7c3aed;display:grid;gap:20px;grid-template-columns:1fr 360px;align-items:start;margin-bottom:16px}
@@ -662,13 +662,18 @@ function cajerosHTML(t) {
 /* ---------- Conteo de billetes y monedas (apertura y cierre de caja) ---------- */
 const DEN = [[20000, 'Billetes de $20.000'], [10000, 'Billetes de $10.000'], [5000, 'Billetes de $5.000'], [2000, 'Billetes de $2.000'], [1000, 'Billetes de $1.000'], [500, 'Monedas de $500'], [100, 'Monedas de $100'], [50, 'Monedas de $50'], [10, 'Monedas de $10']];
 const dnId = (p, v) => 'dn' + p + '-' + v;
-const dnQ = (p, v) => Math.max(0, Math.round(+S.f[dnId(p, v)] || 0));
-const dnTotal = p => DEN.reduce((a, [v]) => a + v * dnQ(p, v), 0);
-const dnObj = p => { const o = {}; DEN.forEach(([v]) => { if (dnQ(p, v)) o[v] = dnQ(p, v); }); return o; };
+/* El cajero escribe el MONTO EN PESOS de cada tipo (ej. 4 billetes de $20.000 → 80000). Solo cuentan los dígitos: sirve "80.000", "$80.000" o "80000". */
+const dnM = (p, v) => { const d = String(S.f[dnId(p, v)] ?? '').replace(/\D/g, ''); return d ? Math.min(+d, 100000000) : 0; };
+const dnOk = (p, v) => dnM(p, v) % v === 0;
+const dnBad = p => DEN.filter(([v, n]) => !dnOk(p, v));
+const dnQ = (p, v) => Math.floor(dnM(p, v) / v);
+const dnTotal = p => DEN.reduce((a, [v]) => a + dnM(p, v), 0);
+const dnSub = (p, v) => dnM(p, v) === 0 ? { t: '', bad: false } : dnOk(p, v) ? { t: dnQ(p, v) + (v >= 1000 ? (dnQ(p, v) === 1 ? ' billete' : ' billetes') : (dnQ(p, v) === 1 ? ' moneda' : ' monedas')), bad: false } : { t: 'no calza', bad: true };
+const dnObj = p => { const o = {}; DEN.forEach(([v]) => { if (dnQ(p, v)) o[v] = dnQ(p, v); }); return o; }; /* se guarda como cantidades {valor: cantidad}, igual que antes */
 const dnTxt = o => o && Object.keys(o).length ? Object.keys(o).map(Number).sort((a, b) => b - a).map(v => o[v] + '×' + money(v)).join(' · ') : '';
 const numF = k => { const v = S.f[k]; return v === undefined || v === '' || isNaN(+v) ? null : Math.max(0, Math.round(+v)); };
 function contadorHTML(p) {
-  return `<div>${DEN.map(([v, n]) => `<label class="dnrow"><span>${n}</span><input id="${dnId(p, v)}" data-keep type="number" inputmode="numeric" min="0" placeholder="0" value="${fv(dnId(p, v))}"><b id="${dnId(p, v)}-s">${money(v * dnQ(p, v))}</b></label>`).join('')}
+  return `<div>${DEN.map(([v, n]) => `<label class="dnrow"><span>${n}</span><input id="${dnId(p, v)}" data-keep type="text" inputmode="numeric" autocomplete="off" placeholder="$0" value="${fv(dnId(p, v))}"><b id="${dnId(p, v)}-s" class="mut" style="${dnSub(p, v).bad ? 'color:var(--bad)' : ''}">${dnSub(p, v).t}</b></label>`).join('')}
     <div class="total"><span>Total en billetes y monedas</span><span id="dnt-${p}">${money(dnTotal(p))}</span></div></div>`;
 }
 /* Resultado del cuadre: compara lo que se contó con lo que el sistema registró como vendido en el turno */
@@ -682,15 +687,15 @@ function cuadreHTML(t) {
   return out.join('') || '<p class="mut">Escribe lo que contaste para ver si la caja cuadra.</p>';
 }
 function dnActualiza() {
-  ['a', 'c'].forEach(p => { DEN.forEach(([v]) => { const el = document.getElementById(dnId(p, v) + '-s'); if (el) el.textContent = money(v * dnQ(p, v)); }); const t = document.getElementById('dnt-' + p); if (t) t.textContent = money(dnTotal(p)); });
+  ['a', 'c'].forEach(p => { DEN.forEach(([v]) => { const el = document.getElementById(dnId(p, v) + '-s'); if (el) { const x = dnSub(p, v); el.textContent = x.t; el.style.color = x.bad ? 'var(--bad)' : ''; } }); const t = document.getElementById('dnt-' + p); if (t) t.textContent = money(dnTotal(p)); });
   const c = document.getElementById('cuadre'); if (c && D && D.turno) c.innerHTML = cuadreHTML(D.turno);
 }
 function abrirCajaHTML() {
-  return `<div class="card" style="display:grid;gap:8px"><b>Abrir caja</b><p class="mut">Cuenta el sencillo con el que recibes la caja y escribe cuántos billetes y monedas hay de cada tipo.</p>${contadorHTML('a')}<button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
+  return `<div class="card" style="display:grid;gap:8px"><b>Abrir caja</b><p class="mut">Cuenta el sencillo con el que recibes la caja y escribe en pesos cuánto hay de cada tipo. Ejemplo: si hay 4 billetes de $20.000, escribe 80000.</p>${contadorHTML('a')}<button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
 }
 function cerrarCajaHTML(t) {
   return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cerrar caja (cuadre del día)</b>
-    <p class="mut">1) Cuenta el efectivo por billetes y monedas. 2) Escribe el total de tarjetas según el terminal y lo recibido por transferencia. Abajo verás si cuadra con lo vendido.</p>
+    <p class="mut">1) Cuenta el efectivo y escribe en pesos cuánto hay de cada billete y moneda (ej.: 4 billetes de $20.000 = 80000). 2) Escribe el total de tarjetas según el terminal y lo recibido por transferencia. Abajo verás si cuadra con lo vendido.</p>
     <b>Efectivo contado</b>${contadorHTML('c')}
     <label class="mut">Tarjetas: total según el terminal<input id="ctarj" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctarj')}"></label>
     <label class="mut">Transferencias recibidas<input id="ctrans" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctrans')}"></label>
@@ -1145,8 +1150,9 @@ document.addEventListener('click', async e => {
       }
       else if (a === 'cancelped') { if (S.mesa >= 1000 && !abiertas(S.mesa).length && !fallo(await sb.from('resto_pedidos').delete().eq('local_id', D.id).eq('num', S.mesa))) S.mesa = null; }
       else if (a === 'tabrir') {
-        const tot = dnTotal('a');
-        if (!D.turno && (tot > 0 || confirm('No anotaste billetes ni monedas. ¿Abrir la caja con $0 de sencillo?'))) {
+        const tot = dnTotal('a'), mal = dnBad('a');
+        if (mal.length) alert('Revisa estos montos, no corresponden a billetes o monedas completos: ' + mal.map(([v, n]) => n).join(', ') + '.');
+        else if (!D.turno && (tot > 0 || confirm('No anotaste billetes ni monedas. ¿Abrir la caja con $0 de sencillo?'))) {
           const base = { local_id: D.id, abierto_por: S.quien || 'Administradora', monto_inicial: tot }, desg = dnObj('a');
           let r = await sb.from('resto_turnos').insert({ ...base, desglose_apertura: desg });
           if (r.error && /desglose/i.test(r.error.message || '')) r = await sb.from('resto_turnos').insert({ ...base, nota: 'Sencillo inicial: ' + (dnTxt(desg) || 'sin detalle') });
@@ -1155,9 +1161,10 @@ document.addEventListener('click', async e => {
       }
       else if (a === 'tcerrar' && D.turno) {
         const t = D.turno, r = turnoRes(t), open = D.comandas.filter(x => !x.cerrada).length;
-        const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim();
+        const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim(), mal = dnBad('c');
         const dEf = ec - r.esp, dTj = tj === null ? 0 : tj - r.tj, dTr = tr === null ? 0 : tr - r.tr;
-        if (tj === null || tr === null) alert('Escribe el total de tarjetas y el de transferencias (0 si no hubo).');
+        if (mal.length) alert('Revisa estos montos, no corresponden a billetes o monedas completos: ' + mal.map(([v, n]) => n).join(', ') + '.');
+        else if (tj === null || tr === null) alert('Escribe el total de tarjetas y el de transferencias (0 si no hubo).');
         else if ((dEf || dTj || dTr) && !nota) alert('La caja no cuadra. Escribe una observación que explique la diferencia antes de cerrar.');
         else if (!open || confirm('Hay ' + open + ' pedido(s) todavía abiertos en mesas. ¿Cerrar la caja igual?')) {
           const base = { cerrado_at: new Date().toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: ec, diferencia: dEf, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas };
