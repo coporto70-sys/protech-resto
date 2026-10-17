@@ -8,6 +8,7 @@ function mk(t){
     select(){ if(st.op==='insert'||st.op==='update') st.ret=true; return api; },
     eq(c,v){st.f.push(r=>r[c]===v);return api;},
     gte(c,v){st.f.push(r=>r[c]>=v);return api;},
+    lt(c,v){st.f.push(r=>r[c]<v);return api;},
     not(c,op,v){st.f.push(r=>op==='is'&&v===null?(r[c]!=null):r[c]!==v);return api;},
     is(c,v){st.f.push(r=>(r[c]??null)===v);return api;},
     order(c,o){st.ord.push([c,o&&o.ascending===false?-1:1]);return api;},

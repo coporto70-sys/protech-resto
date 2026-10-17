@@ -519,4 +519,38 @@ def db_r():
 e=run({'email':'u','role':'','db':db_q(False)},R1); print('ERR R1',e)
 e=run({'email':'u','role':'','db':db_r()},R2); print('ERR R2',e)
 
+def db_s():
+    d=db_q(False)
+    d['resto_insumos']=[{'id':'I1','local_id':'L1','nombre':'Harina','unidad':'kg','stock':2,'stock_min':5,'costo_unit':None,'activo':True,'vence':None,'created_at':iso(10)}]
+    d['resto_insumo_mov']=[]; d['resto_recetas']=[]; d['resto_proveedores']=[]; d['resto_ordenes_compra']=[]
+    return d
+def S1(pg):
+    pg.on('dialog',lambda x:x.accept())
+    pg.evaluate("S.view='abast'; render()"); pg.wait_for_timeout(300)
+    check('S1: existe la pestaña Compras y recetas con conteo guiado', 'Compras y recetas' in pg.inner_text('#app') and 'Conteo físico guiado' in pg.inner_text('#app'))
+    pg.fill('#pv-n','Molino Sur'); pg.fill('#pv-t','56911112222'); pg.click('[data-act="pvadd"]'); pg.wait_for_timeout(600)
+    check('S1: se agrega un proveedor', len(pg.evaluate('window.__DB.resto_proveedores'))==1)
+    pg.select_option('#oc-pv','Molino Sur'); pg.click('[data-act="ocnueva"]'); pg.wait_for_timeout(600)
+    o=pg.evaluate('window.__DB.resto_ordenes_compra')
+    check('S1: la orden de compra incluye el insumo bajo el mínimo', len(o)==1 and o[0]['items'][0]['n']=='Harina' and 'wa.me/56911112222' in pg.inner_html('#app'))
+    pg.select_option('#r-m',index=1); pg.select_option('#r-i','I1'); pg.fill('#r-q','0.2'); pg.click('[data-act="recadd"]'); pg.wait_for_timeout(600)
+    check('S1: se guarda la receta', len(pg.evaluate('window.__DB.resto_recetas'))==1)
+    pg.fill('#cg-I1','7'); pg.click('[data-act="cgapl"]'); pg.wait_for_timeout(700)
+    ins=pg.evaluate('window.__DB.resto_insumos')[0]
+    check('S1: el conteo ajusta el stock a lo contado', ins['stock']==7 and len(pg.evaluate('window.__DB.resto_insumo_mov'))==1)
+e=run({'email':'u','role':'','db':db_s()},S1); print('ERR S1',e)
+
+def T1(pg):
+    pg.on('dialog',lambda x:x.accept())
+    pg.click('header nav >> text=Resumen'); pg.wait_for_timeout(900)
+    t=pg.inner_text('#app')
+    check('T1: el resumen muestra ventas, comparación y botones de exportar', 'Resumen del dueño' in t and 'Ventas' in t and 'Descargar Excel' in t and 'Imprimir' in t and 'WhatsApp' in t)
+    pg.click('[data-act="rsp"][data-p="7"]'); pg.wait_for_timeout(900)
+    check('T1: se puede cambiar de período', 'Últimos 7 días' in pg.inner_text('#app'))
+    with pg.expect_download() as dl: pg.click('[data-act="rsxls"]')
+    check('T1: descarga el Excel (CSV) de ventas', dl.value.suggested_filename.endswith('.csv'))
+    with pg.expect_download() as dl2: pg.click('[data-act="respaldo"]')
+    check('T1: descarga el respaldo sin PIN', dl2.value.suggested_filename.startswith('respaldo_') and 'admin_pin' not in open(dl2.value.path()).read())
+e=run({'email':'u','role':'','db':db_s()},T1); print('ERR T1',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

@@ -20,6 +20,7 @@ input:focus,select:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0
 .btn{background:var(--brand);color:#fff}.btn:hover{background:var(--brand-d)}
 .btn-ok{background:var(--ok);color:#fff}.btn-bad{background:#fee2e2;color:var(--bad)}.btn-line{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
 .btn:disabled,.btn-ok:disabled{opacity:.45;cursor:not-allowed}
+@media print{header,nav,#toast,.noimp,#out-bar{display:none!important}body{background:#fff}.card{box-shadow:none;border:1px solid #ccc}}
 header{background:#0b1a2b;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
 header b{font-size:1.05rem}header small{color:#93c5fd;display:block;font-size:.75rem}
 nav{display:flex;gap:6px;flex:1;overflow-x:auto}
@@ -98,7 +99,7 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
 const rolesOn = () => !!(D && D.adminPin);
 const esIng = () => S.rol === 'ingeniero';
 const esAdm = () => !rolesOn() || S.rol === 'admin' || esIng();
-const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'prod', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'resumen', 'inv', 'prod', 'abast', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
 TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos los paneles */
 /* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
@@ -191,6 +192,7 @@ const nm = m => {
 const fv = k => esc(S.f[k] ?? '');
 const pedDe = n => ((D && D.pedidos) || []).find(p => p.num === n);
 const cajaAbierta = () => !rolesOn() || !!D.turno;
+const consumirRecetas = pares => { (pares || []).filter(([m]) => D.recetas.some(r => r.m === m)).forEach(([m, q]) => { Promise.resolve(sb.rpc('resto_receta_consumir', { p_menu: m, p_cant: q, p_por: S.quien || '' })).catch(() => {}); }); };
 const hoyIso = () => fechaIso(new Date());
 const resDe = n => ((D && D.reservas) || []).filter(r => r.mesa === n && r.estado === 'pendiente' && r.fecha === hoyIso()).sort((a, b) => a.hora.localeCompare(b.hora))[0];
 const bajoStock = () => L().menu.filter(i => i.s != null && i.s <= i.sm);
@@ -315,7 +317,7 @@ async function cargar(parcial) {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv, rec, prv, oco] = await Promise.all([
     get('loc', () => sb.from('resto_locales').select('*').eq('id', id).single()),
     get('menu', () => sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre')),
     get('com', () => sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false)),
@@ -328,11 +330,14 @@ async function cargar(parcial) {
     get('anu', () => sb.from('resto_anulaciones').select('*').eq('local_id', id).gte('created_at', desde.toISOString()).order('created_at')),
     get('gas', () => sb.from('resto_gastos').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(300)),
     get('ins', () => sb.from('resto_insumos').select('*').eq('local_id', id).order('nombre')),
-    get('imv', () => sb.from('resto_insumo_mov').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(150))
+    get('imv', () => sb.from('resto_insumo_mov').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(150)),
+    get('rec', () => sb.from('resto_recetas').select('*').eq('local_id', id)),
+    get('prv', () => sb.from('resto_proveedores').select('*').eq('local_id', id).order('nombre')),
+    get('oco', () => sb.from('resto_ordenes_compra').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(40))
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false, v: r.vence || '' })), recetas: ((rec && rec.data) || []).map(r => ({ id: r.id, m: r.menu_id, i: r.insumo_id, q: +r.cantidad })), provs: ((prv && prv.data) || []).filter(r => r.activo !== false).map(r => ({ id: r.id, n: r.nombre, tel: r.telefono || '', mail: r.correo || '' })), ocs: ((oco && oco.data) || []).map(r => ({ id: r.id, pv: r.proveedor, est: r.estado, items: r.items || [], nota: r.nota || '', t: +new Date(r.created_at) })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
@@ -384,10 +389,10 @@ window.addEventListener('online', () => { if (S.user) reconectar(); });
 setInterval(() => { if (S.user && !document.hidden) sb.auth.getSession(); }, 10 * 60 * 1000);
 function suscribir() {
   if (rt || !D) return;
-  const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv' };
+  const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv', resto_recetas: 'rec', resto_proveedores: 'prv', resto_ordenes_compra: 'oco' };
   const refresca = t => { if (t && TK[t]) PEND.add(TK[t]); else PEND.add('*'); clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; const p = PEND.has('*') ? null : new Set(PEND); PEND.clear(); await cargar(p); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
-  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t)));
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t)));
   rt.subscribe();
 }
 const _h = location.hash || '';
@@ -432,7 +437,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas'], ['bit', 'Registro de cambios']];
+  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['resumen', 'Resumen'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['abast', 'Compras y recetas' + (vencen().length ? ' ⚠' : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas'], ['bit', 'Registro de cambios']];
   const tabs = todas.filter(t => misTabs().includes(t[0]));
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
@@ -1000,6 +1005,113 @@ function insumosHTML() {
       <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="iq-${i.id}" data-keep inputmode="decimal" placeholder="Cant." style="width:80px" value="${fv('iq-' + i.id)}"><button class="btn-line" data-act="insuso" data-id="${i.id}">Usó</button><button class="btn-line" data-act="insmerma" data-id="${i.id}">Merma</button><button class="btn-line" data-act="inscont" data-id="${i.id}">Contar</button><button class="btn-line" data-act="insmin" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="insoff" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay insumos. Agrega el primero.</p>'}</div>
     <div class="card"><b>Movimientos</b>${D.insmov.slice(0, 60).map(m => `<div class="row"><div>${esc(nm2(m.iid))} · <b>${MOTIVO[m.mo] || esc(m.mo)}</b><div class="mut">${hora(m.t)} · ${esc(m.por)}${m.td ? ' · ' + esc(m.td) + (m.nd ? ' N° ' + esc(m.nd) : '') : ''}${m.pv ? ' · ' + esc(m.pv) : ''}${m.caja ? ' · pagado desde caja' : ''}${m.nota ? ' · ' + esc(m.nota) : ''}</div></div><div style="text-align:right"><b style="color:${m.d < 0 ? 'var(--bad)' : 'var(--ok)'}">${m.d > 0 ? '+' : ''}${fmtQ(m.d)} ${esc(unTxt(un2(m.iid)))}</b>${m.ct ? '<div class="mut">' + money(m.ct) + '</div>' : ''}</div></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay movimientos.</p>'}</div></div></div>`;
 }
+
+/* ---- Compras y recetas: recetas con descuento automático, proveedores, órdenes de compra, vencimientos, conteo guiado ---- */
+const diasPara = f => f ? Math.round((new Date(f + 'T12:00:00') - new Date(hoyIso() + 'T12:00:00')) / 86400000) : null;
+const vencen = () => ((D && D.insumos) || []).filter(i => i.on && i.v && diasPara(i.v) <= 7 && i.s > 0);
+const sugerido = i => Math.max(1, Math.ceil((i.sm || 1) * 2 - i.s));
+function ocTexto(o) { return 'Pedido de compra · ' + (D.name || '') + '\n' + o.items.map(x => '• ' + x.q + ' ' + x.u + ' de ' + x.n).join('\n') + (o.nota ? '\n' + o.nota : '') + '\nGracias.'; }
+function abastHTML() {
+  const ins = D.insumos.filter(i => i.on), menu = D.menu, bajos = bajoIns(), ven = vencen();
+  const nmI = id => (D.insumos.find(i => i.id === id) || {}).n || 'Insumo', unI = id => unTxt((D.insumos.find(i => i.id === id) || {}).u || 'un');
+  const conRec = menu.filter(m => D.recetas.some(r => r.m === m.id));
+  const oc = o => { const pv = D.provs.find(p => p.n === o.pv) || {}, tx = encodeURIComponent(ocTexto(o)), tel = String(pv.tel || '').replace(/\D/g, '');
+    return `<div class="row" style="align-items:flex-start"><div><b>${esc(o.pv)}</b> · <span class="pill">${o.est}</span><div class="mut">${hora(o.t)} · ${o.items.map(x => esc(x.q + ' ' + x.u + ' ' + x.n)).join(', ')}</div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${o.est === 'pendiente' ? `${tel ? `<a class="btn-line" target="_blank" rel="noopener" href="https://wa.me/${tel}?text=${tx}">WhatsApp</a>` : ''}${pv.mail ? `<a class="btn-line" href="mailto:${esc(pv.mail)}?subject=${encodeURIComponent('Pedido de compra · ' + (D.name || ''))}&body=${tx}">Correo</a>` : ''}<button class="btn-ok" data-act="ocrec" data-id="${o.id}">Recibida</button><button class="btn-line" data-act="ocanu" data-id="${o.id}">Anular</button>` : ''}</div></div>`; };
+  return `<h2>Compras y recetas</h2>
+  ${ven.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--bad)"><b>Por vencer o vencidos</b>${ven.map(i => `<div class="row"><span>${esc(i.n)} · ${fmtQ(i.s)} ${esc(unTxt(i.u))}</span><b style="color:var(--bad)">${diasPara(i.v) < 0 ? 'vencido hace ' + (-diasPara(i.v)) + ' d' : diasPara(i.v) === 0 ? 'vence hoy' : 'vence en ' + diasPara(i.v) + ' d'}</b></div>`).join('')}</div>` : ''}
+  <div class="cols2"><div style="display:grid;gap:12px;align-self:start">
+    <div class="card" style="display:grid;gap:8px"><b>Orden de compra</b>
+      ${bajos.length ? `<p class="mut" style="margin:0">Con lo que está bajo el mínimo: ${bajos.map(i => esc(i.n)).join(', ')}.</p>` : '<p class="mut" style="margin:0">No hay insumos bajo el mínimo. Igual puedes armar una orden.</p>'}
+      <label class="mut">Proveedor<select id="oc-pv" data-keep><option value="">Elige proveedor…</option>${D.provs.map(p => `<option ${S.f['oc-pv'] === p.n ? 'selected' : ''}>${esc(p.n)}</option>`).join('')}</select></label>
+      <button class="btn-ok" data-act="ocnueva" ${bajos.length ? '' : 'disabled'}>Crear orden con lo que falta</button>
+      ${D.ocs.length ? D.ocs.slice(0, 15).map(oc).join('') : ''}</div>
+    <div class="card" style="display:grid;gap:8px"><b>Proveedores</b>
+      <input id="pv-n" data-keep autocomplete="off" placeholder="Nombre del proveedor" value="${fv('pv-n')}">
+      <input id="pv-t" data-keep inputmode="tel" placeholder="Teléfono (con 56…) para WhatsApp" value="${fv('pv-t')}">
+      <input id="pv-m" data-keep type="email" placeholder="Correo (opcional)" value="${fv('pv-m')}">
+      <button class="btn-ok" data-act="pvadd">Agregar proveedor</button>
+      ${D.provs.map(p => `<div class="row"><div>${esc(p.n)}<div class="mut">${esc(p.tel)}${p.mail ? ' · ' + esc(p.mail) : ''}</div></div><button class="btn-bad" data-act="pvdel" data-id="${p.id}">Quitar</button></div>`).join('')}</div>
+    <div class="card" style="display:grid;gap:8px"><b>Receta de un producto</b><p class="mut" style="margin:0">Cada vez que se venda el producto se descuenta solo lo que gasta de cada insumo.</p>
+      <label class="mut">Producto<select id="r-m" data-keep><option value="">Elige el producto…</option>${menu.map(m => `<option value="${m.id}" ${S.f['r-m'] === m.id ? 'selected' : ''}>${esc(m.n)}</option>`).join('')}</select></label>
+      <label class="mut">Insumo<select id="r-i" data-keep><option value="">Elige el insumo…</option>${ins.map(i => `<option value="${i.id}" ${S.f['r-i'] === i.id ? 'selected' : ''}>${esc(i.n)} (${esc(unTxt(i.u))})</option>`).join('')}</select></label>
+      <input id="r-q" data-keep inputmode="decimal" placeholder="Cantidad por cada unidad vendida" value="${fv('r-q')}">
+      <button class="btn-ok" data-act="recadd">Agregar a la receta</button>
+      ${conRec.map(m => `<div style="border-top:1px solid var(--line,#ddd);padding-top:6px"><b>${esc(m.n)}</b>${D.recetas.filter(r => r.m === m.id).map(r => `<div class="row"><span>${fmtQ(r.q)} ${esc(unI(r.i))} de ${esc(nmI(r.i))}</span><button class="btn-line" data-act="recdel" data-id="${r.id}">Quitar</button></div>`).join('')}</div>`).join('')}</div></div>
+  <div style="display:grid;gap:12px"><div class="card"><b>Conteo físico guiado</b><p class="mut" style="margin:4px 0 6px">Recorre la bodega y escribe lo que realmente hay. Los insumos que dejes en blanco no se tocan. Al aplicar, el sistema ajusta las diferencias y las deja registradas.</p>
+    ${ins.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">Sistema: ${fmtQ(i.s)} ${esc(unTxt(i.u))}${i.v ? ' · vence ' + esc(i.v) : ''}</div></div><div style="display:flex;gap:6px;align-items:center"><input id="cg-${i.id}" data-keep inputmode="decimal" placeholder="Hay…" style="width:84px" value="${fv('cg-' + i.id)}"><button class="btn-line" data-act="insvence" data-id="${i.id}" title="Fecha de vencimiento">Vence</button></div></div>`).join('') || '<p class="mut">Sin insumos.</p>'}
+    ${ins.length ? '<button class="btn-ok" style="margin-top:8px;width:100%" data-act="cgapl">Aplicar conteo</button>' : ''}</div></div></div>`;
+}
+
+/* ---- Resumen del dueño: períodos, comparación con el período anterior, Excel, PDF, respaldo y envío ---- */
+const RSP = { hoy: 'Hoy', ayer: 'Ayer', '7': 'Últimos 7 días', '30': 'Últimos 30 días', mes: 'Este mes' };
+function rsRango(p) {
+  const a = new Date(); a.setHours(0, 0, 0, 0); let d0 = new Date(a), d1 = new Date(a); d1.setDate(d1.getDate() + 1);
+  if (p === 'ayer') { d0.setDate(d0.getDate() - 1); d1 = new Date(a); }
+  else if (p === '7') d0.setDate(d0.getDate() - 6);
+  else if (p === '30') d0.setDate(d0.getDate() - 29);
+  else if (p === 'mes') d0.setDate(1);
+  const ms = d1 - d0, p1 = new Date(d0), p0 = new Date(+d0 - ms);
+  return { d0, d1, p0, p1 };
+}
+async function rsTraer(d0, d1) {
+  const q = (t, extra) => sb.from(t).select('*').eq('local_id', D.id).gte('created_at', d0.toISOString()).lt('created_at', d1.toISOString()).order('created_at').limit(20000);
+  const [cu, ga, im] = await Promise.all([q('resto_cuentas'), q('resto_gastos'), q('resto_insumo_mov')]);
+  if (cu.error) throw new Error(cu.error.message);
+  return { cu: cu.data || [], ga: (ga.data) || [], im: ((im.data) || []).filter(m => m.motivo === 'compra' && !m.pagado_caja) };
+}
+function rsAgg(x) {
+  const venta = x.cu.reduce((a, c) => a + (+c.total || 0), 0), prop = x.cu.reduce((a, c) => a + (+c.propina || 0) + (+c.propina_efec || 0) + (+c.propina_tarj || 0), 0),
+    desc = x.cu.reduce((a, c) => a + (+c.descuento || 0), 0), gasto = x.ga.reduce((a, g) => a + (+g.monto || 0), 0) + x.im.reduce((a, m) => a + (+m.costo_total || 0), 0);
+  const pop = {}, pg = {}, mp = {};
+  x.cu.forEach(c => { (c.items || []).forEach(i => { pop[i.n] = (pop[i.n] || 0) + (+i.q || 0); }); const g = c.garzon || '(sin garzón)'; pg[g] = (pg[g] || 0) + (+c.total || 0); mp[c.metodo || '—'] = (mp[c.metodo || '—'] || 0) + (+c.total || 0); });
+  return { venta, prop, desc, gasto, n: x.cu.length, tk: x.cu.length ? Math.round(venta / x.cu.length) : 0, util: venta - gasto, pop, pg, mp };
+}
+async function rsCargar() {
+  const p = S.rsp || 'hoy', r = rsRango(p); S.rs = 'cargando'; render();
+  try { const [c, a] = await Promise.all([rsTraer(r.d0, r.d1), rsTraer(r.p0, r.p1)]); S.rs = { p, cur: c, ant: a, A: rsAgg(c), B: rsAgg(a), t: Date.now() }; }
+  catch (e) { S.rs = { err: e.message }; }
+  render();
+}
+const rsVar = (a, b) => b ? ((a - b) / b * 100) : null;
+const rsVarTxt = (a, b, malo) => { const v = rsVar(a, b); if (v === null) return a ? '<span class="mut">nuevo</span>' : ''; const up = v >= 0, bien = malo ? !up : up; return `<span style="color:${bien ? 'var(--ok)' : 'var(--bad)'}">${up ? '▲' : '▼'} ${Math.abs(Math.round(v))}%</span>`; };
+function rsTexto() {
+  const r = S.rs, A = r.A, B = r.B, top = Object.entries(A.pop).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const v = (a, b) => { const x = rsVar(a, b); return x === null ? '' : ' (' + (x >= 0 ? '+' : '') + Math.round(x) + '% vs período anterior)'; };
+  return 'Resumen · ' + (D.name || '') + ' · ' + RSP[r.p] + '\nVentas: ' + money(A.venta) + v(A.venta, B.venta) + '\nCuentas: ' + A.n + ' · Ticket promedio: ' + money(A.tk) + '\nPropinas: ' + money(A.prop) + '\nDescuentos: ' + money(A.desc) + '\nGastos y compras: ' + money(A.gasto) + '\nResultado aprox.: ' + money(A.util) + (top.length ? '\nMás vendidos: ' + top.map(([k, q]) => k + ' (' + q + ')').join(', ') : '');
+}
+function rsExcel() {
+  const r = S.rs, q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const t = '﻿Fecha;Mesa;Garzón;Método;Venta;Descuento;Propina;Detalle\n' + r.cur.cu.map(c => [new Date(c.created_at).toLocaleString('es-CL'), q(nm(+c.mesa)), q(c.garzon), q(c.metodo), c.total, c.descuento || 0, (+c.propina || 0) + (+c.propina_efec || 0) + (+c.propina_tarj || 0), q((c.items || []).map(i => i.q + '× ' + i.n).join(', '))].join(';')).join('\n');
+  bajar(t, 'text/csv;charset=utf-8', 'ventas_' + (D.name || 'local').replace(/\W+/g, '_') + '_' + r.p + '.csv');
+}
+function bajar(txt, tipo, nombre) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: tipo })); a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); }
+async function respaldo() {
+  const tablas = ['resto_locales', 'resto_menu', 'resto_garzones', 'resto_cocineras', 'resto_insumos', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra', 'resto_cuentas', 'resto_gastos', 'resto_insumo_mov', 'resto_turnos'];
+  const out = { local: D.name, fecha: new Date().toISOString(), version: 1, tablas: {} };
+  for (const t of tablas) {
+    const r = await sb.from(t).select('*').eq(t === 'resto_locales' ? 'id' : 'local_id', D.id).limit(50000);
+    if (r.error) { out.tablas[t] = { error: r.error.message }; continue; }
+    out.tablas[t] = (r.data || []).map(x => { const y = { ...x }; delete y.pin; delete y.admin_pin; delete y.pin_hash; return y; });
+  }
+  bajar(JSON.stringify(out, null, 1), 'application/json', 'respaldo_' + (D.name || 'local').replace(/\W+/g, '_') + '_' + fechaIso(new Date()) + '.json');
+}
+function resumenHTML() {
+  const r = S.rs, p = S.rsp || 'hoy';
+  const bar = `<div class="noimp" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${Object.entries(RSP).map(([k, n]) => `<button class="${p === k ? 'btn' : 'btn-line'}" data-act="rsp" data-p="${k}">${n}</button>`).join('')}</div>`;
+  const resp = `<div class="card noimp" style="margin-top:12px"><b>Respaldo</b><p class="mut" style="margin:4px 0 8px">Descarga una copia de toda la información del local (carta, cuentas, gastos, inventario). Guárdala en tu computador o en tu correo. No incluye los PIN.</p><button class="btn-line" data-act="respaldo">Descargar respaldo</button></div>`;
+  if (!r || r === 'cargando') return `<h2>Resumen del dueño</h2>${bar}<p class="mut">${r === 'cargando' ? 'Cargando…' : 'Elige un período.'}</p>${resp}`;
+  if (r.err) return `<h2>Resumen del dueño</h2>${bar}<div class="card" style="color:var(--bad)">No se pudo cargar: ${esc(r.err)}</div>${resp}`;
+  const A = r.A, B = r.B, top = Object.entries(A.pop).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const st = (t, a, b, f, malo) => `<div class="card stat"><span class="mut">${t}</span><b>${f(a)}</b><small>${rsVarTxt(a, b, malo)}</small></div>`;
+  const lista = o => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="row"><span>${esc(k)}</span><b>${money(v)}</b></div>`).join('') || '<p class="mut">Sin datos.</p>';
+  return `<h2>Resumen del dueño · ${RSP[r.p]}</h2>${bar}
+  <div class="stats">${st('Ventas', A.venta, B.venta, money)}${st('Cuentas', A.n, B.n, x => x)}${st('Ticket promedio', A.tk, B.tk, money)}${st('Propinas', A.prop, B.prop, money)}${st('Descuentos', A.desc, B.desc, money, true)}${st('Gastos y compras', A.gasto, B.gasto, money, true)}${st('Resultado aprox.', A.util, B.util, money)}</div>
+  <p class="mut" style="margin:6px 0">Las flechas comparan con el período anterior de igual duración. El resultado es ventas menos gastos de caja y compras de insumos; no incluye sueldos ni arriendo.</p>
+  <div class="cols"><div class="card"><b>Más vendidos</b>${top.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><b>${v}</b></div>`).join('') || '<p class="mut">Sin datos.</p>'}</div>
+  <div class="card"><b>Por forma de pago</b>${lista(A.mp)}<b style="display:block;margin-top:12px">Por garzón</b>${lista(A.pg)}</div></div>
+  <div class="card noimp" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn-line" data-act="rsxls">Descargar Excel</button><button class="btn-line" data-act="rspdf">Imprimir / guardar PDF</button><button class="btn-line" data-act="rswa">Enviar por WhatsApp</button><a class="btn-line" href="mailto:?subject=${encodeURIComponent('Resumen · ' + (D.name || ''))}&body=${encodeURIComponent(rsTexto())}">Enviar por correo</a></div>${resp}`;
+}
 function invHTML() {
   const l = L(), bajos = bajoStock();
   const nuevo = S.nuevo ? `<div class="card" style="margin-bottom:12px;display:grid;gap:8px;border:2px solid var(--warn)"><b>Código nuevo: ${esc(S.nuevo.cb)}</b>
@@ -1126,7 +1238,7 @@ function renderInner(app) {
   restaurarRol();
   if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, bit: bitHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, abast: abastHTML, resumen: resumenHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, bit: bitHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
@@ -1450,7 +1562,7 @@ document.addEventListener('click', async e => {
     if (a === 'logout') { S.saliendo = true; EX = null; EXA = null; await endSes(); if (RTOK) { try { await sb.rpc('resto_logout'); } catch (e) {} } S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
-    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; if (d.v === 'bit') { S.bit = null; S.bitCarg = false; } S.mos = false; }
+    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; if (d.v === 'resumen') { S.rs = null; setTimeout(rsCargar, 0); } if (d.v === 'bit') { S.bit = null; S.bitCarg = false; } S.mos = false; }
     else if (a === 'mesa') { S.an = null; S.anp = null; delete S.f['bus-mos']; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; resetCobro(); }
     else if (a === 'volver') { S.an = null; S.anp = null; delete S.f['bus-mos']; if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; resetCobro(); }
     else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
@@ -1493,7 +1605,7 @@ document.addEventListener('click', async e => {
     else {
       S.busy = true;
       if (a === 'enviar') {
-        const conStock = L().menu.filter(i => S.cart[i.id] && i.s != null).map(i => [i.id, S.cart[i.id]]);
+        const conStock = L().menu.filter(i => S.cart[i.id] && i.s != null).map(i => [i.id, S.cart[i.id]]), vendidos = L().menu.filter(i => S.cart[i.id]).map(i => [i.id, S.cart[i.id]]);
         const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e }));
         /* una comanda por estación: lo de cocina espera en Cocina; lo de cafetería queda anotado y ya entregado */
         const filas = ['cocina', 'cafeteria'].map(e => items.filter(x => x.e === e)).filter(g => g.length)
@@ -1503,7 +1615,7 @@ document.addEventListener('click', async e => {
           if (r && r.error && esRed(r)) {
             OUT.push({ k: 'enviar', filas, stock: conStock, por: S.quien || '', t: Date.now() }); S.sinRed = true; outSave(); outAplicar();
             S.cart = {}; S.note = ''; toast('Sin conexión: pedido guardado, se enviará solo', 'tk-l');
-          } else if (!fallo(r)) { for (const [mid, q] of conStock) await sb.rpc('resto_stock_mover', { p_menu: mid, p_delta: -q, p_motivo: 'venta', p_por: S.quien || '', p_log: false }); S.cart = {}; S.note = ''; }
+          } else if (!fallo(r)) { for (const [mid, q] of conStock) await sb.rpc('resto_stock_mover', { p_menu: mid, p_delta: -q, p_motivo: 'venta', p_por: S.quien || '', p_log: false }); consumirRecetas(vendidos); S.cart = {}; S.note = ''; }
         }
       } else if (a === 'pagarparte') {
         /* un cliente se retira y paga solo lo suyo: se registra ese pago y esas unidades quedan descontadas de la mesa */
@@ -1585,6 +1697,7 @@ document.addEventListener('click', async e => {
           const r = await conAut(() => sb.from('resto_cuentas').insert({ local_id: D.id, mesa: 0, total: cpm.neto, propina: cpm.prop, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...descCampos(sub), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }));
           if (!fallo(r)) {
             for (const i of sel) if (i.s != null) await sb.rpc('resto_stock_mover', { p_menu: i.id, p_delta: -S.cart[i.id], p_motivo: 'venta', p_por: S.quien || '', p_log: false });
+            consumirRecetas(sel.map(i => [i.id, S.cart[i.id]]));
             /* lo que lleva preparación va a Cocina como comanda del mostrador (ya pagada), con la observación del cliente.
                Cafetería la preparan los garzones y los productos con código de barras salen empacados: no pasan por cocina. */
             const aCocina = sel.filter(i => i.e !== 'cafeteria' && !i.cb).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e, pg: S.cart[i.id] }));
@@ -1660,6 +1773,52 @@ document.addEventListener('click', async e => {
         }
         else if (it && a === 'insoff') { if (confirm('¿Quitar "' + it.n + '" del inventario de producción? Sus movimientos quedan registrados.')) { if (!fallo(await sb.from('resto_insumos').update({ activo: false }).eq('id', it.id))) await cargar(); } }
       }
+      else if (['pvadd', 'pvdel', 'recadd', 'recdel', 'ocnueva', 'ocrec', 'ocanu', 'insvence', 'cgapl'].includes(a) && esAdm()) {
+        if (a === 'pvadd') {
+          const n = (S.f['pv-n'] || '').trim();
+          if (!n) alert('Escribe el nombre del proveedor.');
+          else if (!fallo(await sb.from('resto_proveedores').insert({ local_id: D.id, nombre: n, telefono: (S.f['pv-t'] || '').trim() || null, correo: (S.f['pv-m'] || '').trim() || null }))) { ['pv-n', 'pv-t', 'pv-m'].forEach(k => delete S.f[k]); await cargar(); }
+        }
+        else if (a === 'pvdel') { if (confirm('¿Quitar este proveedor?') && !fallo(await sb.from('resto_proveedores').update({ activo: false }).eq('id', d.id))) await cargar(); }
+        else if (a === 'recadd') {
+          const m = S.f['r-m'], i = S.f['r-i'], q = numD('r-q');
+          if (!m || !i || !(q > 0)) alert('Elige el producto, el insumo y la cantidad.');
+          else if (!fallo(await sb.from('resto_recetas').upsert({ local_id: D.id, menu_id: m, insumo_id: i, cantidad: q }, { onConflict: 'menu_id,insumo_id' }))) { ['r-i', 'r-q'].forEach(k => delete S.f[k]); await cargar(); toast('Receta actualizada', 'tk-l'); }
+        }
+        else if (a === 'recdel') { if (!fallo(await sb.from('resto_recetas').delete().eq('id', d.id))) await cargar(); }
+        else if (a === 'ocnueva') {
+          const pv = S.f['oc-pv'], bajos = bajoIns();
+          if (!pv) alert('Elige el proveedor.');
+          else if (!bajos.length) alert('No hay insumos bajo el mínimo.');
+          else if (!fallo(await sb.from('resto_ordenes_compra').insert({ local_id: D.id, proveedor: pv, estado: 'pendiente', items: bajos.map(i => ({ insumo_id: i.id, n: i.n, u: unTxt(i.u), q: sugerido(i) })), creada_por: S.quien || 'Administradora' }))) { await cargar(); toast('Orden creada: envíala por WhatsApp o correo', 'tk-l'); }
+        }
+        else if (a === 'ocrec' || a === 'ocanu') {
+          if (confirm(a === 'ocrec' ? '¿Marcar como recibida? Recuerda registrar la compra en Inventario de producción para sumar el stock.' : '¿Anular esta orden?') && !fallo(await sb.from('resto_ordenes_compra').update(a === 'ocrec' ? { estado: 'recibida', recibida_at: new Date().toISOString() } : { estado: 'anulada' }).eq('id', d.id))) await cargar();
+        }
+        else if (a === 'insvence') {
+          const it = D.insumos.find(x => x.id === d.id);
+          if (it) { const v = prompt('Fecha de vencimiento de «' + it.n + '» (AAAA-MM-DD). Vacío para quitar:', it.v || ''); if (v !== null) { const f = v.trim(); if (f && !/^\d{4}-\d{2}-\d{2}$/.test(f)) alert('Usa el formato AAAA-MM-DD, por ejemplo 2026-12-31.'); else if (!fallo(await sb.from('resto_insumos').update({ vence: f || null }).eq('id', it.id))) await cargar(); } }
+        }
+        else if (a === 'cgapl') {
+          const cambios = D.insumos.filter(i => i.on && S.f['cg-' + i.id] !== undefined && String(S.f['cg-' + i.id]).trim() !== '').map(i => ({ i, q: +String(S.f['cg-' + i.id]).replace(',', '.') })).filter(x => !isNaN(x.q) && x.q >= 0 && x.q !== x.i.s);
+          if (!cambios.length) alert('No hay diferencias que aplicar.');
+          else if (confirm('Se ajustarán ' + cambios.length + ' insumos a lo contado. ¿Aplicar?')) {
+            let mal = false;
+            for (const c of cambios) { if (fallo(await sb.rpc('resto_insumo_mover', { p_insumo: c.i.id, p_delta: c.q - c.i.s, p_motivo: 'conteo', p_por: S.quien || 'Administradora', p_nota: 'Conteo físico guiado' }))) { mal = true; break; } }
+            D.insumos.forEach(i => delete S.f['cg-' + i.id]);
+            await cargar(); if (!mal) toast('Conteo aplicado', 'tk-l');
+          }
+        }
+      }
+      else if (a === 'rsp' && esAdm()) { S.rsp = d.p; await rsCargar(); }
+      else if (a === 'rsxls' && esAdm() && S.rs && S.rs.cur) rsExcel();
+      else if (a === 'rspdf' && esAdm()) window.print();
+      else if (a === 'rswa' && esAdm() && S.rs && S.rs.A) {
+        let num = ''; try { num = localStorage.getItem('resto_wa') || ''; } catch (e) { }
+        const v = prompt('Número de WhatsApp al que se envía el resumen (con código de país, ej. 56912345678):', num);
+        if (v !== null) { const n = v.replace(/\D/g, ''); try { localStorage.setItem('resto_wa', n); } catch (e) { } window.open('https://wa.me/' + n + '?text=' + encodeURIComponent(rsTexto()), '_blank', 'noopener'); }
+      }
+      else if (a === 'respaldo' && esAdm()) { try { await respaldo(); toast('Respaldo descargado', 'tk-l'); } catch (e) { alert('No se pudo hacer el respaldo: ' + e.message); } }
       else if (a === 'setfondo' && esAdm()) {
         const raw = String(S.f['fondo-in'] ?? D.fondo ?? '').replace(/\D/g, ''), v = raw ? Math.min(+raw, 100000000) : 0;
         if (!fallo(await sb.from('resto_locales').update({ fondo_caja: v }).eq('id', D.id))) { delete S.f['fondo-in']; toast('Sencillo fijo guardado · ' + money(v), 'tk-l'); }
