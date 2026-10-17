@@ -123,7 +123,7 @@ def D(pg):
 e=run({'email':'dueno@sp.cl','role':'','db':base_db(),'ia':'sim'},D); print('ERR D',e)
 
 # --- E/F/G/H: caja con billetes y monedas
-LS_ANA="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'garzon',quien:'Ana',t:Date.now()}));"
+LS_ANA="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'garzon',quien:'Ana',tok:'T',t:Date.now()}));"
 def db_roles(caja=True):
     d=base_db(); d['resto_locales'][0]['admin_pin']='x'; d['resto_garzones'][0].update({'pin':'h','caja':caja}); d['resto_comandas']=[]; return d
 def nav_caja(pg):
@@ -242,7 +242,7 @@ def K(pg):
     check('K: cierre guarda retiro, sencillo dejado y gastos', tu.get('cerrado_at') and tu['retiro_efectivo']==15000 and tu['desglose_deja']=={'20000':5,'10000':6} and tu['gastos_total']==15000 and tu['diferencia']==0)
 e=run({'email':'u','role':'','db':db_fondo()},K,LS_ANA); print('ERR K',e)
 
-LS_ADM2="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'admin',quien:'Administradora',t:Date.now()}));"
+LS_ADM2="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'admin',quien:'Administradora',tok:'T',t:Date.now()}));"
 def K2(pg):
     d=[]; pg.on('dialog',lambda x:(d.append(x.message),x.accept()))
     nav_caja(pg)
@@ -376,7 +376,7 @@ def H(pg):
     check('H: garzón sin autorización NO ve Caja', pg.locator('[data-act="tab"][data-v="turno"]').count()==0)
 e=run({'email':'u','role':'','db':db_roles(caja=False)},H,LS_ANA); print('ERR H',e)
 
-LS_ADM="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'admin',quien:'Administradora',t:Date.now()}));"
+LS_ADM="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'admin',quien:'Administradora',tok:'T',t:Date.now()}));"
 def I(pg):
     pg.on('dialog',lambda x:x.accept())
     nav_caja(pg); pg.fill('#dna-20000','20000'); pg.click('[data-act="tabrir"]'); pg.wait_for_timeout(600)
@@ -413,5 +413,39 @@ def N(pg):
 def db_n():
     d=db_ins(True); d['resto_locales'][0]['admin_pin']=''; d['resto_garzones'][0]['pin']=''; return d
 e=run({'email':'u','role':'','db':db_n()},N); print('ERR N',e)
+
+
+
+import hashlib
+def O1(pg):
+    check('O: sin sesión pide quién eres', '¿Quién eres?' in pg.inner_text('#app'))
+    pg.click('[data-act="qsel"][data-k="admin"]'); pg.wait_for_timeout(200)
+    pg.fill('#qpin','0000'); pg.click('[data-act="qok"]'); pg.wait_for_timeout(500)
+    check('O: PIN incorrecto se rechaza', 'PIN incorrecto' in pg.inner_text('#app') and pg.evaluate('RTOK')=='')
+    pg.fill('#qpin','1234'); pg.click('[data-act="qok"]'); pg.wait_for_timeout(600)
+    check('O: PIN correcto entra y guarda el pase del servidor', pg.evaluate('RTOK')=='TOKadmin' and pg.evaluate('S.rol')=='admin' and 'TOKadmin' in pg.evaluate("localStorage.getItem('pr-rol')"))
+e=run({'email':'u','role':'','db':db_roles()},O1); print('ERR O1',e)
+def O2(pg):
+    pg.click('[data-act="qsel"][data-k="admin"]'); pg.wait_for_timeout(200)
+    pg.fill('#qpin','1234'); pg.click('[data-act="qok"]'); pg.wait_for_timeout(500)
+    check('O2: tras varios intentos el servidor bloquea y la app lo explica', 'Demasiados intentos' in pg.inner_text('#app'))
+e=run({'email':'u','role':'','db':db_roles(),'bloq':True},O2); print('ERR O2',e)
+def O3(pg):
+    pg.click('[data-act="qsel"][data-k="admin"]'); pg.wait_for_timeout(200)
+    pg.fill('#qpin','1234'); pg.click('[data-act="qok"]'); pg.wait_for_timeout(600)
+    check('O3: si la base aún no tiene los pases, entra con la verificación antigua', pg.evaluate('S.rol')=='admin' and pg.evaluate('SIN_PASES')==True)
+d3=db_roles(); d3['resto_locales'][0]['admin_pin']=hashlib.sha256(b'L1:admin:1234').hexdigest()
+e=run({'email':'u','role':'','db':d3,'noPases':True},O3); print('ERR O3',e)
+def O4(pg):
+    check('O4: pase vencido en el servidor: vuelve a pedir quién eres', '¿Quién eres?' in pg.inner_text('#app') and pg.evaluate('RTOK')=='')
+e=run({'email':'u','role':'','db':db_roles(),'sesionVencida':True},O4,LS_ADM); print('ERR O4',e)
+def O5(pg):
+    check('O5: sesión guardada sin pase se descarta y pide PIN', '¿Quién eres?' in pg.inner_text('#app'))
+e=run({'email':'u','role':'','db':db_roles()},O5,"localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'admin',quien:'Administradora',t:Date.now()}));"); print('ERR O5',e)
+def O6(pg):
+    pg.click('[data-act="qsel"][data-k="g:Ana"]'); pg.wait_for_timeout(500)
+    check('O6: garzón sin PIN entra y recibe pase del servidor', pg.evaluate('S.rol')=='garzon' and pg.evaluate('RTOK')=='TOKgarzon')
+d6=db_roles(); d6['resto_garzones'][0]['pin']=''
+e=run({'email':'u','role':'','db':d6,'sinPinOk':True},O6); print('ERR O6',e)
 
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

@@ -79,7 +79,9 @@ table{border-collapse:collapse}
    ===================================================== */
 const SB_URL = 'https://fchqqtdapyrgpkyxiful.supabase.co';
 const SB_KEY = 'sb_publishable_7jjHrGLPJ51aP0BKwcIizg_bakLNqiY';
-const sb = supabase.createClient(SB_URL, SB_KEY);
+/* Pase de sesión del rol (lo entrega el servidor al verificar el PIN). Viaja en cada consulta a la base para que ella misma aplique los permisos. */
+let RTOK = '';
+const sb = supabase.createClient(SB_URL, SB_KEY, { global: { fetch: (u, o = {}) => { if (!RTOK || !String(u).includes('/rest/v1/')) return fetch(u, o); const h = new Headers(o.headers || {}); h.set('x-rol-token', RTOK); return fetch(u, { ...o, headers: h }); } } });
 const $ = s => document.querySelector(s);
 const money = n => '$' + Math.round(n).toLocaleString('es-CL');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -115,11 +117,25 @@ async function hpin(scope, pin) {
   const h = await crypto.subtle.digest('SHA-256', b);
   return [...new Uint8Array(h)].map(x => x.toString(16).padStart(2, '0')).join('');
 }
-function entrar(rol, quien) {
-  S.rol = rol; S.quien = quien; S.qk = null; S.pinErr = ''; S.mesa = null;
+const sinFuncion = e => !!(e && /does not exist|could not find the function|PGRST202|schema cache/i.test(e.message || ''));
+/* Verifica el PIN en el servidor. Devuelve {ok, token, quien, caja} | {ok:false, error} | {legacy:true} si la base aún no tiene la migración 015 */
+async function loginRol(rol, ref, pin, temp) {
+  const r = await sb.rpc('resto_login', { p_rol: rol, p_ref: ref, p_pin: pin || '', p_temp: !!temp });
+  if (r.error && sinFuncion(r.error)) { SIN_PASES = true; try { localStorage.setItem('pr-sp', '1'); } catch (e) {} return { legacy: true }; }
+  if (r.error) return { ok: false, error: 'red' };
+  SIN_PASES = false; try { localStorage.removeItem('pr-sp'); } catch (e) {}
+  return r.data || { ok: false, error: 'pin' };
+}
+const msgLogin = r => r.error === 'bloqueado' ? 'Demasiados intentos fallidos. Espera 10 minutos o pide ayuda a la administradora.' : r.error === 'red' ? 'No se pudo verificar el PIN. Revisa tu conexión e inténtalo de nuevo.' : r.error === 'sin_pin' ? 'Esa persona aún no tiene PIN. Pide a la administradora que cree uno.' : 'PIN incorrecto';
+async function pinSet(rol, ref, pin) {
+  const r = await sb.rpc('resto_pin_set', { p_rol: rol, p_ref: ref, p_pin: pin || '' });
+  return r;
+}
+function entrar(rol, quien, tok) {
+  RTOK = tok || ''; S.rol = rol; S.quien = quien; S.qk = null; S.pinErr = ''; S.mesa = null;
   S.garzon = rol === 'garzon' ? quien : '';
   S.view = misTabs()[0];
-  if (rol !== 'ingeniero') guardarRol(D.id, rol, quien); /* el ingeniero pide su clave cada vez */
+  if (rol !== 'ingeniero') guardarRol(D.id, rol, quien, tok); /* el ingeniero pide su clave cada vez */
   /* el dispositivo de la cocina queda abierto: si se recarga, vuelve solo a Cocina con la misma cocinera */
   try { if (rol === 'cocina') localStorage.setItem('pr-cocina', JSON.stringify({ lid: D.id, quien })); else localStorage.removeItem('pr-cocina'); } catch (e) {}
   S.ses = null; S.mos = false; ensureSes().then(render); pantalla();
@@ -127,16 +143,21 @@ function entrar(rol, quien) {
 /* Quién está usando este dispositivo se guarda en el propio equipo (no se pierde al recargar, cambiar de pestaña ni cuando el celular cierra la app).
    Se mantiene 16 h desde la última vez que se usó; "Cambiar" o "Salir" lo borran. */
 const ROL_MS = 16 * 3600 * 1000;
-function guardarRol(lid, rol, quien) { try { localStorage.setItem('pr-rol', JSON.stringify({ lid, rol, quien, t: Date.now() })); } catch (e) {} }
-const olvidarRol = () => { try { sessionStorage.removeItem('pr-rol'); localStorage.removeItem('pr-rol'); localStorage.removeItem('pr-cocina'); } catch (e) {} };
+function guardarRol(lid, rol, quien, tok) { try { localStorage.setItem('pr-rol', JSON.stringify({ lid, rol, quien, tok: tok === undefined ? RTOK : tok, t: Date.now() })); } catch (e) {} }
+const olvidarRol = () => { RTOK = ''; try { sessionStorage.removeItem('pr-rol'); localStorage.removeItem('pr-rol'); localStorage.removeItem('pr-cocina'); } catch (e) {} };
 const cocineraValida = q => D.cocineras.length ? D.cocineras.some(c => c.n === q && c.on) : q === 'Cocina';
+let SIN_PASES = (() => { try { return localStorage.getItem('pr-sp') === '1'; } catch (e) { return false; } })(); /* verdadero si la base de datos aún no tiene la migración de pases */
 function restaurarRol() {
   if (!rolesOn() || S.rol) return;
   try {
     let r = JSON.parse(localStorage.getItem('pr-rol') || 'null');
     if (r && r.rol !== 'cocina' && Date.now() - (r.t || 0) > ROL_MS) { localStorage.removeItem('pr-rol'); r = null; }
     if (!r) { const k = JSON.parse(localStorage.getItem('pr-cocina') || 'null'); if (k) r = { lid: k.lid, rol: 'cocina', quien: k.quien }; }
-    if (r && r.lid === D.id && (r.rol === 'admin' || (r.rol === 'cocina' && cocineraValida(r.quien)) || (r.rol === 'garzon' && D.garzones.some(g => g.n === r.quien && g.on)))) { S.rol = r.rol; S.quien = r.quien; S.garzon = r.rol === 'garzon' ? r.quien : ''; S.view = misTabs()[0]; guardarRol(r.lid, r.rol, r.quien); ensureSes().then(() => {}); pantalla(); }
+    if (r && r.lid === D.id && (r.rol === 'admin' || (r.rol === 'cocina' && cocineraValida(r.quien)) || (r.rol === 'garzon' && D.garzones.some(g => g.n === r.quien && g.on)))) {
+      if ((r.rol === 'admin' || r.rol === 'garzon') && !r.tok) { /* pase ausente: hay que volver a entrar con PIN (si la base aún no usa pases, ver más abajo) */ if (!SIN_PASES) { localStorage.removeItem('pr-rol'); return; } }
+      RTOK = r.tok || ''; S.rol = r.rol; S.quien = r.quien; S.garzon = r.rol === 'garzon' ? r.quien : ''; S.view = misTabs()[0]; guardarRol(r.lid, r.rol, r.quien, r.tok); ensureSes().then(() => {}); pantalla();
+      if (r.tok) sb.rpc('resto_sesion_estado').then(x => { if (!x.error && !x.data && rolesOn() && S.rol && S.rol !== 'cocina') { S.rol = null; S.quien = ''; olvidarRol(); render(); } });
+    }
   } catch (e) {}
 }
 function quienHTML() {
@@ -1188,7 +1209,8 @@ async function outVaciar() {
 window.addEventListener('online', () => { S.sinRed = false; outBar(); outVaciar(); });
 window.addEventListener('offline', () => { S.sinRed = true; outBar(); });
 setInterval(() => { if (OUT.length) outVaciar(); outBar(); }, 12000);
-const fallo = r => { if (r && r.error) { if (esRed(r)) { S.sinRed = true; outBar(); alert('Sin conexión: esto no se pudo guardar. Reintenta cuando vuelva internet.'); return true; } S.lastErr = true; S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
+const fallo = r => { if (r && r.error) { if (esRed(r)) { S.sinRed = true; outBar(); alert('Sin conexión: esto no se pudo guardar. Reintenta cuando vuelva internet.'); return true; } if (/row-level security|permission denied|violates row-level/i.test(r.error.message || '')) { alert('No tienes permiso para hacer esto, o tu acceso venció. Si debería poder, vuelve a entrar con tu PIN.'); sb.rpc('resto_sesion_estado').then(x => { if (!x.error && !x.data && rolesOn() && S.rol && S.rol !== 'cocina') { S.rol = null; S.quien = ''; olvidarRol(); render(); } }); return true; }
+    S.lastErr = true; S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
 
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
@@ -1279,30 +1301,46 @@ document.addEventListener('click', async e => {
       S.pinErr = '';
       if (d.k === 'cocina') { entrar('cocina', 'Cocina'); render(); return; }
       if (d.k.startsWith('c:')) { const c = D.cocineras.find(x => x.n === d.k.slice(2) && x.on); if (c && !c.pin) { entrar('cocina', c.n); render(); return; } }
-      if (d.k.startsWith('g:')) { const g = D.garzones.find(x => x.n === d.k.slice(2)); if (g && !g.pin) { entrar('garzon', g.n); render(); return; } }
+      if (d.k.startsWith('g:')) { const g = D.garzones.find(x => x.n === d.k.slice(2)); if (g && !g.pin) { const r = await loginRol('garzon', g.id, ''); if (r.legacy) SIN_PASES = true; entrar('garzon', g.n, r.ok ? r.token : ''); render(); return; } }
       S.qk = d.k; render(); return;
     }
     if (a === 'qback') { S.qk = null; S.pinErr = ''; render(); return; }
     if (a === 'qok') {
       const pin = ($('#qpin') || {}).value || '', k = S.qk; if (!k) return;
       if (k === 'ing') {
-        const r = await sb.rpc('resto_verificar_ingeniero', { p_clave: pin });
+        const r = await sb.rpc('resto_login_ing', { p_clave: pin });
+        if (r.error && sinFuncion(r.error)) {
+          const v = await sb.rpc('resto_verificar_ingeniero', { p_clave: pin });
+          if (v.error) { S.pinErr = 'No se pudo verificar la clave. Intenta de nuevo.'; render(); return; }
+          if (v.data !== true) { S.pinErr = 'Clave incorrecta'; render(); return; }
+          SIN_PASES = true; entrar('ingeniero', 'Carlos Oporto'); render(); return;
+        }
         if (r.error) { S.pinErr = 'No se pudo verificar la clave. Intenta de nuevo.'; render(); return; }
-        if (r.data !== true) { S.pinErr = 'Clave incorrecta'; render(); return; }
-        entrar('ingeniero', 'Carlos Oporto'); render(); return;
+        if (!(r.data && r.data.ok)) { S.pinErr = 'Clave incorrecta'; render(); return; }
+        entrar('ingeniero', 'Carlos Oporto', r.data.token); render(); return;
       }
       if (k.startsWith('c:')) {
         const c = D.cocineras.find(x => x.n === k.slice(2) && x.on);
-        if (!(c && c.pin && (await hpin('c:' + c.id, pin)) === c.pin)) { S.pinErr = 'PIN incorrecto'; render(); return; }
-        entrar('cocina', c.n); render(); return;
+        if (!c) { S.pinErr = 'PIN incorrecto'; render(); return; }
+        const r = await loginRol('cocina', c.id, pin);
+        if (r.legacy) { SIN_PASES = true; if (!(c.pin && (await hpin('c:' + c.id, pin)) === c.pin)) { S.pinErr = 'PIN incorrecto'; render(); return; } entrar('cocina', c.n); render(); return; }
+        if (!r.ok) { S.pinErr = msgLogin(r); render(); return; }
+        entrar('cocina', c.n, r.token); render(); return;
       }
       const adm = k === 'admin', g = adm ? null : D.garzones.find(x => x.n === k.slice(2));
-      const ok = adm ? (await hpin('admin', pin)) === D.adminPin : !!(g && (await hpin('g:' + g.id, pin)) === g.pin);
-      if (!ok) { S.pinErr = 'PIN incorrecto'; render(); return; }
-      entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n); render(); return;
+      if (!adm && !g) { S.pinErr = 'PIN incorrecto'; render(); return; }
+      const r = await loginRol(adm ? 'admin' : 'garzon', adm ? 'admin' : g.id, pin);
+      if (r.legacy) {
+        SIN_PASES = true;
+        const ok = adm ? (await hpin('admin', pin)) === D.adminPin : (await hpin('g:' + g.id, pin)) === g.pin;
+        if (!ok) { S.pinErr = 'PIN incorrecto'; render(); return; }
+        entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n); render(); return;
+      }
+      if (!r.ok) { S.pinErr = msgLogin(r); render(); return; }
+      entrar(adm ? 'admin' : 'garzon', adm ? 'Administradora' : g.n, r.token); render(); return;
     }
-    if (a === 'cambiar') { await endSes(); S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; olvidarRol(); render(); return; }
-    if (a === 'logout') { S.saliendo = true; EX = null; EXA = null; await endSes(); S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
+    if (a === 'cambiar') { await endSes(); if (RTOK) { try { await sb.rpc('resto_logout'); } catch (e) {} } S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; olvidarRol(); render(); return; }
+    if (a === 'logout') { S.saliendo = true; EX = null; EXA = null; await endSes(); if (RTOK) { try { await sb.rpc('resto_logout'); } catch (e) {} } S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; S.mos = false; }
@@ -1410,8 +1448,16 @@ document.addEventListener('click', async e => {
         const x = (D.anulaciones || []).find(y => y.id === S.anp && y.estado === 'pendiente'), pin = S.f['anu-pin'] || '';
         if (!x) S.anp = null;
         else if ((S.anpN || 0) >= 5) S.anpE = 'Demasiados intentos. Pide a la administradora que la apruebe desde su pantalla.';
-        else if (!/^\d{4,8}$/.test(pin) || !D.adminPin || (await hpin('admin', pin)) !== D.adminPin) { S.anpN = (S.anpN || 0) + 1; S.anpE = 'PIN incorrecto'; }
-        else if (await anuAplicar(x, 'Administradora (PIN en el equipo de ' + (S.quien || 'garzón') + ')')) { S.anpN = 0; S.anp = null; S.anpE = ''; delete S.f['anu-pin']; toast('Anulación autorizada', 'tk-l'); }
+        else if (!/^\d{4,8}$/.test(pin) || !D.adminPin) { S.anpN = (S.anpN || 0) + 1; S.anpE = 'PIN incorrecto'; }
+        else {
+          /* el servidor verifica el PIN de la administradora y entrega un pase de 3 minutos solo para esta autorización */
+          const lr = await loginRol('admin', 'admin', pin, true);
+          let ok = false, tmp = null;
+          if (lr.legacy) ok = (await hpin('admin', pin)) === D.adminPin; else if (lr.ok) { ok = true; tmp = lr.token; }
+          if (!ok) { S.anpN = (S.anpN || 0) + 1; S.anpE = lr.error === 'bloqueado' ? msgLogin(lr) : 'PIN incorrecto'; }
+          else { const keep = RTOK; if (tmp) RTOK = tmp; let done = false; try { done = await anuAplicar(x, 'Administradora (PIN en el equipo de ' + (S.quien || 'garzón') + ')'); } finally { RTOK = keep; }
+            if (done) { S.anpN = 0; S.anp = null; S.anpE = ''; delete S.f['anu-pin']; toast('Anulación autorizada', 'tk-l'); } }
+        }
       }
       else if (a === 'mospagar') {
         const sel = L().menu.filter(i => S.cart[i.id]), sub = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
@@ -1595,12 +1641,16 @@ document.addEventListener('click', async e => {
       else if (a === 'setadminpin' && esAdm()) {
         const p = ($('#apin') || {}).value || '';
         if (!/^\d{4,8}$/.test(p)) { alert('El PIN debe tener de 4 a 8 números.'); }
-        else if (!fallo(await sb.from('resto_locales').update({ admin_pin: await hpin('admin', p) }).eq('id', D.id))) { S.rol = 'admin'; S.quien = 'Administradora'; guardarRol(D.id, 'admin', 'Administradora'); alert('PIN guardado. Desde ahora cada persona entra con su PIN.'); }
+        else {
+          let r = await pinSet('admin', 'admin', p);
+          if (r.error && sinFuncion(r.error)) { SIN_PASES = true; r = await sb.from('resto_locales').update({ admin_pin: await hpin('admin', p) }).eq('id', D.id); if (!fallo(r)) { S.rol = 'admin'; S.quien = 'Administradora'; guardarRol(D.id, 'admin', 'Administradora', ''); alert('PIN guardado. Desde ahora cada persona entra con su PIN.'); } }
+          else if (!fallo(r)) { const lr = await loginRol('admin', 'admin', p); S.rol = 'admin'; S.quien = 'Administradora'; RTOK = lr.ok ? lr.token : ''; guardarRol(D.id, 'admin', 'Administradora', RTOK); alert('PIN guardado. Desde ahora cada persona entra con su PIN.'); }
+        }
       }
       else if (a === 'setgpin' && esAdm()) {
         const p = ($('#gp-' + d.id) || {}).value || '';
         if (p && !/^\d{4,8}$/.test(p)) alert('El PIN debe tener de 4 a 8 números.');
-        else fallo(await sb.from('resto_garzones').update(p ? { pin: await hpin('g:' + d.id, p) } : { pin: null, caja: false }).eq('id', d.id));
+        else { const r = await pinSet('garzon', d.id, p); if (r.error && sinFuncion(r.error)) fallo(await sb.from('resto_garzones').update(p ? { pin: await hpin('g:' + d.id, p) } : { pin: null, caja: false }).eq('id', d.id)); else fallo(r); }
       }
       else if (a === 'gcaja' && esAdm()) {
         const g = L().garzones.find(x => x.id === d.id), dar = !(g && g.pin && g.cj);
@@ -1609,7 +1659,7 @@ document.addEventListener('click', async e => {
         else fallo(await sb.from('resto_garzones').update({ caja: dar }).eq('id', d.id));
       }
       else if (a === 'quitarpin') {
-        if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id));
+        if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) { const r = await pinSet('admin', 'admin', ''); if (r.error && sinFuncion(r.error)) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id)); else fallo(r); }
       }
       else if (a === 'qrtoggle' && esAdm()) { fallo(await sb.from('resto_locales').update({ qr_activo: !L().qr }).eq('id', D.id)); }
       else if (a === 'qrimprimir' && esAdm()) { imprimirQR(); }
@@ -1621,7 +1671,7 @@ document.addEventListener('click', async e => {
       else if (a === 'setcpin' && esAdm()) {
         const p = ($('#cp-' + d.id) || {}).value || '';
         if (p && !/^\d{4,8}$/.test(p)) alert('El PIN debe tener de 4 a 8 números.');
-        else fallo(await sb.from('resto_cocineras').update({ pin: p ? await hpin('c:' + d.id, p) : null }).eq('id', d.id));
+        else { const r = await pinSet('cocina', d.id, p); if (r.error && sinFuncion(r.error)) fallo(await sb.from('resto_cocineras').update({ pin: p ? await hpin('c:' + d.id, p) : null }).eq('id', d.id)); else fallo(r); }
       }
       else if (a === 'gadd') { const n = $('#gn').value.trim(); if (n) fallo(await sb.from('resto_garzones').insert({ local_id: D.id, nombre: n })); }
       else if (a === 'gtoggle') { const g = L().garzones.find(x => x.id === d.id); if (g) fallo(await sb.from('resto_garzones').update({ activo: !g.on }).eq('id', d.id)); }
