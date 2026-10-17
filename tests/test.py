@@ -462,4 +462,40 @@ def db_p():
     return d
 e=run({'email':'u','role':'','db':db_p()},P); print('ERR P',e)
 
+
+
+def db_q(roles):
+    d=db_ins(True)
+    if not roles: d['resto_locales'][0]['admin_pin']=''; d['resto_garzones'][0]['pin']=''
+    d['resto_comandas']=[{'id':'cq','local_id':'L1','mesa':5,'items':[{'n':'Café','q':2,'p':2500,'e':'cafeteria'}],'nota':'','estado':'entregado','garzon':'Ana','created_at':iso(10),'cerrada':False}]
+    d['resto_cuentas']=[]
+    return d
+def Q1(pg):
+    pg.on('dialog',lambda x:x.accept())
+    pg.click('[data-act="mesa"][data-n="5"]'); pg.wait_for_timeout(300)
+    pg.click('[data-act="cerrar"]'); pg.wait_for_timeout(300)
+    check('Q1: el cobro ofrece descuento y propina del local', 'Aplicar descuento' in pg.inner_text('#app') and 'Propina sugerida 10%' in pg.inner_text('#app'))
+    pg.click('[data-act="descabrir"]'); pg.wait_for_timeout(200)
+    pg.fill('#d-val','10'); pg.click('[data-act="autok"]'); pg.wait_for_timeout(300)
+    t=pg.inner_text('#app')
+    check('Q1: la administradora aplica 10% sin PIN y el total baja', 'Descuento 10%' in t and '$4.950' in pg.inner_text('#totpagar'))
+    pg.click('[data-act="pagar"]'); pg.wait_for_timeout(700)
+    c=pg.evaluate('window.__DB.resto_cuentas')
+    check('Q1: la cuenta guarda descuento, motivo y quién autorizó', len(c)==1 and c[0]['total']==4500 and c[0]['propina']==450 and c[0]['descuento']==500 and c[0]['desc_motivo']=='Cortesía de la casa' and c[0]['desc_aut']=='Administradora')
+e=run({'email':'u','role':'','db':db_q(False)},Q1); print('ERR Q1',e)
+def Q2(pg):
+    pg.on('dialog',lambda x:x.accept())
+    pg.click('[data-act="mesa"][data-n="5"]'); pg.wait_for_timeout(300)
+    pg.click('[data-act="cerrar"]'); pg.wait_for_timeout(300)
+    pg.evaluate("document.querySelector('[data-act=propina]').click()"); pg.wait_for_timeout(300)
+    check('Q2: el garzón no puede quitar la propina sin autorización', 'necesita autorización' in pg.inner_text('#app') and pg.evaluate('S.propina')==True)
+    pg.fill('#aut-pin','0000'); pg.click('[data-act="autok"]'); pg.wait_for_timeout(500)
+    check('Q2: PIN incorrecto no autoriza', 'PIN incorrecto' in pg.inner_text('#app') and pg.evaluate('S.propina')==True)
+    pg.fill('#aut-pin','1234'); pg.click('[data-act="autok"]'); pg.wait_for_timeout(500)
+    check('Q2: con el PIN de la administradora se quita la propina', pg.evaluate('S.propina')==False and '$5.000' in pg.inner_text('#totpagar'))
+    pg.click('[data-act="pagar"]'); pg.wait_for_timeout(700)
+    c=pg.evaluate('window.__DB.resto_cuentas'); lg=[r for r in pg.evaluate('window.__RPC') if r[0]=='resto_login' and r[1].get('p_temp')]
+    check('Q2: se cobra sin propina usando un pase temporal de administradora', len(c)==1 and c[0]['propina']==0 and c[0]['total']==5000 and len(lg)>=1)
+e=run({'email':'u','role':'','db':db_q(True)},Q2,LS_ANA); print('ERR Q2',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)
