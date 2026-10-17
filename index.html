@@ -293,7 +293,7 @@ async function cargar() {
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
@@ -724,7 +724,7 @@ async function turnoCargar() {
 function turnoRes(t) {
   const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
   cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; pr += c.propina + c.pe + c.pt; });
-  const gs = (D.gastos || []).filter(g => g.turno_id === t.id), gt = gs.reduce((a, g) => a + g.m, 0);
+  const gs = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul), gt = gs.reduce((a, g) => a + g.m, 0);
   return { cuentas: cu.length, vt, ef, tj, tr, pr, gt, gs: gs.length, esp: (t.monto_inicial || 0) + ef - gt };
 }
 const hora = t => new Date(t).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -795,8 +795,18 @@ function fondoHTML() {
     <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="fondo-in" data-keep inputmode="numeric" autocomplete="off" placeholder="Ej.: 160000" style="flex:1;min-width:150px" value="${S.f['fondo-in'] === undefined ? (D.fondo || '') : fv('fondo-in')}"><button class="btn-ok" data-act="setfondo">Guardar sencillo fijo</button></div>
     <div class="mut" style="margin-top:6px">Actual: <b>${D.fondo ? money(D.fondo) : 'sin definir'}</b></div></div>`;
 }
+/* Una fila de gasto. Los anulados quedan a la vista tachados (el registro nunca se borra). Solo se pueden anular los del turno abierto. */
+function gastoFila(g, editable) {
+  const doc = `<b>${g.anul ? '<s>' : ''}${esc(g.tipo)}${g.num ? ' N° ' + esc(g.num) : ''}${g.anul ? '</s>' : ''}</b> · ${esc(g.prov || 'sin proveedor')}`;
+  const sub = `${esc(g.det)} · ${hora(g.t)} · ${esc(g.por || '')}`;
+  let extra = '';
+  if (g.anul) extra = `<div class="mut" style="color:var(--bad)">Anulado por ${esc(g.anPor)}: ${esc(g.anMot)}</div>`;
+  else if (g.pedMot) extra = `<div class="mut" style="color:var(--warn)">Anulación solicitada por ${esc(g.pedPor)}: ${esc(g.pedMot)}${editable && !esAdm() ? ' · espera a la administradora' : ''}</div>`;
+  const btn = !editable || g.anul ? '' : esAdm() ? `<button class="btn-bad" data-act="ganular" data-id="${g.id}">Anular</button>` : g.pedMot ? '' : `<button class="btn-line" data-act="gpedir" data-id="${g.id}">Pedir anulación</button>`;
+  return `<div class="row"><div>${doc}<div class="mut">${sub}</div>${extra}</div><div style="text-align:right"><b style="${g.anul ? 'text-decoration:line-through;color:var(--mut)' : ''}">${money(g.m)}</b>${btn ? '<div style="margin-top:4px">' + btn + '</div>' : ''}</div></div>`;
+}
 function gastosHTML(t) {
-  const gs = (D.gastos || []).filter(g => g.turno_id === t.id), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
+  const todos = (D.gastos || []).filter(g => g.turno_id === t.id), gs = todos.filter(g => !g.anul), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
   return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Gastos pagados desde caja</b>
     <p class="mut" style="margin:0">Cada vez que salga dinero de la caja para pagar algo, anótalo aquí con el número de boleta o factura. Se descuenta del efectivo que debe haber y queda registrado: no se puede editar ni borrar.</p>
     <label class="mut">Documento<select id="g-tipo" data-keep>${GTIPOS.map(x => `<option ${x === tipo ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -805,11 +815,11 @@ function gastosHTML(t) {
     <input id="g-det" data-keep autocomplete="off" placeholder="Detalle: qué se compró o pagó" value="${fv('g-det')}">
     <input id="g-monto" data-keep type="number" inputmode="numeric" min="1" placeholder="Monto que salió de la caja ($)" value="${fv('g-monto')}">
     <button class="btn-ok" data-act="gasto">Registrar gasto</button>
-    ${gs.length ? gs.map(g => `<div class="row"><div><b>${esc(g.tipo)}${g.num ? ' N° ' + esc(g.num) : ''}</b> · ${esc(g.prov || 'sin proveedor')}<div class="mut">${esc(g.det)} · ${hora(g.t)} · ${esc(g.por || '')}</div></div><b>${money(g.m)}</b></div>`).join('') + `<div class="total"><span>Total gastos del turno</span><span>${money(tot)}</span></div>` : '<p class="mut" style="margin:0">Aún no hay gastos en este turno.</p>'}</div>`;
+    ${todos.length ? todos.map(g => gastoFila(g, true)).join('') + `<div class="total"><span>Total gastos del turno</span><span>${money(tot)}</span></div>` : '<p class="mut" style="margin:0">Aún no hay gastos en este turno.</p>'}</div>`;
 }
 function gastosHistHTML() {
   const g = (D.gastos || []).slice(0, 60);
-  return `<div class="card" style="margin-top:12px"><b>Historial de gastos de caja</b>${g.map(x => `<div class="row"><div><b>${esc(x.tipo)}${x.num ? ' N° ' + esc(x.num) : ''}</b> · ${esc(x.prov || 'sin proveedor')}<div class="mut">${esc(x.det)} · ${hora(x.t)} · ${esc(x.por || '')}</div></div><b>${money(x.m)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay gastos registrados.</p>'}</div>`;
+  return `<div class="card" style="margin-top:12px"><b>Historial de gastos de caja</b>${g.map(x => gastoFila(x, false)).join('') || '<p class="mut" style="margin-top:8px">Aún no hay gastos registrados.</p>'}</div>`;
 }
 /* Vista de Caja para un garzón autorizado: cobra mesas y mostrador, abre y cierra la caja, y ve solo sus propios cobros */
 function turnoCajeroHTML() {
@@ -1297,6 +1307,16 @@ document.addEventListener('click', async e => {
       else if (a === 'setfondo' && esAdm()) {
         const raw = String(S.f['fondo-in'] ?? D.fondo ?? '').replace(/\D/g, ''), v = raw ? Math.min(+raw, 100000000) : 0;
         if (!fallo(await sb.from('resto_locales').update({ fondo_caja: v }).eq('id', D.id))) { delete S.f['fondo-in']; toast('Sencillo fijo guardado · ' + money(v), 'tk-l'); }
+      }
+      else if (a === 'gpedir' && D.turno) {
+        const g = (D.gastos || []).find(x => x.id === d.id && x.turno_id === D.turno.id && !x.anul);
+        const mot = g ? (prompt('¿Por qué hay que anular este gasto (' + g.tipo + (g.num ? ' N° ' + g.num : '') + ' · ' + money(g.m) + ')? La administradora lo revisará.') || '').trim() : '';
+        if (g && mot) { if (!fallo(await sb.from('resto_gastos').update({ anul_pedida_por: S.quien || 'Caja', anul_pedida_motivo: mot }).eq('id', g.id))) toast('Solicitud enviada a la administradora', 'tk-l'); }
+      }
+      else if (a === 'ganular' && esAdm() && D.turno) {
+        const g = (D.gastos || []).find(x => x.id === d.id && x.turno_id === D.turno.id && !x.anul);
+        const mot = g ? (prompt('Motivo de la anulación del gasto ' + g.tipo + (g.num ? ' N° ' + g.num : '') + ' por ' + money(g.m) + ' (queda registrado):', g.pedMot || '') || '').trim() : '';
+        if (g && mot) { if (!fallo(await sb.from('resto_gastos').update({ anulado: true, anulado_por: S.quien || 'Administradora', anulado_at: new Date().toISOString(), anulado_motivo: mot }).eq('id', g.id))) toast('Gasto anulado · el registro se conserva', 'tk-l'); }
       }
       else if (a === 'gasto' && D.turno) {
         const tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta', num = (S.f['g-num'] || '').trim(), prov = (S.f['g-prov'] || '').trim(), det = (S.f['g-det'] || '').trim(), m = Math.round(+S.f['g-monto']);
