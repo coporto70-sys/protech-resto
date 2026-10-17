@@ -448,4 +448,18 @@ def O6(pg):
 d6=db_roles(); d6['resto_garzones'][0]['pin']=''
 e=run({'email':'u','role':'','db':d6,'sinPinOk':True},O6); print('ERR O6',e)
 
+
+
+def P(pg):
+    pg.click('[data-act="tab"][data-v="bit"]'); pg.wait_for_timeout(500)
+    t=pg.inner_text('#app')
+    check('P: pestaña Registro de cambios muestra quién, qué y cuándo', 'Registro de cambios' in t and 'Administradora' in t and 'precio: $2.500 → $3.000' in t and 'Torta' in t)
+    pg.select_option('#bit-t','resto_turnos'); pg.wait_for_timeout(200)
+    check('P: se puede filtrar por tipo', 'Torta' not in pg.inner_text('#app'))
+def db_p():
+    d=db_ins(); d['resto_locales'][0]['admin_pin']=''; d['resto_garzones'][0]['pin']=''
+    d['resto_bitacora']=[{'id':1,'local_id':'L1','at':'2026-10-17T03:00:00Z','quien':'Administradora','rol':'admin','tabla':'resto_menu','accion':'UPDATE','fila':'Torta','detalle':{'precio':{'antes':2500,'despues':3000}}}]
+    return d
+e=run({'email':'u','role':'','db':db_p()},P); print('ERR P',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

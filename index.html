@@ -98,7 +98,7 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
 const rolesOn = () => !!(D && D.adminPin);
 const esIng = () => S.rol === 'ingeniero';
 const esAdm = () => !rolesOn() || S.rol === 'admin' || esIng();
-const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'prod', 'garz', 'coms', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'prod', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
 TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos los paneles */
 /* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
@@ -426,7 +426,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas']];
+  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas'], ['bit', 'Registro de cambios']];
   const tabs = todas.filter(t => misTabs().includes(t[0]));
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
@@ -901,6 +901,31 @@ function turnoHTML() {
 const UNIDADES = [['un', 'unidades'], ['kg', 'kilos'], ['g', 'gramos'], ['lt', 'litros'], ['ml', 'mililitros'], ['tarro', 'tarros'], ['caja', 'cajas'], ['bolsa', 'bolsas'], ['paquete', 'paquetes']];
 const unTxt = u => (UNIDADES.find(x => x[0] === u) || [0, u])[1];
 const fmtQ = n => (Math.round(n * 100) / 100).toLocaleString('es-CL');
+/* ---------- Registro de cambios (quién cambió qué y cuándo) ---------- */
+const BIT_TABLA = { resto_menu: 'Carta', resto_garzones: 'Garzón', resto_cocineras: 'Cocinera', resto_locales: 'Local', resto_insumos: 'Inventario de producción', resto_turnos: 'Caja', resto_gastos: 'Gasto de caja' };
+const BIT_ACC = { INSERT: 'agregó', UPDATE: 'cambió', DELETE: 'eliminó' };
+const BIT_CAMPO = { nombre: 'nombre', categoria: 'sección', precio: 'precio', activo: 'activo', estacion: 'se prepara en', codigo: 'código', stock_min: 'mínimo', mesas: 'mesas (piso 1)', mesas2: 'mesas (piso 2)', fondo_caja: 'sencillo fijo', qr_activo: 'pedido por QR', pin: 'PIN', caja: 'cobra en caja', unidad: 'unidad', costo_unit: 'costo unitario', monto: 'monto', anulado: 'anulado', anulado_por: 'anulado por', anulado_motivo: 'motivo', anul_pedida_por: 'anulación pedida por', anul_pedida_motivo: 'motivo pedido', tipo: 'documento', numero: 'número', proveedor: 'proveedor', detalle: 'detalle', cerrado_at: 'cerrado', cerrado_por: 'cerrado por', abierto_por: 'abierto por', monto_inicial: 'sencillo inicial', contado_efectivo: 'efectivo contado', diferencia: 'diferencia', esperado_efectivo: 'efectivo esperado' };
+const bitVal = (k, v) => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v ? 'sí' : 'no') : ['precio', 'monto', 'fondo_caja', 'monto_inicial', 'contado_efectivo', 'diferencia', 'esperado_efectivo', 'costo_unit'].includes(k) && typeof v === 'number' ? money(v) : String(v).length > 60 ? String(v).slice(0, 60) + '…' : String(v);
+async function cargarBit() {
+  S.bitCarg = true;
+  const r = await sb.from('resto_bitacora').select('*').eq('local_id', D.id).order('at', { ascending: false }).limit(300);
+  S.bit = r.error ? [] : (r.data || []); S.bitErr = r.error ? r.error.message : '';
+  render();
+}
+function bitHTML() {
+  if (S.bit == null) { if (!S.bitCarg) cargarBit(); return '<h2>Registro de cambios</h2><p class="mut">Cargando…</p>'; }
+  const ft = S.f['bit-t'] || '', lista = S.bit.filter(b => !ft || b.tabla === ft);
+  const fila = b => {
+    const d = b.detalle || {}, upd = b.accion === 'UPDATE';
+    const det = upd ? Object.keys(d).map(k => esc(BIT_CAMPO[k] || k) + ': <b>' + esc(bitVal(k, d[k] && d[k].antes)) + '</b> → <b>' + esc(bitVal(k, d[k] && d[k].despues)) + '</b>').join(' · ')
+      : Object.keys(d).filter(k => d[k] !== null && d[k] !== '').slice(0, 6).map(k => esc(BIT_CAMPO[k] || k) + ': ' + esc(bitVal(k, d[k]))).join(' · ');
+    return `<div class="row" style="align-items:flex-start"><div><b>${esc(b.quien || 'sin identificar')}</b>${b.rol ? ' <small class="mut">(' + esc(b.rol === 'admin' ? 'administradora' : b.rol) + ')</small>' : ''} ${BIT_ACC[b.accion] || ''} <b>${esc(BIT_TABLA[b.tabla] || b.tabla)}</b>${b.fila ? ': ' + esc(b.fila) : ''}<div class="mut">${det}</div></div><small class="mut" style="white-space:nowrap">${esc(new Date(b.at).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))}</small></div>`;
+  };
+  return `<h2>Registro de cambios</h2><div class="card"><p class="mut" style="margin-bottom:8px">Aquí queda quién cambió precios, carta, garzones, PIN, caja, gastos e inventario de producción, y cuándo. No se puede editar ni borrar.</p>
+    <select id="bit-t" data-keep style="margin-bottom:8px"><option value="">Todo</option>${Object.keys(BIT_TABLA).map(t => `<option value="${t}" ${ft === t ? 'selected' : ''}>${BIT_TABLA[t]}</option>`).join('')}</select>
+    ${S.bitErr ? '<p class="mut" style="color:var(--bad)">Falta ejecutar la migración del registro de cambios.</p>' : ''}
+    ${lista.map(fila).join('') || '<p class="mut">Aún no hay cambios registrados.</p>'}</div>`;
+}
 const numD = k => { const v = String(S.f[k] ?? '').replace(',', '.').trim(); return v !== '' && !isNaN(+v) ? +v : null; };
 const bajoIns = () => ((D && D.insumos) || []).filter(i => i.on && i.s <= i.sm);
 const MOTIVO = { compra: 'Compra', uso: 'Uso', merma: 'Merma', conteo: 'Conteo' };
@@ -1058,7 +1083,7 @@ function renderInner(app) {
   restaurarRol();
   if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, bit: bitHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
@@ -1102,7 +1127,7 @@ document.addEventListener('change', e => {
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.id === 'cmg') render();
-  if (e.target.id === 'g-tipo' || e.target.id === 'c-tipo' || e.target.id === 'c-pago') render();
+  if (e.target.id === 'g-tipo' || e.target.id === 'c-tipo' || e.target.id === 'c-pago' || e.target.id === 'bit-t') render();
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
 /* Código de barras: el lector USB escribe el código y pulsa Enter, igual que un teclado */
@@ -1343,7 +1368,7 @@ document.addEventListener('click', async e => {
     if (a === 'logout') { S.saliendo = true; EX = null; EXA = null; await endSes(); if (RTOK) { try { await sb.rpc('resto_logout'); } catch (e) {} } S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
-    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; S.mos = false; }
+    if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; if (d.v === 'bit') { S.bit = null; S.bitCarg = false; } S.mos = false; }
     else if (a === 'mesa') { S.an = null; S.anp = null; delete S.f['bus-mos']; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'volver') { S.an = null; S.anp = null; delete S.f['bus-mos']; if (S.back) { S.view = S.back; S.back = null; } S.mesa = null; S.cerrando = false; S.parcial = false; S.sel = {}; S.pe = ''; S.pt = ''; S.rc = ''; }
     else if (a === 'inc') { const it = L().menu.find(x => x.id === d.id); if (!(it && it.s != null && (S.cart[d.id] || 0) >= it.s)) S.cart[d.id] = (S.cart[d.id] || 0) + 1; }
