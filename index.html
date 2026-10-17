@@ -725,7 +725,12 @@ function turnoRes(t) {
   const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
   cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; pr += c.propina + c.pe + c.pt; });
   const gs = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul), gt = gs.reduce((a, g) => a + g.m, 0);
-  return { cuentas: cu.length, vt, ef, tj, tr, pr, gt, gs: gs.length, esp: (t.monto_inicial || 0) + ef - gt };
+  /* Propinas por garzón del turno. Se pagan en efectivo desde la caja: la propina de las cuentas (10%) y la propina extra con tarjeta.
+     La propina en efectivo que el cliente le dio directo al garzón (pe) ya la recibió: solo se muestra. Cada turno nuevo parte en cero. */
+  const pg = {}; cu.forEach(c => { const n = c.garzon || ''; const o = pg[n] || (pg[n] = { n, c: 0, pc: 0, pt: 0, pe: 0, m: 0 }); o.c++; o.pc += c.propina; o.pt += c.pt; o.pe += c.pe; o.m += c.propina + c.pt; });
+  const propGar = Object.values(pg).filter(o => o.n && o.m > 0).sort((a, b) => a.n.localeCompare(b.n)), sinGar = (pg[''] || { m: 0 }).m;
+  const pp = propGar.reduce((a, o) => a + o.m, 0);
+  return { cuentas: cu.length, vt, ef, tj, tr, pr, gt, gs: gs.length, pp, propGar, sinGar, esp: (t.monto_inicial || 0) + ef - gt - pp };
 }
 const hora = t => new Date(t).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 function cajerosHTML(t) {
@@ -758,7 +763,7 @@ function cuadreHTML(t) {
   const r = turnoRes(t), ec = dnTotal('c'), hayEf = DEN.some(([v]) => S.f[dnId('c', v)] !== undefined && S.f[dnId('c', v)] !== ''), tj = numF('ctarj'), tr = numF('ctrans');
   const fila = (n, esp, got, extra) => { const d = got - esp; return `<div class="row"><div>${n}<div class="mut">Sistema ${money(esp)} · contado ${money(got)}${extra || ''}</div></div><b style="color:${d === 0 ? 'var(--ok)' : 'var(--bad)'}">${d === 0 ? 'Cuadra' : (d > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(d))}</b></div>`; };
   const out = [];
-  if (hayEf) out.push(fila('Efectivo', r.esp, ec, ' · incluye ' + money(t.monto_inicial || 0) + ' de sencillo inicial' + (r.gt ? ' y descuenta ' + money(r.gt) + ' de gastos' : '')));
+  if (hayEf) out.push(fila('Efectivo', r.esp, ec, ' · incluye ' + money(t.monto_inicial || 0) + ' de sencillo inicial' + (r.gt ? ' y descuenta ' + money(r.gt) + ' de gastos' : '') + (r.pp ? (r.gt ? ' y ' : ' y descuenta ') + money(r.pp) + ' de propinas pagadas' : '')));
   if (tj !== null) out.push(fila('Tarjetas', r.tj, tj));
   if (tr !== null) out.push(fila('Transferencias', r.tr, tr));
   return (out.join('') || '<p class="mut">Escribe lo que contaste para ver si la caja cuadra.</p>') + retiroHTML();
@@ -805,6 +810,14 @@ function gastoFila(g, editable) {
   const btn = !editable || g.anul ? '' : esAdm() ? `<button class="btn-bad" data-act="ganular" data-id="${g.id}">Anular</button>` : g.pedMot ? '' : `<button class="btn-line" data-act="gpedir" data-id="${g.id}">Pedir anulación</button>`;
   return `<div class="row"><div>${doc}<div class="mut">${sub}</div>${extra}</div><div style="text-align:right"><b style="${g.anul ? 'text-decoration:line-through;color:var(--mut)' : ''}">${money(g.m)}</b>${btn ? '<div style="margin-top:4px">' + btn + '</div>' : ''}</div></div>`;
 }
+function propinasHTML(t) {
+  const r = turnoRes(t);
+  return `<div class="card" style="margin-top:12px"><b>Propinas de los garzones (se pagan al cerrar)</b>
+    <p class="mut" style="margin:4px 0 8px">Cada garzón recibe en efectivo, desde la caja, la propina acumulada de sus ventas de este turno (la propina de la cuenta y la propina extra con tarjeta). Primero entrega las propinas y después cuenta el efectivo que queda. Al cerrar la caja el acumulado vuelve a cero para el turno siguiente.</p>
+    ${r.propGar.map(o => `<div class="row"><div><b>${esc(o.n)}</b><div class="mut">${o.c} cuenta${o.c === 1 ? '' : 's'} · propina de cuentas ${money(o.pc)}${o.pt ? ' · propina extra tarjeta ' + money(o.pt) : ''}${o.pe ? ' · propina directa en efectivo (ya la recibió) ' + money(o.pe) : ''}</div></div><b>${money(o.m)}</b></div>`).join('') || '<p class="mut" style="margin:0">Aún no hay propinas acumuladas en este turno.</p>'}
+    ${r.pp ? `<div class="total"><span>Total a pagar en efectivo desde la caja</span><span>${money(r.pp)}</span></div>` : ''}
+    ${r.sinGar ? `<p class="mut" style="margin:6px 0 0">Propinas de ventas sin garzón asignado (mostrador de la administradora): ${money(r.sinGar)}. No se pagan a ningún garzón.</p>` : ''}</div>`;
+}
 function gastosHTML(t) {
   const todos = (D.gastos || []).filter(g => g.turno_id === t.id), gs = todos.filter(g => !g.anul), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
   return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Gastos pagados desde caja</b>
@@ -828,22 +841,22 @@ function turnoCajeroHTML() {
   const mis = D.cuentas.filter(c => c.turno_id === t.id && (c.cobrado_por || '') === S.quien);
   return `<h2>Caja · ${esc(S.quien)}</h2>
   <div class="card"><b>Mis cobros de este turno</b>${mis.map(c => `<div class="row"><div>${nm(c.mesa)}<div class="mut">${hora(c.t)} · ${esc(c.metodo)}</div></div><b>${money(c.total + c.propina + c.pt)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no has cobrado en este turno.</p>'}
-  ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${gastosHTML(t)}${cerrarCajaHTML(t)}`;
+  ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${gastosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}`;
 }
 function turnoHTML() {
   if (!esAdm()) return turnoCajeroHTML();
   const t = D.turno;
   if (S.th === null) { turnoCargar().then(render); }
-  const hist = (S.th || []).map(h => { const dc = h.desglose_cierre || {}; return `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${dc.tarjeta != null ? ' · tarjetas ' + money(dc.tarjeta) + ' · transf. ' + money(dc.transferencia || 0) : ''}${h.desglose_apertura && dnTxt(h.desglose_apertura) ? '<br>Sencillo inicial: ' + dnTxt(h.desglose_apertura) : ''}${dnTxt(dc.efectivo) ? '<br>Efectivo contado: ' + dnTxt(dc.efectivo) : ''}${h.retiro_efectivo != null ? '<br>Efectivo de ventas retirado ' + money(h.retiro_efectivo) + (dnTxt(h.desglose_deja) ? ' · quedó en caja: ' + dnTxt(h.desglose_deja) : '') : ''}${h.gastos_total ? '<br>Gastos pagados desde caja ' + money(h.gastos_total) : ''}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
+  const hist = (S.th || []).map(h => { const dc = h.desglose_cierre || {}; return `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${dc.tarjeta != null ? ' · tarjetas ' + money(dc.tarjeta) + ' · transf. ' + money(dc.transferencia || 0) : ''}${h.desglose_apertura && dnTxt(h.desglose_apertura) ? '<br>Sencillo inicial: ' + dnTxt(h.desglose_apertura) : ''}${dnTxt(dc.efectivo) ? '<br>Efectivo contado: ' + dnTxt(dc.efectivo) : ''}${h.retiro_efectivo != null ? '<br>Efectivo de ventas retirado ' + money(h.retiro_efectivo) + (dnTxt(h.desglose_deja) ? ' · quedó en caja: ' + dnTxt(h.desglose_deja) : '') : ''}${h.gastos_total ? '<br>Gastos pagados desde caja ' + money(h.gastos_total) : ''}${(h.pago_propinas || []).length ? '<br>Propinas pagadas: ' + h.pago_propinas.map(x => esc(x.n) + ' ' + money(x.m)).join(' · ') + ' (total ' + money(h.propinas_pagadas || 0) + ')' : ''}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
   if (!t) return `<h2>Caja</h2>${fondoHTML()}${abrirCajaHTML()}${gastosHistHTML()}
     <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
   const r = turnoRes(t);
   return `<h2>Caja · turno abierto</h2>${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
   <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
-    ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta los gastos. No incluye la propina en efectivo entregada directo al garzón.</p></div>
+    ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}${r.pp ? `<div class="row"><span>Propinas pagadas a garzones</span><b>−${money(r.pp)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta los gastos. No incluye la propina en efectivo entregada directo al garzón.</p></div>
   <div class="card" style="margin-top:12px"><b>Quién estuvo en caja</b>${cajerosHTML(t)}</div>
-  ${gastosHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
+  ${gastosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
   <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
 }
 function invHTML() {
@@ -1339,11 +1352,12 @@ document.addEventListener('click', async e => {
         else if (!dj && !fondo && !confirm('No anotaste el sencillo que queda en caja. ¿Cerrar sin dejar sencillo?')) { /* cancelado */ }
         else if (fondo && dj !== fondo && !nota) alert('El sencillo que queda en caja (' + money(dj) + ') no es el sencillo fijo (' + money(fondo) + '). Déjalo completo o escribe una observación que explique por qué.');
         else if ((dEf || dTj || dTr) && !nota) alert('La caja no cuadra. Escribe una observación que explique la diferencia antes de cerrar.');
+        else if (r.pp && !confirm('Propinas a pagar en efectivo desde la caja: ' + money(r.pp) + '\n' + r.propGar.map(o => o.n + ': ' + money(o.m)).join('\n') + '\n\n¿Ya entregaste estas propinas a los garzones? Si no, entrégalas y vuelve a contar el efectivo antes de cerrar.')) { /* cancelado */ }
         else if (!open || confirm('Hay ' + open + ' pedido(s) todavía abiertos en mesas. ¿Cerrar la caja igual?')) {
           const base = { cerrado_at: new Date().toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: ec, diferencia: dEf, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas };
-          const des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr }, deja = dnObj('d');
-          let u = await sb.from('resto_turnos').update({ ...base, nota: nota || null, desglose_cierre: des, desglose_deja: deja, retiro_efectivo: retiro, gastos_total: r.gt }).eq('id', t.id);
-          if (u.error && /desglose|retiro_efectivo|gastos_total/i.test(u.error.message || '')) u = await sb.from('resto_turnos').update({ ...base, nota: [t.nota, nota, 'Cierre: ' + (dnTxt(des.efectivo) || 'sin efectivo') + ' · tarjetas ' + money(tj) + ' · transferencias ' + money(tr), 'Quedó en caja: ' + (dnTxt(deja) || 'nada') + ' · efectivo de ventas retirado ' + money(retiro) + (r.gt ? ' · gastos ' + money(r.gt) : '')].filter(Boolean).join(' | ') }).eq('id', t.id);
+          const des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr }, deja = dnObj('d'), pagoProp = r.propGar.map(o => ({ n: o.n, m: o.m, c: o.c }));
+          let u = await sb.from('resto_turnos').update({ ...base, nota: nota || null, desglose_cierre: des, desglose_deja: deja, retiro_efectivo: retiro, gastos_total: r.gt, propinas_pagadas: r.pp, pago_propinas: pagoProp }).eq('id', t.id);
+          if (u.error && /desglose|retiro_efectivo|gastos_total|propinas_pagadas|pago_propinas/i.test(u.error.message || '')) u = await sb.from('resto_turnos').update({ ...base, nota: [t.nota, nota, 'Cierre: ' + (dnTxt(des.efectivo) || 'sin efectivo') + ' · tarjetas ' + money(tj) + ' · transferencias ' + money(tr), 'Quedó en caja: ' + (dnTxt(deja) || 'nada') + ' · efectivo de ventas retirado ' + money(retiro) + (r.gt ? ' · gastos ' + money(r.gt) : ''), r.pp ? 'Propinas pagadas: ' + pagoProp.map(x => x.n + ' ' + money(x.m)).join(', ') : ''].filter(Boolean).join(' | ') }).eq('id', t.id);
           if (!fallo(u)) { await sb.from('resto_sesiones').update({ salida: new Date().toISOString() }).eq('turno_id', t.id).is('salida', null); S.ses = null; S.f = {}; S.th = null; }
         }
       }
