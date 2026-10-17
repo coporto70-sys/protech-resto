@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Protech Resto · Pedidos y comandas</title>
 <meta name="theme-color" content="#0284c7">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <style>
 :root{--bg:#f1f5f9;--ink:#0f172a;--mut:#64748b;--line:#e2e8f0;--brand:#0284c7;--brand-d:#0369a1;--ok:#16a34a;--warn:#f59e0b;--bad:#dc2626;--card:#fff}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -269,29 +274,34 @@ async function adminCargar() {
   catch (e) { S.av.err = e.message; S.av.cargado = true; }
   render();
 }
-async function cargar() {
+const RAW = {};
+/* cargar(parcial): si se indica un conjunto de tablas, solo esas se piden de nuevo a la base; el resto se toma de la última carga */
+async function cargar(parcial) {
+  if (parcial && !(D && RAW.mi)) parcial = null;
+  const get = async (k, f) => { if (parcial && !parcial.has(k) && RAW[k]) return RAW[k]; const r = await f(); if (!r || !r.error) RAW[k] = r; return r; };
   S.admin = !!(S.user && S.user.app_metadata && S.user.app_metadata.role === 'protech_admin');
   if (S.admin && !S.av.cargado) adminCargar();
-  const { data: mi, error: eMi } = await sb.from('resto_miembros').select('local_id').maybeSingle();
+  const { data: mi, error: eMi } = parcial ? RAW.mi : await sb.from('resto_miembros').select('local_id').maybeSingle();
+  if (!parcial && !eMi) RAW.mi = { data: mi, error: null };
   /* si la consulta falló (internet, token en renovación) NO se cierra la sesión: se conserva lo que ya está en pantalla y se reintenta */
   if (eMi) { if (!D) S.err = 'Sin conexión con el servidor. Reintentando…'; reintentarCarga(); return; }
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
   const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv] = await Promise.all([
-    sb.from('resto_locales').select('*').eq('id', id).single(),
-    sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
-    sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
-    sb.from('resto_cuentas').select('*').eq('local_id', id).gte('created_at', desde.toISOString()),
-    sb.from('resto_garzones').select('*').eq('local_id', id).order('nombre'),
-    sb.from('resto_turnos').select('*').eq('local_id', id).is('cerrado_at', null).order('abierto_at', { ascending: false }).limit(1),
-    sb.from('resto_pedidos').select('*').eq('local_id', id).eq('cerrado', false).order('num'),
-    sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora'),
-    sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre'),
-    sb.from('resto_anulaciones').select('*').eq('local_id', id).gte('created_at', desde.toISOString()).order('created_at'),
-    sb.from('resto_gastos').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(300),
-    sb.from('resto_insumos').select('*').eq('local_id', id).order('nombre'),
-    sb.from('resto_insumo_mov').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(150)
+    get('loc', () => sb.from('resto_locales').select('*').eq('id', id).single()),
+    get('menu', () => sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre')),
+    get('com', () => sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false)),
+    get('cue', () => sb.from('resto_cuentas').select('*').eq('local_id', id).gte('created_at', desde.toISOString())),
+    get('gar', () => sb.from('resto_garzones').select('*').eq('local_id', id).order('nombre')),
+    get('tur', () => sb.from('resto_turnos').select('*').eq('local_id', id).is('cerrado_at', null).order('abierto_at', { ascending: false }).limit(1)),
+    get('ped', () => sb.from('resto_pedidos').select('*').eq('local_id', id).eq('cerrado', false).order('num')),
+    get('res', () => sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora')),
+    get('coc', () => sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre')),
+    get('anu', () => sb.from('resto_anulaciones').select('*').eq('local_id', id).gte('created_at', desde.toISOString()).order('created_at')),
+    get('gas', () => sb.from('resto_gastos').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(300)),
+    get('ins', () => sb.from('resto_insumos').select('*').eq('local_id', id).order('nombre')),
+    get('imv', () => sb.from('resto_insumo_mov').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(150))
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
@@ -323,6 +333,7 @@ async function endSes() {
   if (x) { try { await sb.from('resto_sesiones').update({ salida: new Date().toISOString() }).eq('id', x.id); } catch (e) {} }
 }
 let rt = null, tmr = null, tReint = null;
+const PEND = new Set();
 function reintentarCarga() {
   clearTimeout(tReint);
   tReint = setTimeout(async () => { if (!S.user) return; try { await cargar(); } catch (e) {} render(); }, 5000);
@@ -345,9 +356,10 @@ window.addEventListener('online', () => { if (S.user) reconectar(); });
 setInterval(() => { if (S.user && !document.hidden) sb.auth.getSession(); }, 10 * 60 * 1000);
 function suscribir() {
   if (rt || !D) return;
-  const refresca = () => { clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; await cargar(); render(); }, 300); };
+  const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv' };
+  const refresca = t => { if (t && TK[t]) PEND.add(TK[t]); else PEND.add('*'); clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; const p = PEND.has('*') ? null : new Set(PEND); PEND.clear(); await cargar(p); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
-  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t)));
   rt.subscribe();
 }
 const _h = location.hash || '';
@@ -357,6 +369,7 @@ sb.auth.onAuthStateChange(ev => {
   /* si Supabase pierde la sesión sin que nadie pulse "Salir", se intenta recuperar antes de mostrar el ingreso */
   if (ev === 'SIGNED_OUT' && S.user && !S.saliendo) setTimeout(() => { if (!S.saliendo) reconectar(); }, 1500);
 });
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
 async function inicio() {
   const { data } = await sb.auth.getSession();
   S.user = data.session ? data.session.user : null;
@@ -1555,7 +1568,16 @@ document.addEventListener('click', async e => {
   } catch (x) { S.busy = false; console.error(x); }
   render();
 });
-setInterval(async () => { if (S.user && D && !S.busy) { if (S.view === 'cocina' || S.view === 'cafe' || S.view === 'mesas') { await cargar(); render(); } } }, 20000);
+/* Refresco de seguridad (por si el tiempo real se corta): cada 20 s solo lo que cambia durante el servicio, y completo cada 3 minutos. No redibuja si nada cambió. */
+let POLLN = 0, ULT = 0;
+setInterval(async () => {
+  if (!S.user || !D || S.busy || document.hidden) return;
+  if (!(S.view === 'cocina' || S.view === 'cafe' || S.view === 'mesas')) return;
+  POLLN++; const completo = POLLN % 9 === 0, antes = JSON.stringify(D);
+  await cargar(completo ? null : new Set(['com', 'cue', 'ped', 'anu', 'tur']));
+  if (!D) { render(); return; }
+  if (JSON.stringify(D) !== antes || Date.now() - ULT > 60000) { ULT = Date.now(); render(); }
+}, 20000);
 inicio();
 </script>
 </body>
