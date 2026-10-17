@@ -436,7 +436,8 @@ const norm = t => String(t ?? '').toLowerCase().normalize('NFD').replace(/[\u030
 function busMos() {
   const q = norm(S.f['bus-mos']); if (!q) return [];
   const ws = q.split(/\s+/);
-  return L().menu.filter(i => i.on && ws.every(w => norm(i.n + ' ' + i.c).includes(w))).sort((a, b) => (a.cb ? 1 : 0) - (b.cb ? 1 : 0) || a.n.localeCompare(b.n)).slice(0, 8);
+  const ok = i => { const t = norm(i.n + ' ' + i.c), pl = t.split(/\s+/); return ws.every(w => pl.some(p => p.startsWith(w)) || (w.length >= 3 && t.includes(w))); };
+  return L().menu.filter(i => i.on && ok(i)).sort((a, b) => a.n.localeCompare(b.n, 'es', { sensitivity: 'base', numeric: true })).slice(0, 15);
 }
 function addMos(id) {
   const it = L().menu.find(x => x.id === id); if (!it) return;
@@ -446,7 +447,7 @@ function addMos(id) {
   delete S.f['bq-' + id]; delete S.f['bus-mos'];
 }
 function buscadorHTML() {
-  return `<input id="bus-mos" data-keep autocomplete="off" placeholder="🔍 Buscar producto (ej. pan, café…)" style="width:100%;margin:0 0 8px" value="${fv('bus-mos')}">
+  return `<input id="bus-mos" data-keep autocomplete="off" placeholder="🔍 Buscar producto: escribe el inicio (ej. tor, ca…) y Enter agrega el primero" style="width:100%;margin:0 0 8px" value="${fv('bus-mos')}">
     ${S.f['bus-mos'] ? `<div style="border:2px solid var(--warn);border-radius:10px;padding:4px 10px;margin-bottom:10px">${busMos().map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)}${i.s != null ? (i.s <= 0 ? ' · <b style="color:var(--bad)">Sin stock</b>' : ' · quedan ' + i.s) : ''}</div></div><div style="display:flex;gap:6px;align-items:center"><input id="bq-${i.id}" data-keep type="number" inputmode="numeric" min="1" title="Cantidad" aria-label="Cantidad" style="width:64px;text-align:center" value="${S.f['bq-' + i.id] === undefined ? 1 : fv('bq-' + i.id)}"><button class="btn-ok" data-act="mosadd" data-id="${i.id}" ${i.s != null && (S.cart[i.id] || 0) >= i.s ? 'disabled style="opacity:.4"' : ''}>+ Agregar</button></div></div>`).join('') || '<p class="mut" style="margin:8px 0">Sin resultados.</p>'}</div>` : ''}`;
 }
 function mostradorHTML() {
@@ -1012,6 +1013,7 @@ function render() {
     if (aid) { const el = document.getElementById(aid); if (el && el !== document.activeElement) { el.focus(); try { el.setSelectionRange(ss, ss); } catch (x) {} } }
     /* en PC, en la venta mostrador el cursor vuelve solo al campo del lector */
     else if ((S.mos && S.view === 'mesas') && matchMedia('(pointer:fine)').matches) { const sc = document.getElementById('scan-mos'); if (sc) sc.focus(); }
+    else if ((S.mesa && !S.mos && S.view === 'mesas' && !S.cerrando && !S.parcial) && matchMedia('(pointer:fine)').matches) { const bs = document.getElementById('bus-mos'); if (bs) bs.focus(); }
     try { if (typeof chatSync === 'function') chatSync(); } catch (x) { console.error(x); }
   }
 }
@@ -1098,6 +1100,7 @@ async function escanInventario(raw) {
 document.addEventListener('keydown', e => {
   /* en venta mostrador, si el cursor no está en un campo, lo que escribe el lector va al campo de escaneo */
   if ((S.mos && S.view === 'mesas') && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName || '')) { const sc = document.getElementById('scan-mos'); if (sc) sc.focus(); }
+  else if ((S.mesa && !S.mos && S.view === 'mesas' && !S.cerrando && !S.parcial) && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName || '')) { const bs = document.getElementById('bus-mos'); if (bs) bs.focus(); }
   if (e.key !== 'Enter') return;
   const id = e.target.id || '';
   if (id === 'lpass' || id === 'lmail') document.querySelector('[data-act=login]').click();
