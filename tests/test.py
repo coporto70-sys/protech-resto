@@ -498,4 +498,25 @@ def Q2(pg):
     check('Q2: se cobra sin propina usando un pase temporal de administradora', len(c)==1 and c[0]['propina']==0 and c[0]['total']==5000 and len(lg)>=1)
 e=run({'email':'u','role':'','db':db_q(True)},Q2,LS_ANA); print('ERR Q2',e)
 
+def R1(pg):
+    pg.on('dialog',lambda x:x.accept())
+    pg.click('[data-act="mesa"][data-n="5"]'); pg.wait_for_timeout(300)
+    check('R1: la mesa ofrece mover/unir y dividir en partes iguales', 'Mover o unir' in pg.inner_text('#app') and 'por persona' in pg.inner_text('#app'))
+    pg.select_option('#mv-mesa','2'); pg.click('[data-act="mover"]'); pg.wait_for_timeout(700)
+    c=pg.evaluate('window.__DB.resto_comandas')
+    check('R1: los pedidos pasan a la mesa de destino', len(c)==1 and c[0]['mesa']==2 and pg.evaluate('S.mesa')==2)
+    pg.fill('#nota','x'); 
+def R2(pg):
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    pg.evaluate("S.cart={}; var m=L().menu[0]; S.cart[m.id]=1; render()"); pg.wait_for_timeout(300)
+    check('R2: las opciones rápidas del producto aparecen como botones', pg.locator('[data-act="opc"]').count()>=2)
+    pg.click('[data-act="opc"]'); pg.wait_for_timeout(200)
+    check('R2: tocar una opción la agrega a la nota de cocina', pg.evaluate('S.note').strip()!='')
+def db_r():
+    d=db_q(False)
+    d['resto_menu'][0]['opciones']='sin cebolla, bien cocido'
+    return d
+e=run({'email':'u','role':'','db':db_q(False)},R1); print('ERR R1',e)
+e=run({'email':'u','role':'','db':db_r()},R2); print('ERR R2',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

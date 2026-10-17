@@ -175,6 +175,9 @@ function quienHTML() {
   <main><h2>¿Quién eres?</h2><div class="grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${coc.length ? coc.map(x => opt('c:' + x.n, x.n, 'Cocina · comandas')).join('') : opt('cocina', 'Cocina', 'Comandas')}${opt('ing', 'Carlos Oporto', 'Ingeniero de Software')}</div>${sel}</main>`;
 }
 
+const chipsOpc = sel => { const o = [...new Set(sel.flatMap(i => (i.o || '').split(',').map(x => x.trim()).filter(Boolean)))]; return o.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${o.map(x => `<button class="btn-line" style="padding:4px 10px" data-act="opc" data-o="${esc(x)}">+ ${esc(x)}</button>`).join('')}</div>` : ''; };
+const pideOk = t => confirm(t);
+const mesasLista = () => { const l = L(), r = []; for (let n = 1; n <= l.mesas; n++) r.push(n); for (let k = 1; k <= l.mesas2; k++) r.push(100 + k); return r; };
 const abiertas = m => L().comandas.filter(c => !c.cerrada && c.mesa === m);
 /* i.pg = unidades de ese producto que un cliente ya pagó por separado (cobro parcial) */
 const totalMesa = m => abiertas(m).reduce((a, c) => a + c.items.reduce((s, i) => s + (i.q - (i.pg || 0)) * i.p, 0), 0);
@@ -219,7 +222,7 @@ document.addEventListener('pointerdown', () => ctx());
 document.addEventListener('click', e => { if (e.target.closest('#toast')) $('#toast').innerHTML = ''; });
 /* Avisos: la administradora recibe TODO (comandas, listos, cafetería, pedidos, stock, reservas).
    Garzón: solo sus pedidos listos. Cocina: solo comandas nuevas. */
-let EX = null;
+let EX = null; const ATR = new Set();
 function avisar(prev) {
   const rol = rolesOn() ? S.rol : 'admin', adm = rol === 'admin' || rol === 'ingeniero';
   const modo = adm ? (SND === 'off' ? 'off' : 'ambos') : SND;
@@ -232,6 +235,9 @@ function avisar(prev) {
   const esQR = c => (c.note || '').startsWith('📱');
   const qrs = D.comandas.filter(c => !prev.has(c.id) && esQR(c) && !c.garzon);
   if (qrs.length && rol === 'garzon' && modo !== 'off') { sonarListo(); toast('PEDIDO QR · ' + [...new Set(qrs.map(c => nm(c.mesa)))].join(', '), 'tk-l'); }
+  const tarde = D.comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && c.estado !== 'listo' && !esCafe(c) && mins(c.t) >= 20 && !ATR.has(c.id));
+  tarde.forEach(c => ATR.add(c.id));
+  if (tarde.length && (adm || rol === 'cocina') && modo !== 'off' && modo !== 'salon') { sonarCocina(); toast('ATRASADA · ' + tarde.map(por).join(', '), 'tk-c'); }
   if (adm && modo !== 'off' && cafes.length) toast('CAFETERÍA · ' + cafes.map(por).join(', '), 'tk-l');
 }
 function avisarExtra() {
@@ -329,7 +335,7 @@ async function cargar(parcial) {
   D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
-    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
+    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', t: +new Date(r.created_at) })) };
   outLoad(); outAplicar();
@@ -497,7 +503,7 @@ function mostradorHTML() {
     ${buscadorHTML()}
     ${carta || '<p class="mut">La carta está vacía.</p>'}</div>
   <div><div class="card"><b>Venta</b>${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega productos.</p>'}
-    ${sub > 0 ? `<input id="nota" placeholder="Observación para cocina (sin mayonesa, sin cebolla, etc.)" value="${esc(S.note)}" style="margin-top:8px">` : ''}
+    ${sub > 0 ? `<input id="nota" placeholder="Observación para cocina (sin mayonesa, sin cebolla, etc.)" value="${esc(S.note)}" style="margin-top:8px">${chipsOpc(sel)}` : ''}
     ${sub > 0 ? camposPago(sub) : ''}
     ${!cajaAbierta() ? '<p class="mut" style="margin-top:8px;color:var(--bad)">La caja está cerrada. La administradora debe abrirla para cobrar.</p>' : ''}
     <button class="btn-ok" style="width:100%;margin-top:10px" data-act="mospagar" ${sub > 0 && cajaAbierta() ? '' : 'disabled'}>Cobrar ${sub > 0 ? money(sub) : ''}</button></div></div></div>`;
@@ -662,18 +668,20 @@ function mesaDetalle() {
   <div><div class="card"><b>Nuevo pedido</b>
     ${garzSel(n)}
     ${sel.map(i => `<div class="row"><span>${S.cart[i.id]}× ${esc(i.n)}</span><b>${money(i.p * S.cart[i.id])}</b></div>`).join('') || '<p class="mut" style="margin:8px 0">Agrega platos desde la carta.</p>'}
-    <input id="nota" placeholder="Nota (sin cebolla, sin azúcar, etc.)" value="${esc(S.note)}" style="margin-top:8px">
+    <input id="nota" placeholder="Nota (sin cebolla, sin azúcar, etc.)" value="${esc(S.note)}" style="margin-top:8px">${chipsOpc(sel)}
     <div class="total"><span>Subtotal</span><span>${money(subt)}</span></div>
     <button class="btn" style="width:100%;margin-top:8px" data-act="enviar" ${sel.length && (garzonDe(n) || !l.garzones.some(x => x.on)) ? '' : 'disabled'}>${sel.length && sel.every(i => i.e === 'cafeteria') ? 'Anotar cafetería (sale directo)' : sel.some(i => i.e === 'cafeteria') ? 'Enviar a cocina y anotar cafetería' : 'Enviar a cocina'}</button>${!garzonDe(n) && l.garzones.some(x => x.on) ? '<p class="mut" style="margin-top:6px">Elige qué garzón atiende la mesa.</p>' : ''}</div>
   <div class="card" style="margin-top:12px"><b>Pedidos de la mesa</b>${anuFormHTML(n)}${env || '<p class="mut" style="margin:8px 0">Sin pedidos enviados.</p>'}
     <div class="total"><span>Cuenta</span><span>${money(tot)}</span></div>
     <button class="btn-line" style="width:100%;margin-top:8px" data-act="parcial" ${tot > 0 && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cobrar parte (alguien se retira)</button>
+    ${ab.length && n < 1000 ? `<div style="margin-top:10px"><label class="mut">Dividir en partes iguales<div style="display:flex;gap:8px;align-items:center"><input id="div-n" data-keep type="number" min="2" max="30" inputmode="numeric" style="width:70px" value="${S.f['div-n'] || 2}"><b>${(+S.f['div-n'] >= 2 ? money(Math.ceil(tot / Math.min(30, +S.f['div-n']))) : money(Math.ceil(tot / 2)))} por persona</b></div></label></div>
+    <div style="margin-top:10px"><label class="mut">Mover o unir con otra mesa<div style="display:flex;gap:8px"><select id="mv-mesa" data-keep><option value="">Elige mesa…</option>${mesasLista().filter(x => x !== n).map(x => `<option value="${x}" ${String(S.f['mv-mesa']) === String(x) ? 'selected' : ''}>${nm(x)}${abiertas(x).length ? ' (ocupada: se unen)' : ''}</option>`).join('')}</select><button class="btn-line" data-act="mover">Mover</button></div></label></div>` : ''}
     <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cerrar cuenta</button>${sinCaja}</div>${cierre}${parcial}</div></div>`;
 }
 function estacionHTML(esta) {
   const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && (esCafe(c) ? 'cafeteria' : 'cocina') === esta).sort((a, b) => a.t - b.t);
   const col = (est, titulo, cls, btn, next) => `<div class="col"><h3>${titulo} (${cs.filter(c => c.estado === est).length})</h3>` +
-    (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>${nm(c.mesa)}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill">${mins(c.t)} min</span></h4>
+    (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>${nm(c.mesa)}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill" ${mins(c.t) >= 20 ? 'style="background:var(--bad);color:#fff"' : mins(c.t) >= 10 ? 'style="background:var(--warn);color:#000"' : ''}>${mins(c.t)} min${mins(c.t) >= 20 ? ' · ATRASADA' : ''}</span></h4>
       <ul>${c.items.map(i => `<li>${i.q}× ${esc(i.n)}</li>`).join('')}</ul>${c.note ? `<em>Nota: ${esc(c.note)}</em>` : ''}
       <button class="btn" style="width:100%" data-act="avanzar" data-id="${c.id}" data-to="${next}">${btn}</button></div>`).join('') || '<p class="mut">Sin comandas</p>') + '</div>';
   if (esta === 'cafeteria') {
@@ -1047,7 +1055,7 @@ function cartaHTML() {
   const l = L();
   return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
     ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
-      <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
+      <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="opcedit" data-id="${i.id}" title="Opciones rápidas para la comanda">Opciones${i.o ? ' ✓' : ''}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
   <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b><p class="mut" style="margin:0">Aquí solo se agregan productos para la venta. Lo que compras para producirlos (mermeladas, tarros de duraznos, cremas…) va en la pestaña Inventario de producción.</p>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <input id="ap" type="number" inputmode="numeric" placeholder="Precio">
@@ -1466,6 +1474,14 @@ document.addEventListener('click', async e => {
     else if (a === 'cmmes') { const d = new Date(); S.cmh = fechaIso(d); d.setDate(1); S.cmd = fechaIso(d); S.cm = null; }
     else if (a === 'cmver') { const x = $('#cmd').value, y = $('#cmh').value; if (x && y) { S.cmd = x <= y ? x : y; S.cmh = x <= y ? y : x; S.cm = null; } }
     else if (a === 'cmcsv') { if (S.cm) cmCSV(); }
+    else if (a === 'opc') { const t = d.o || ''; if (!(S.note || '').split(' · ').includes(t)) S.note = (S.note ? S.note + ' · ' : '') + t; }
+    else if (a === 'mover') {
+      const to = +S.f['mv-mesa'], ab = abiertas(S.mesa);
+      if (!to || !ab.length) { toast('Elige la mesa de destino', 'tk-c'); }
+      else if (!puedeCobrarEsta(S.mesa)) alert('Esta mesa la atiende ' + (duenoMesa(S.mesa) || 'otro garzón') + '.');
+      else if (!pideOk('¿Mover los pedidos de ' + nm(S.mesa) + ' a ' + nm(to) + '?')) { }
+      else if (!fallo(await sb.from('resto_comandas').update({ mesa: to }).in('id', ab.map(c => c.id)))) { toast('Pedidos movidos a ' + nm(to), 'tk-l'); delete S.f['mv-mesa']; S.mesa = to; await cargar(); }
+    }
     else if (a === 'cerrar') { S.cerrando = true; S.parcial = false; S.sel = {}; }
     else if (a === 'nocerrar') S.cerrando = false;
     else if (a === 'parcial') { S.parcial = true; S.cerrando = false; S.sel = {}; resetCobro(); }
@@ -1771,6 +1787,7 @@ document.addEventListener('click', async e => {
       else if (a === 'qrtoggle' && esAdm()) { fallo(await sb.from('resto_locales').update({ qr_activo: !L().qr }).eq('id', D.id)); }
       else if (a === 'qrimprimir' && esAdm()) { imprimirQR(); }
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
+      else if (a === 'opcedit') { const i = L().menu.find(x => x.id === d.id); if (i) { const v = prompt('Opciones rápidas de «' + i.n + '», separadas por coma (ej: sin cebolla, bien cocido, sin hielo). Vacío para quitar:', i.o); if (v !== null) fallo(await sb.from('resto_menu').update({ opciones: v.trim() || null }).eq('id', d.id)); } }
       else if (a === 'est') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ estacion: i.e === 'cafeteria' ? 'cocina' : 'cafeteria' }).eq('id', d.id)); }
       else if (a === 'cadd' && esAdm()) { const n = ($('#cn') || {}).value.trim(); if (n) fallo(await sb.from('resto_cocineras').insert({ local_id: D.id, nombre: n })); }
       else if (a === 'ctoggle' && esAdm()) { const c = L().cocineras.find(x => x.id === d.id); if (c) fallo(await sb.from('resto_cocineras').update({ activo: !c.on }).eq('id', d.id)); }
