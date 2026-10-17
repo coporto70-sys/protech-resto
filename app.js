@@ -24,7 +24,7 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
 const rolesOn = () => !!(D && D.adminPin);
 const esIng = () => S.rol === 'ingeniero';
 const esAdm = () => !rolesOn() || S.rol === 'admin' || esIng();
-const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'resumen', 'inv', 'prod', 'abast', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'resumen', 'inv', 'prod', 'abast', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina'] };
 TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos los paneles */
 /* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
@@ -609,7 +609,8 @@ function mesaDetalle() {
     <button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cerrar cuenta</button>${sinCaja}</div>${cierre}${parcial}</div></div>`;
 }
 function estacionHTML(esta) {
-  const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && (esCafe(c) ? 'cafeteria' : 'cocina') === esta).sort((a, b) => a.t - b.t);
+  const delEsta = (c) => (c.items || []).filter(i => (i.e === 'cafeteria' ? 'cafeteria' : 'cocina') === esta);
+  const cs = L().comandas.filter(c => !c.cerrada && c.estado !== 'entregado' && delEsta(c).length).map(c => ({ ...c, items: delEsta(c) })).sort((a, b) => a.t - b.t);
   const col = (est, titulo, cls, btn, next) => `<div class="col"><h3>${titulo} (${cs.filter(c => c.estado === est).length})</h3>` +
     (cs.filter(c => c.estado === est).map(c => `<div class="tk ${cls}"><h4><span>${nm(c.mesa)}${c.garzon ? ' · ' + esc(c.garzon) : ''}</span><span class="pill" ${mins(c.t) >= 20 ? 'style="background:var(--bad);color:#fff"' : mins(c.t) >= 10 ? 'style="background:var(--warn);color:#000"' : ''}>${mins(c.t)} min${mins(c.t) >= 20 ? ' · ATRASADA' : ''}</span></h4>
       <ul>${c.items.map(i => `<li>${i.q}× ${esc(i.n)}</li>`).join('')}</ul>${c.note ? `<em>Nota: ${esc(c.note)}</em>` : ''}
