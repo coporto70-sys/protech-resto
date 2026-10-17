@@ -8,3 +8,4 @@ Para saber cuál falta: la tabla `resto_migraciones` (desde la 015) lista las ap
 
 - 017_operacion.sql: propina configurable, descuentos con autorización, opciones por producto, campo agotado.
 - 018_insumos_avanzado.sql: recetas con descuento automático, proveedores, órdenes de compra, vencimientos.
+- 019_propina_libre.sql: los garzones quitan o cambian la propina sin autorización (los descuentos siguen con autorización).

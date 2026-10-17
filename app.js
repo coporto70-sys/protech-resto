@@ -439,8 +439,8 @@ function mostradorHTML() {
     <button class="btn-ok" style="width:100%;margin-top:10px" data-act="mospagar" ${sub > 0 && cajaAbierta() ? '' : 'disabled'}>Cobrar ${sub > 0 ? money(sub) : ''}</button></div></div></div>`;
 }
 /* ---------- Propina y descuentos ----------
-   La propina sugerida es un porcentaje configurable por el local. Quitar o cambiar la propina, y dar descuentos o cortesías,
-   lo hace la administradora o, en el equipo de un garzón, con el PIN de la administradora (la base de datos lo exige). */
+   La propina sugerida es un porcentaje configurable por el local. Los garzones pueden quitarla o cambiarla libremente;
+   los descuentos y cortesías los da la administradora o, en el equipo de un garzón, con el PIN de la administradora (la base de datos lo exige). */
 const pctProp = () => { const p = D && D.propinaPct; return p === undefined || p === null || isNaN(+p) ? 10 : +p; };
 const pctEfect = () => S.propPct != null ? S.propPct : pctProp();
 const descMonto = base => { const d = S.desc; if (!d) return 0; const v = d.t === 'cortesia' ? base : d.t === 'pct' ? Math.round(base * Math.min(100, Math.max(0, d.v)) / 100) : Math.round(d.v); return Math.max(0, Math.min(base, v)); };
@@ -1210,16 +1210,13 @@ document.addEventListener('change', e => {
   if (e.target.id === 'cmg') render();
   if (e.target.id === 'g-tipo' || e.target.id === 'c-tipo' || e.target.id === 'c-pago' || e.target.id === 'bit-t' || e.target.id === 'd-tipo') render();
   if (e.target.dataset && e.target.dataset.act === 'propina') {
-    /* sacar la propina necesita autorización (la administradora la tiene directo); volver a ponerla no */
-    if (e.target.checked || esAdm() || S.aut) { S.propina = e.target.checked; if (esAdm() && !S.aut) S.aut = { by: S.quien || 'Administradora', tok: null }; }
-    else { S.autForm = 'prop'; S.autPend = { propina: false }; S.autErr = ''; }
+    /* quitar o dejar la propina ya no necesita autorización: la decide el garzón */
+    S.propina = e.target.checked;
     render();
   }
   if (e.target.id === 'proppct') {
     const v = +e.target.value;
-    if (v === pctProp()) S.propPct = null;
-    else if (esAdm() || S.aut) { S.propPct = v; if (esAdm() && !S.aut) S.aut = { by: S.quien || 'Administradora', tok: null }; }
-    else { S.autForm = 'prop'; S.autPend = { pct: v }; S.autErr = ''; }
+    S.propPct = v === pctProp() ? null : v;
     render();
   }
 });

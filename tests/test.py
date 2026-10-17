@@ -488,14 +488,10 @@ def Q2(pg):
     pg.click('[data-act="mesa"][data-n="5"]'); pg.wait_for_timeout(300)
     pg.click('[data-act="cerrar"]'); pg.wait_for_timeout(300)
     pg.evaluate("document.querySelector('[data-act=propina]').click()"); pg.wait_for_timeout(300)
-    check('Q2: el garzón no puede quitar la propina sin autorización', 'necesita autorización' in pg.inner_text('#app') and pg.evaluate('S.propina')==True)
-    pg.fill('#aut-pin','0000'); pg.click('[data-act="autok"]'); pg.wait_for_timeout(500)
-    check('Q2: PIN incorrecto no autoriza', 'PIN incorrecto' in pg.inner_text('#app') and pg.evaluate('S.propina')==True)
-    pg.fill('#aut-pin','1234'); pg.click('[data-act="autok"]'); pg.wait_for_timeout(500)
-    check('Q2: con el PIN de la administradora se quita la propina', pg.evaluate('S.propina')==False and '$5.000' in pg.inner_text('#totpagar'))
+    check('Q2: el garzón quita la propina sin pedir autorización', 'necesita autorización' not in pg.inner_text('#app') and pg.evaluate('S.propina')==False and '$5.000' in pg.inner_text('#totpagar'))
     pg.click('[data-act="pagar"]'); pg.wait_for_timeout(700)
     c=pg.evaluate('window.__DB.resto_cuentas'); lg=[r for r in pg.evaluate('window.__RPC') if r[0]=='resto_login' and r[1].get('p_temp')]
-    check('Q2: se cobra sin propina usando un pase temporal de administradora', len(c)==1 and c[0]['propina']==0 and c[0]['total']==5000 and len(lg)>=1)
+    check('Q2: se cobra sin propina sin pase de administradora', len(c)==1 and c[0]['propina']==0 and c[0]['total']==5000 and len(lg)==0)
 e=run({'email':'u','role':'','db':db_q(True)},Q2,LS_ANA); print('ERR Q2',e)
 
 def R1(pg):
