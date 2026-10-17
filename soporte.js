@@ -46,7 +46,7 @@ async function spCargarLocal(lid) {
     const desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - (SP.dias - 1));
     const hoy = fechaIso(new Date());
     const q = (t, f) => f(sb.from(t).select('*').eq(t === 'resto_locales' ? 'id' : 'local_id', lid));
-    const [loc, menu, com, cue, gar, coc, tur, ped, res, ses] = await Promise.all([
+    const [loc, menu, com, cue, gar, coc, tur, ped, res, ses, gas] = await Promise.all([
       q('resto_locales', x => x.single()),
       q('resto_menu', x => x.order('categoria').order('nombre')),
       q('resto_comandas', x => x.eq('cerrada', false).order('created_at')),
@@ -56,12 +56,13 @@ async function spCargarLocal(lid) {
       q('resto_turnos', x => x.order('abierto_at', { ascending: false }).limit(15)),
       q('resto_pedidos', x => x.eq('cerrado', false).order('num')),
       q('resto_reservas', x => x.gte('fecha', hoy).order('fecha').order('hora')),
-      q('resto_sesiones', x => x.order('entrada', { ascending: false }).limit(60))
+      q('resto_sesiones', x => x.order('entrada', { ascending: false }).limit(60)),
+      q('resto_gastos', x => x.order('created_at', { ascending: false }).limit(100))
     ]);
     if (loc.error) throw new Error(loc.error.message || 'No se pudo leer el local');
     const err = [menu, com, cue, gar, tur, ped, res, ses].find(r => r.error);
     if (err) throw new Error(err.error.message);
-    const d = { loc: loc.data, menu: menu.data || [], com: com.data || [], cue: cue.data || [], gar: gar.data || [], coc: (coc && coc.data) || [], tur: tur.data || [], ped: ped.data || [], res: res.data || [], ses: ses.data || [] };
+    const d = { loc: loc.data, menu: menu.data || [], com: com.data || [], cue: cue.data || [], gar: gar.data || [], coc: (coc && coc.data) || [], tur: tur.data || [], ped: ped.data || [], res: res.data || [], ses: ses.data || [], gas: (gas && gas.data) || [] };
     d.usuarios = ((S.av.locales || []).find(l => l.id === lid) || {}).usuarios || [];
     d.diag = spDiagnostico(d);
     SP.d = d;
@@ -149,7 +150,8 @@ function spResv(d) {
   return `<div class="card"><b>Reservas desde hoy</b>${tabla(['Fecha', 'Hora', 'Nombre', 'Personas', 'Mesa', 'Estado'], d.res.map(r => [r.fecha.split('-').reverse().join('/'), esc(r.hora), esc(r.nombre), r.personas, r.mesa ? nmesa(r.mesa) : '—', esc(r.estado)]))}</div>`;
 }
 function spCajas(d) {
-  return `<div class="card" style="margin-bottom:12px"><b>Turnos de caja recientes</b>${tabla(['Abrió', 'Por', 'Cerró', 'Ventas', 'Cuentas', 'Diferencia', 'Sencillo inicial', 'Efectivo contado'], d.tur.map(t => [fdt(t.abierto_at), esc(t.abierto_por || '—'), t.cerrado_at ? fdt(t.cerrado_at) : '<span class="pill">Abierto</span>', t.ventas_total != null ? money(t.ventas_total) : '—', t.cuentas ?? '—', t.diferencia != null ? money(t.diferencia) : '—', esc(typeof dnTxt === 'function' ? dnTxt(t.desglose_apertura) : ''), esc(typeof dnTxt === 'function' ? dnTxt((t.desglose_cierre || {}).efectivo) : '')]))}</div>
+  return `<div class="card" style="margin-bottom:12px"><b>Turnos de caja recientes</b>${tabla(['Abrió', 'Por', 'Cerró', 'Ventas', 'Cuentas', 'Diferencia', 'Sencillo inicial', 'Efectivo contado', 'Retirado de ventas', 'Quedó en caja', 'Gastos'], d.tur.map(t => [fdt(t.abierto_at), esc(t.abierto_por || '—'), t.cerrado_at ? fdt(t.cerrado_at) : '<span class="pill">Abierto</span>', t.ventas_total != null ? money(t.ventas_total) : '—', t.cuentas ?? '—', t.diferencia != null ? money(t.diferencia) : '—', esc(typeof dnTxt === 'function' ? dnTxt(t.desglose_apertura) : ''), esc(typeof dnTxt === 'function' ? dnTxt((t.desglose_cierre || {}).efectivo) : ''), t.retiro_efectivo != null ? money(t.retiro_efectivo) : '—', esc(typeof dnTxt === 'function' ? dnTxt(t.desglose_deja) : ''), t.gastos_total ? money(t.gastos_total) : '—']))}</div>
+    <div class="card" style="margin-bottom:12px"><b>Gastos pagados desde caja</b>${tabla(['Fecha', 'Documento', 'N°', 'Proveedor', 'Detalle', 'Monto', 'Registró'], d.gas.map(g => [fdt(g.created_at), esc(g.tipo || ''), esc(g.numero || '—'), esc(g.proveedor || ''), esc(g.detalle || ''), money(g.monto), esc(g.registrado_por || '')]))}</div>
     <div class="card"><b>Quién entró (sesiones recientes)</b>${tabla(['Usuario', 'Rol', 'Entrada', 'Salida'], d.ses.map(s => [esc(s.usuario), esc(s.rol || ''), fdt(s.entrada), s.salida ? fdt(s.salida) : '<span class="pill">Conectado</span>']))}</div>`;
 }
 

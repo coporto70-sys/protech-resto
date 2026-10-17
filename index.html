@@ -278,7 +278,7 @@ async function cargar() {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas] = await Promise.all([
     sb.from('resto_locales').select('*').eq('id', id).single(),
     sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
     sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
@@ -288,11 +288,12 @@ async function cargar() {
     sb.from('resto_pedidos').select('*').eq('local_id', id).eq('cerrado', false).order('num'),
     sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora'),
     sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre'),
-    sb.from('resto_anulaciones').select('*').eq('local_id', id).gte('created_at', desde.toISOString()).order('created_at')
+    sb.from('resto_anulaciones').select('*').eq('local_id', id).gte('created_at', desde.toISOString()).order('created_at'),
+    sb.from('resto_gastos').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(300)
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
@@ -344,7 +345,7 @@ function suscribir() {
   if (rt || !D) return;
   const refresca = () => { clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; await cargar(); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
-  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
   rt.subscribe();
 }
 const _h = location.hash || '';
@@ -723,7 +724,8 @@ async function turnoCargar() {
 function turnoRes(t) {
   const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
   cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; pr += c.propina + c.pe + c.pt; });
-  return { cuentas: cu.length, vt, ef, tj, tr, pr, esp: (t.monto_inicial || 0) + ef };
+  const gs = (D.gastos || []).filter(g => g.turno_id === t.id), gt = gs.reduce((a, g) => a + g.m, 0);
+  return { cuentas: cu.length, vt, ef, tj, tr, pr, gt, gs: gs.length, esp: (t.monto_inicial || 0) + ef - gt };
 }
 const hora = t => new Date(t).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 function cajerosHTML(t) {
@@ -756,17 +758,25 @@ function cuadreHTML(t) {
   const r = turnoRes(t), ec = dnTotal('c'), hayEf = DEN.some(([v]) => S.f[dnId('c', v)] !== undefined && S.f[dnId('c', v)] !== ''), tj = numF('ctarj'), tr = numF('ctrans');
   const fila = (n, esp, got, extra) => { const d = got - esp; return `<div class="row"><div>${n}<div class="mut">Sistema ${money(esp)} · contado ${money(got)}${extra || ''}</div></div><b style="color:${d === 0 ? 'var(--ok)' : 'var(--bad)'}">${d === 0 ? 'Cuadra' : (d > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(d))}</b></div>`; };
   const out = [];
-  if (hayEf) out.push(fila('Efectivo', r.esp, ec, ' · incluye ' + money(t.monto_inicial || 0) + ' de sencillo inicial'));
+  if (hayEf) out.push(fila('Efectivo', r.esp, ec, ' · incluye ' + money(t.monto_inicial || 0) + ' de sencillo inicial' + (r.gt ? ' y descuenta ' + money(r.gt) + ' de gastos' : '')));
   if (tj !== null) out.push(fila('Tarjetas', r.tj, tj));
   if (tr !== null) out.push(fila('Transferencias', r.tr, tr));
-  return out.join('') || '<p class="mut">Escribe lo que contaste para ver si la caja cuadra.</p>';
+  return (out.join('') || '<p class="mut">Escribe lo que contaste para ver si la caja cuadra.</p>') + retiroHTML();
+}
+/* Sencillo fijo: lo que siempre debe quedar en caja. Lo demás del efectivo contado es efectivo de ventas y se retira. */
+function retiroHTML() {
+  const fondo = D.fondo || 0, ec = dnTotal('c'), dj = dnTotal('d'), hayD = DEN.some(([v]) => S.f[dnId('d', v)] !== undefined && S.f[dnId('d', v)] !== '');
+  if (!hayD && !ec) return '';
+  const ret = ec - dj, dif = dj - fondo;
+  return `<div class="row" style="margin-top:6px"><div>Sencillo que queda en caja<div class="mut">${fondo ? 'Debe quedar ' + money(fondo) + ' · dejas ' + money(dj) : 'Dejas ' + money(dj)}</div></div><b style="color:${!fondo || dif === 0 ? 'var(--ok)' : 'var(--bad)'}">${!fondo ? '' : dif === 0 ? 'Correcto' : (dif > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(dif))}</b></div>
+    <div class="row"><div><b>Efectivo de ventas a retirar</b><div class="mut">Efectivo contado ${money(ec)} − sencillo que queda ${money(dj)}</div></div><b style="color:${ret < 0 ? 'var(--bad)' : ''}">${ret < 0 ? 'Revisa los montos' : money(ret)}</b></div>`;
 }
 function dnActualiza() {
-  ['a', 'c'].forEach(p => { DEN.forEach(([v]) => { const el = document.getElementById(dnId(p, v) + '-s'); if (el) { const x = dnSub(p, v); el.textContent = x.t; el.style.color = x.bad ? 'var(--bad)' : ''; } }); const t = document.getElementById('dnt-' + p); if (t) t.textContent = money(dnTotal(p)); });
+  ['a', 'c', 'd'].forEach(p => { DEN.forEach(([v]) => { const el = document.getElementById(dnId(p, v) + '-s'); if (el) { const x = dnSub(p, v); el.textContent = x.t; el.style.color = x.bad ? 'var(--bad)' : ''; } }); const t = document.getElementById('dnt-' + p); if (t) t.textContent = money(dnTotal(p)); });
   const c = document.getElementById('cuadre'); if (c && D && D.turno) c.innerHTML = cuadreHTML(D.turno);
 }
 function abrirCajaHTML() {
-  return `<div class="card" style="display:grid;gap:8px"><b>Abrir caja</b><p class="mut">Cuenta el sencillo con el que recibes la caja y escribe en pesos cuánto hay de cada tipo. Ejemplo: si hay 4 billetes de $20.000, escribe 80000.</p>${contadorHTML('a')}<button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
+  return `<div class="card" style="display:grid;gap:8px"><b>Abrir caja</b>${D.fondo ? `<p class="mut">Sencillo fijo de la caja: <b>${money(D.fondo)}</b>. Debe ser lo que recibes.</p>` : ''}<p class="mut">Cuenta el sencillo con el que recibes la caja y escribe en pesos cuánto hay de cada tipo. Ejemplo: si hay 4 billetes de $20.000, escribe 80000.</p>${contadorHTML('a')}<button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
 }
 function cerrarCajaHTML(t) {
   return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cerrar caja (cuadre del día)</b>
@@ -774,8 +784,32 @@ function cerrarCajaHTML(t) {
     <b>Efectivo contado</b>${contadorHTML('c')}
     <label class="mut">Tarjetas: total según el terminal<input id="ctarj" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctarj')}"></label>
     <label class="mut">Transferencias recibidas<input id="ctrans" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctrans')}"></label>
+    <b>Sencillo que queda en caja${D.fondo ? ' (debe ser ' + money(D.fondo) + ')' : ''}</b><p class="mut" style="margin:0">Separa el sencillo para vueltos y escribe en pesos qué billetes y monedas dejas en la caja. El resto del efectivo es de ventas y se retira.</p>${contadorHTML('d')}
     <div class="card" style="background:#f8fafc;padding:10px"><b>Cuadre con lo vendido</b><div id="cuadre">${cuadreHTML(t)}</div></div>
     <input id="tnota" data-keep placeholder="Observación (obligatoria si hay diferencia)" value="${fv('tnota')}"><button class="btn-bad" data-act="tcerrar">Cerrar caja</button></div>`;
+}
+/* ---------- Sencillo fijo y gastos pagados desde caja ---------- */
+const GTIPOS = ['Boleta', 'Factura', 'Sin documento'];
+function fondoHTML() {
+  return `<div class="card" style="margin-bottom:12px"><b>Sencillo fijo de la caja</b><p class="mut" style="margin:4px 0 8px">Es el dinero para dar vueltos que siempre debe quedar en la caja. Al cerrar, quien está en caja separa este monto, deja el detalle de billetes y monedas y retira el resto del efectivo de ventas.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="fondo-in" data-keep inputmode="numeric" autocomplete="off" placeholder="Ej.: 160000" style="flex:1;min-width:150px" value="${S.f['fondo-in'] === undefined ? (D.fondo || '') : fv('fondo-in')}"><button class="btn-ok" data-act="setfondo">Guardar sencillo fijo</button></div>
+    <div class="mut" style="margin-top:6px">Actual: <b>${D.fondo ? money(D.fondo) : 'sin definir'}</b></div></div>`;
+}
+function gastosHTML(t) {
+  const gs = (D.gastos || []).filter(g => g.turno_id === t.id), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
+  return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Gastos pagados desde caja</b>
+    <p class="mut" style="margin:0">Cada vez que salga dinero de la caja para pagar algo, anótalo aquí con el número de boleta o factura. Se descuenta del efectivo que debe haber y queda registrado: no se puede editar ni borrar.</p>
+    <label class="mut">Documento<select id="g-tipo" data-keep>${GTIPOS.map(x => `<option ${x === tipo ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+    ${tipo !== 'Sin documento' ? `<input id="g-num" data-keep inputmode="numeric" autocomplete="off" placeholder="Número de ${tipo.toLowerCase()}" value="${fv('g-num')}">` : ''}
+    <input id="g-prov" data-keep autocomplete="off" placeholder="Proveedor o a quién se pagó" value="${fv('g-prov')}">
+    <input id="g-det" data-keep autocomplete="off" placeholder="Detalle: qué se compró o pagó" value="${fv('g-det')}">
+    <input id="g-monto" data-keep type="number" inputmode="numeric" min="1" placeholder="Monto que salió de la caja ($)" value="${fv('g-monto')}">
+    <button class="btn-ok" data-act="gasto">Registrar gasto</button>
+    ${gs.length ? gs.map(g => `<div class="row"><div><b>${esc(g.tipo)}${g.num ? ' N° ' + esc(g.num) : ''}</b> · ${esc(g.prov || 'sin proveedor')}<div class="mut">${esc(g.det)} · ${hora(g.t)} · ${esc(g.por || '')}</div></div><b>${money(g.m)}</b></div>`).join('') + `<div class="total"><span>Total gastos del turno</span><span>${money(tot)}</span></div>` : '<p class="mut" style="margin:0">Aún no hay gastos en este turno.</p>'}</div>`;
+}
+function gastosHistHTML() {
+  const g = (D.gastos || []).slice(0, 60);
+  return `<div class="card" style="margin-top:12px"><b>Historial de gastos de caja</b>${g.map(x => `<div class="row"><div><b>${esc(x.tipo)}${x.num ? ' N° ' + esc(x.num) : ''}</b> · ${esc(x.prov || 'sin proveedor')}<div class="mut">${esc(x.det)} · ${hora(x.t)} · ${esc(x.por || '')}</div></div><b>${money(x.m)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay gastos registrados.</p>'}</div>`;
 }
 /* Vista de Caja para un garzón autorizado: cobra mesas y mostrador, abre y cierra la caja, y ve solo sus propios cobros */
 function turnoCajeroHTML() {
@@ -784,22 +818,22 @@ function turnoCajeroHTML() {
   const mis = D.cuentas.filter(c => c.turno_id === t.id && (c.cobrado_por || '') === S.quien);
   return `<h2>Caja · ${esc(S.quien)}</h2>
   <div class="card"><b>Mis cobros de este turno</b>${mis.map(c => `<div class="row"><div>${nm(c.mesa)}<div class="mut">${hora(c.t)} · ${esc(c.metodo)}</div></div><b>${money(c.total + c.propina + c.pt)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no has cobrado en este turno.</p>'}
-  ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${cerrarCajaHTML(t)}`;
+  ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${gastosHTML(t)}${cerrarCajaHTML(t)}`;
 }
 function turnoHTML() {
   if (!esAdm()) return turnoCajeroHTML();
   const t = D.turno;
   if (S.th === null) { turnoCargar().then(render); }
-  const hist = (S.th || []).map(h => { const dc = h.desglose_cierre || {}; return `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${dc.tarjeta != null ? ' · tarjetas ' + money(dc.tarjeta) + ' · transf. ' + money(dc.transferencia || 0) : ''}${h.desglose_apertura && dnTxt(h.desglose_apertura) ? '<br>Sencillo inicial: ' + dnTxt(h.desglose_apertura) : ''}${dnTxt(dc.efectivo) ? '<br>Efectivo contado: ' + dnTxt(dc.efectivo) : ''}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
-  if (!t) return `<h2>Caja</h2>${abrirCajaHTML()}
+  const hist = (S.th || []).map(h => { const dc = h.desglose_cierre || {}; return `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${dc.tarjeta != null ? ' · tarjetas ' + money(dc.tarjeta) + ' · transf. ' + money(dc.transferencia || 0) : ''}${h.desglose_apertura && dnTxt(h.desglose_apertura) ? '<br>Sencillo inicial: ' + dnTxt(h.desglose_apertura) : ''}${dnTxt(dc.efectivo) ? '<br>Efectivo contado: ' + dnTxt(dc.efectivo) : ''}${h.retiro_efectivo != null ? '<br>Efectivo de ventas retirado ' + money(h.retiro_efectivo) + (dnTxt(h.desglose_deja) ? ' · quedó en caja: ' + dnTxt(h.desglose_deja) : '') : ''}${h.gastos_total ? '<br>Gastos pagados desde caja ' + money(h.gastos_total) : ''}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
+  if (!t) return `<h2>Caja</h2>${fondoHTML()}${abrirCajaHTML()}${gastosHistHTML()}
     <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
   const r = turnoRes(t);
-  return `<h2>Caja · turno abierto</h2><div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
+  return `<h2>Caja · turno abierto</h2>${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
   <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
-    <div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial. No incluye la propina en efectivo entregada directo al garzón.</p></div>
+    ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta los gastos. No incluye la propina en efectivo entregada directo al garzón.</p></div>
   <div class="card" style="margin-top:12px"><b>Quién estuvo en caja</b>${cajerosHTML(t)}</div>
-  ${cerrarCajaHTML(t)}
+  ${gastosHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
   <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
 }
 function invHTML() {
@@ -949,7 +983,7 @@ document.addEventListener('input', e => {
   /* si el lector no manda Enter al final, el código se toma solo cuando termina de llegar */
   if (e.target.id === 'scan-mos') { clearTimeout(scanT); const el = e.target; scanT = setTimeout(() => { const v = el.value; if (S.mos && el.isConnected && v.trim().length >= 6) { el.value = ''; escanMostrador(v); } }, 250); }
   if (e.target.id === 'nota') S.note = e.target.value;
-  if (/^(dn[ac]-\d+|ctarj|ctrans)$/.test(e.target.id)) dnActualiza();
+  if (/^(dn[acd]-\d+|ctarj|ctrans)$/.test(e.target.id)) dnActualiza();
   if (e.target.id === 'pefec') S.pe = e.target.value;
   if (e.target.id === 'recib') { S.rc = e.target.value; actualizaVuelto(); }
   if (e.target.id === 'ptarj') {
@@ -967,6 +1001,7 @@ document.addEventListener('change', e => {
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.id === 'cmg') render();
+  if (e.target.id === 'g-tipo') render();
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
 /* Código de barras: el lector USB escribe el código y pulsa Enter, igual que un teclado */
@@ -1018,7 +1053,7 @@ document.addEventListener('click', async e => {
   if (S.busy) return;
   const a = b.dataset.act, d = b.dataset;
   if (['mostrador', 'mospagar'].includes(a) && !puedeCobrar()) { alert('La venta por mostrador la cobra la administradora o un garzón autorizado con PIN.'); return; }
-  if (['tabrir', 'tcerrar'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado con PIN puede abrir y cerrar la caja.'); return; }
+  if (['tabrir', 'tcerrar', 'gasto'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado con PIN puede abrir y cerrar la caja.'); return; }
   if (['cobrarmesa', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && !puedeCobrarMesa()) { alert('Solo la administradora o los garzones pueden cobrar mesas.'); return; }
   if (a === 'mesa' && !puedeVerMesa(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede tomar pedidos en esta mesa.'); return; }
   if (a === 'cobrarmesa' && !puedeCobrarEsta(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede cobrarla.'); return; }
@@ -1259,18 +1294,36 @@ document.addEventListener('click', async e => {
           if (!fallo(r)) { S.f = {}; S.th = null; }
         }
       }
+      else if (a === 'setfondo' && esAdm()) {
+        const raw = String(S.f['fondo-in'] ?? D.fondo ?? '').replace(/\D/g, ''), v = raw ? Math.min(+raw, 100000000) : 0;
+        if (!fallo(await sb.from('resto_locales').update({ fondo_caja: v }).eq('id', D.id))) { delete S.f['fondo-in']; toast('Sencillo fijo guardado · ' + money(v), 'tk-l'); }
+      }
+      else if (a === 'gasto' && D.turno) {
+        const tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta', num = (S.f['g-num'] || '').trim(), prov = (S.f['g-prov'] || '').trim(), det = (S.f['g-det'] || '').trim(), m = Math.round(+S.f['g-monto']);
+        if (tipo !== 'Sin documento' && !num) alert('Escribe el número de la ' + tipo.toLowerCase() + '. Si no hay documento, elige "Sin documento".');
+        else if (!prov) alert('Escribe a quién se le pagó (proveedor).');
+        else if (!det) alert('Escribe el detalle: qué se compró o pagó.');
+        else if (!(m > 0)) alert('Escribe el monto que salió de la caja.');
+        else if (confirm('¿Registrar gasto de ' + money(m) + ' (' + tipo + (num ? ' N° ' + num : '') + ' · ' + prov + ')? Después no se puede editar ni borrar.')) {
+          const r = await sb.from('resto_gastos').insert({ local_id: D.id, turno_id: D.turno.id, tipo, numero: tipo === 'Sin documento' ? null : num, proveedor: prov, detalle: det, monto: m, registrado_por: S.quien || 'Administradora' });
+          if (!fallo(r)) { ['g-tipo', 'g-num', 'g-prov', 'g-det', 'g-monto'].forEach(k => delete S.f[k]); toast('Gasto registrado · ' + money(m), 'tk-l'); }
+        }
+      }
       else if (a === 'tcerrar' && D.turno) {
         const t = D.turno, r = turnoRes(t), open = D.comandas.filter(x => !x.cerrada).length;
-        const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim(), mal = dnBad('c');
+        const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim(), mal = dnBad('c').concat(dnBad('d')), dj = dnTotal('d'), fondo = D.fondo || 0, retiro = ec - dj;
         const dEf = ec - r.esp, dTj = tj === null ? 0 : tj - r.tj, dTr = tr === null ? 0 : tr - r.tr;
         if (mal.length) alert('Revisa estos montos, no corresponden a billetes o monedas completos: ' + mal.map(([v, n]) => n).join(', ') + '.');
         else if (tj === null || tr === null) alert('Escribe el total de tarjetas y el de transferencias (0 si no hubo).');
+        else if (dj > ec) alert('El sencillo que dejas en caja (' + money(dj) + ') es mayor que el efectivo contado (' + money(ec) + '). Revisa los montos.');
+        else if (!dj && !fondo && !confirm('No anotaste el sencillo que queda en caja. ¿Cerrar sin dejar sencillo?')) { /* cancelado */ }
+        else if (fondo && dj !== fondo && !nota) alert('El sencillo que queda en caja (' + money(dj) + ') no es el sencillo fijo (' + money(fondo) + '). Déjalo completo o escribe una observación que explique por qué.');
         else if ((dEf || dTj || dTr) && !nota) alert('La caja no cuadra. Escribe una observación que explique la diferencia antes de cerrar.');
         else if (!open || confirm('Hay ' + open + ' pedido(s) todavía abiertos en mesas. ¿Cerrar la caja igual?')) {
           const base = { cerrado_at: new Date().toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: ec, diferencia: dEf, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas };
-          const des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr };
-          let u = await sb.from('resto_turnos').update({ ...base, nota: nota || null, desglose_cierre: des }).eq('id', t.id);
-          if (u.error && /desglose/i.test(u.error.message || '')) u = await sb.from('resto_turnos').update({ ...base, nota: [t.nota, nota, 'Cierre: ' + (dnTxt(des.efectivo) || 'sin efectivo') + ' · tarjetas ' + money(tj) + ' · transferencias ' + money(tr)].filter(Boolean).join(' | ') }).eq('id', t.id);
+          const des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr }, deja = dnObj('d');
+          let u = await sb.from('resto_turnos').update({ ...base, nota: nota || null, desglose_cierre: des, desglose_deja: deja, retiro_efectivo: retiro, gastos_total: r.gt }).eq('id', t.id);
+          if (u.error && /desglose|retiro_efectivo|gastos_total/i.test(u.error.message || '')) u = await sb.from('resto_turnos').update({ ...base, nota: [t.nota, nota, 'Cierre: ' + (dnTxt(des.efectivo) || 'sin efectivo') + ' · tarjetas ' + money(tj) + ' · transferencias ' + money(tr), 'Quedó en caja: ' + (dnTxt(deja) || 'nada') + ' · efectivo de ventas retirado ' + money(retiro) + (r.gt ? ' · gastos ' + money(r.gt) : '')].filter(Boolean).join(' | ') }).eq('id', t.id);
           if (!fallo(u)) { await sb.from('resto_sesiones').update({ salida: new Date().toISOString() }).eq('turno_id', t.id).is('salida', null); S.ses = null; S.f = {}; S.th = null; }
         }
       }
