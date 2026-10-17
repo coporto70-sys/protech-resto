@@ -91,7 +91,7 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
 const rolesOn = () => !!(D && D.adminPin);
 const esIng = () => S.rol === 'ingeniero';
 const esAdm = () => !rolesOn() || S.rol === 'admin' || esIng();
-const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'garz', 'coms', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'inv', 'prod', 'garz', 'coms', 'carta'], garzon: ['mesas'], cocina: ['cocina', 'cafe'] };
 TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos los paneles */
 /* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
@@ -278,7 +278,7 @@ async function cargar() {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv] = await Promise.all([
     sb.from('resto_locales').select('*').eq('id', id).single(),
     sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre'),
     sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false),
@@ -289,11 +289,13 @@ async function cargar() {
     sb.from('resto_reservas').select('*').eq('local_id', id).gte('fecha', fechaIso(new Date())).order('fecha').order('hora'),
     sb.from('resto_cocineras').select('*').eq('local_id', id).order('nombre'),
     sb.from('resto_anulaciones').select('*').eq('local_id', id).gte('created_at', desde.toISOString()).order('created_at'),
-    sb.from('resto_gastos').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(300)
+    sb.from('resto_gastos').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(300),
+    sb.from('resto_insumos').select('*').eq('local_id', id).order('nombre'),
+    sb.from('resto_insumo_mov').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(150)
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })),
@@ -345,7 +347,7 @@ function suscribir() {
   if (rt || !D) return;
   const refresca = () => { clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; await cargar(); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
-  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, refresca));
   rt.subscribe();
 }
 const _h = location.hash || '';
@@ -389,7 +391,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas']];
+  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas']];
   const tabs = todas.filter(t => misTabs().includes(t[0]));
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
@@ -859,6 +861,45 @@ function turnoHTML() {
   ${gastosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
   <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
 }
+/* ---------- Inventario de producción: lo que se compra para producir (mermeladas, tarros de duraznos, cremas…). Aparte de la carta. ---------- */
+const UNIDADES = [['un', 'unidades'], ['kg', 'kilos'], ['g', 'gramos'], ['lt', 'litros'], ['ml', 'mililitros'], ['tarro', 'tarros'], ['caja', 'cajas'], ['bolsa', 'bolsas'], ['paquete', 'paquetes']];
+const unTxt = u => (UNIDADES.find(x => x[0] === u) || [0, u])[1];
+const fmtQ = n => (Math.round(n * 100) / 100).toLocaleString('es-CL');
+const numD = k => { const v = String(S.f[k] ?? '').replace(',', '.').trim(); return v !== '' && !isNaN(+v) ? +v : null; };
+const bajoIns = () => ((D && D.insumos) || []).filter(i => i.on && i.s <= i.sm);
+const MOTIVO = { compra: 'Compra', uso: 'Uso', merma: 'Merma', conteo: 'Conteo' };
+function insumosHTML() {
+  const ins = D.insumos.filter(i => i.on), bajos = bajoIns(), valor = ins.reduce((a, i) => a + (i.cu != null ? i.cu * i.s : 0), 0);
+  const nm2 = id => (D.insumos.find(i => i.id === id) || {}).n || 'Insumo';
+  const un2 = id => (D.insumos.find(i => i.id === id) || {}).u || 'un';
+  const tipo = GTIPOS.includes(S.f['c-tipo']) ? S.f['c-tipo'] : 'Boleta';
+  return `<h2>Inventario de producción</h2>
+  <p class="mut" style="margin:-6px 0 12px">Aquí van los insumos que compras para producir lo que vendes: mermeladas, tarros de duraznos, cremas, harinas, etc. Es aparte de la carta, que solo tiene los productos de venta.</p>
+  ${D.insErr ? '<div class="card" style="color:var(--bad);margin-bottom:12px">No se pudo leer el inventario de producción. Falta ejecutar la migración resto_migracion_insumos.sql en Supabase.</div>' : ''}
+  ${bajos.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--warn)"><b>Hay que comprar</b>${bajos.map(i => `<div class="row"><span>${esc(i.n)}</span><b style="color:var(--bad)">${fmtQ(i.s)} ${esc(unTxt(i.u))}</b></div>`).join('')}</div>` : ''}
+  <div class="stats"><div class="card stat"><span class="mut">Insumos</span><b>${ins.length}</b></div><div class="card stat"><span class="mut">Por comprar</span><b>${bajos.length}</b></div><div class="card stat"><span class="mut">Valor en bodega</span><b>${money(valor)}</b></div></div>
+  <div class="cols2" style="margin-top:12px"><div style="display:grid;gap:12px;align-self:start">
+    <div class="card" style="display:grid;gap:8px"><b>Agregar insumo</b>
+      <input id="i-n" data-keep autocomplete="off" placeholder="Nombre (ej. Mermelada de frambuesa)" value="${fv('i-n')}">
+      <label class="mut">Se mide en<select id="i-u" data-keep>${UNIDADES.map(([k, n]) => `<option value="${k}" ${(S.f['i-u'] || 'un') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <input id="i-s" data-keep inputmode="decimal" placeholder="Cantidad que tienes ahora (opcional)" value="${fv('i-s')}">
+      <input id="i-min" data-keep inputmode="decimal" placeholder="Avisar cuando quede (opcional)" value="${fv('i-min')}">
+      <button class="btn-ok" data-act="insadd">Agregar insumo</button></div>
+    <div class="card" style="display:grid;gap:8px"><b>Registrar compra</b>
+      <label class="mut">Insumo<select id="c-ins" data-keep><option value="">Elige el insumo…</option>${ins.map(i => `<option value="${i.id}" ${S.f['c-ins'] === i.id ? 'selected' : ''}>${esc(i.n)} (${esc(unTxt(i.u))})</option>`).join('')}</select></label>
+      <input id="c-q" data-keep inputmode="decimal" placeholder="Cantidad comprada" value="${fv('c-q')}">
+      <input id="c-m" data-keep type="number" inputmode="numeric" min="1" placeholder="Total pagado ($)" value="${fv('c-m')}">
+      <label class="mut">Documento<select id="c-tipo" data-keep>${GTIPOS.map(x => `<option ${x === tipo ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+      ${tipo !== 'Sin documento' ? `<input id="c-num" data-keep inputmode="numeric" autocomplete="off" placeholder="Número de ${tipo.toLowerCase()}" value="${fv('c-num')}">` : ''}
+      <input id="c-prov" data-keep autocomplete="off" placeholder="Proveedor" value="${fv('c-prov')}">
+      <label class="mut">Se pagó con<select id="c-pago" data-keep><option value="otro" ${S.f['c-pago'] !== 'caja' ? 'selected' : ''}>Otro medio (no sale de la caja)</option><option value="caja" ${S.f['c-pago'] === 'caja' ? 'selected' : ''}>Dinero de la caja${D.turno ? '' : ' (la caja está cerrada)'}</option></select></label>
+      ${S.f['c-pago'] === 'caja' ? '<p class="mut" style="margin:0">También quedará anotado como gasto de la caja, con su boleta o factura.</p>' : ''}
+      <button class="btn-ok" data-act="inscompra">Registrar compra</button></div></div>
+  <div style="display:grid;gap:12px"><div class="card"><b>Insumos</b><p class="mut" style="margin:4px 0 6px">Escribe una cantidad y usa "Usó" cuando se gasta en producción, "Merma" si se pierde o vence, y "Contar" para fijar lo que realmente hay.</p>
+    ${ins.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">Hay <b style="color:${i.s <= i.sm ? 'var(--bad)' : 'inherit'}">${fmtQ(i.s)} ${esc(unTxt(i.u))}</b>${i.sm ? ' · avisar en ' + fmtQ(i.sm) : ''}${i.cu != null ? ' · última compra ' + money(i.cu) + ' por ' + esc(i.u) : ''}</div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="iq-${i.id}" data-keep inputmode="decimal" placeholder="Cant." style="width:80px" value="${fv('iq-' + i.id)}"><button class="btn-line" data-act="insuso" data-id="${i.id}">Usó</button><button class="btn-line" data-act="insmerma" data-id="${i.id}">Merma</button><button class="btn-line" data-act="inscont" data-id="${i.id}">Contar</button><button class="btn-line" data-act="insmin" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="insoff" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay insumos. Agrega el primero.</p>'}</div>
+    <div class="card"><b>Movimientos</b>${D.insmov.slice(0, 60).map(m => `<div class="row"><div>${esc(nm2(m.iid))} · <b>${MOTIVO[m.mo] || esc(m.mo)}</b><div class="mut">${hora(m.t)} · ${esc(m.por)}${m.td ? ' · ' + esc(m.td) + (m.nd ? ' N° ' + esc(m.nd) : '') : ''}${m.pv ? ' · ' + esc(m.pv) : ''}${m.caja ? ' · pagado desde caja' : ''}${m.nota ? ' · ' + esc(m.nota) : ''}</div></div><div style="text-align:right"><b style="color:${m.d < 0 ? 'var(--bad)' : 'var(--ok)'}">${m.d > 0 ? '+' : ''}${fmtQ(m.d)} ${esc(unTxt(un2(m.iid)))}</b>${m.ct ? '<div class="mut">' + money(m.ct) + '</div>' : ''}</div></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay movimientos.</p>'}</div></div></div>`;
+}
 function invHTML() {
   const l = L(), bajos = bajoStock();
   const nuevo = S.nuevo ? `<div class="card" style="margin-bottom:12px;display:grid;gap:8px;border:2px solid var(--warn)"><b>Código nuevo: ${esc(S.nuevo.cb)}</b>
@@ -915,7 +956,7 @@ function cartaHTML() {
   return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
     ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
       <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
-  <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b>
+  <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b><p class="mut" style="margin:0">Aquí solo se agregan productos para la venta. Lo que compras para producirlos (mermeladas, tarros de duraznos, cremas…) va en la pestaña Inventario de producción.</p>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <input id="ap" type="number" inputmode="numeric" placeholder="Precio">
     <input id="acb" autocomplete="off" placeholder="Código de barras (opcional, escanéalo aquí)">
@@ -980,7 +1021,7 @@ function renderInner(app) {
   restaurarRol();
   if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, admin: adminHTML }[S.view];
   app.innerHTML = shell(v());
 }
 
@@ -1024,7 +1065,7 @@ document.addEventListener('change', e => {
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.id === 'cmg') render();
-  if (e.target.id === 'g-tipo') render();
+  if (e.target.id === 'g-tipo' || e.target.id === 'c-tipo' || e.target.id === 'c-pago') render();
   if (e.target.dataset && e.target.dataset.act === 'propina') { S.propina = e.target.checked; render(); }
 });
 /* Código de barras: el lector USB escribe el código y pulsa Enter, igual que un teclado */
@@ -1076,6 +1117,7 @@ document.addEventListener('click', async e => {
   if (S.busy) return;
   const a = b.dataset.act, d = b.dataset;
   if (['mostrador', 'mospagar'].includes(a) && !puedeCobrar()) { alert('La venta por mostrador la cobra la administradora o un garzón autorizado con PIN.'); return; }
+  if (a.startsWith('ins') && ['insadd', 'inscompra', 'insuso', 'insmerma', 'inscont', 'insmin', 'insoff'].includes(a) && !esAdm()) { alert('El inventario de producción lo maneja la administradora.'); return; }
   if (['tabrir', 'tcerrar', 'gasto'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado con PIN puede abrir y cerrar la caja.'); return; }
   if (['cobrarmesa', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && !puedeCobrarMesa()) { alert('Solo la administradora o los garzones pueden cobrar mesas.'); return; }
   if (a === 'mesa' && !puedeVerMesa(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede tomar pedidos en esta mesa.'); return; }
@@ -1316,6 +1358,51 @@ document.addEventListener('click', async e => {
           if (r.error && /desglose/i.test(r.error.message || '')) r = await sb.from('resto_turnos').insert({ ...base, nota: 'Sencillo inicial: ' + (dnTxt(desg) || 'sin detalle') });
           if (!fallo(r)) { S.f = {}; S.th = null; }
         }
+      }
+      else if (['insadd', 'inscompra', 'insuso', 'insmerma', 'inscont', 'insmin', 'insoff'].includes(a) && esAdm()) {
+        const mover = (id, delta, motivo, extra) => sb.rpc('resto_insumo_mover', { p_insumo: id, p_delta: delta, p_motivo: motivo, p_por: S.quien || 'Administradora', ...(extra || {}) });
+        const it = D.insumos.find(x => x.id === d.id);
+        if (a === 'insadd') {
+          const n = (S.f['i-n'] || '').trim(), u = S.f['i-u'] || 'un', st = numD('i-s'), mn = numD('i-min');
+          if (!n) alert('Escribe el nombre del insumo.');
+          else if (D.insumos.some(x => x.on && norm(x.n) === norm(n))) alert('Ya existe un insumo llamado "' + n + '".');
+          else if ((st !== null && st < 0) || (mn !== null && mn < 0)) alert('Las cantidades no pueden ser negativas.');
+          else {
+            const r = await sb.from('resto_insumos').insert({ local_id: D.id, nombre: n, unidad: u, stock: 0, stock_min: mn || 0 }).select().single();
+            if (!fallo(r)) {
+              if (st > 0 && r.data) fallo(await mover(r.data.id, st, 'conteo', { p_nota: 'Cantidad inicial' }));
+              ['i-n', 'i-u', 'i-s', 'i-min'].forEach(k => delete S.f[k]); await cargar(); toast('Insumo agregado · ' + n, 'tk-l');
+            }
+          }
+        }
+        else if (a === 'inscompra') {
+          const ins = D.insumos.find(x => x.id === S.f['c-ins']), q = numD('c-q'), m = Math.round(+S.f['c-m']), tipo = GTIPOS.includes(S.f['c-tipo']) ? S.f['c-tipo'] : 'Boleta', num = (S.f['c-num'] || '').trim(), prov = (S.f['c-prov'] || '').trim(), caja = S.f['c-pago'] === 'caja';
+          if (!ins) alert('Elige el insumo que compraste.');
+          else if (!(q > 0)) alert('Escribe la cantidad comprada.');
+          else if (!(m > 0)) alert('Escribe el total pagado.');
+          else if (tipo !== 'Sin documento' && !num) alert('Escribe el número de la ' + tipo.toLowerCase() + '. Si no hay documento, elige "Sin documento".');
+          else if (!prov) alert('Escribe el proveedor.');
+          else if (caja && !D.turno) alert('La caja está cerrada: no se puede pagar con dinero de la caja. Elige "Otro medio" o abre la caja.');
+          else if (confirm('¿Registrar la compra de ' + fmtQ(q) + ' ' + unTxt(ins.u) + ' de ' + ins.n + ' por ' + money(m) + (caja ? ' pagada con dinero de la caja' : '') + '?')) {
+            const r = await mover(ins.id, q, 'compra', { p_costo: m, p_tipo: tipo, p_num: tipo === 'Sin documento' ? null : num, p_prov: prov, p_caja: caja });
+            if (!fallo(r)) {
+              if (caja) fallo(await sb.from('resto_gastos').insert({ local_id: D.id, turno_id: D.turno.id, tipo, numero: tipo === 'Sin documento' ? null : num, proveedor: prov, detalle: 'Compra de insumo: ' + ins.n + ' (' + fmtQ(q) + ' ' + unTxt(ins.u) + ')', monto: m, registrado_por: S.quien || 'Administradora' }));
+              ['c-ins', 'c-q', 'c-m', 'c-tipo', 'c-num', 'c-prov', 'c-pago'].forEach(k => delete S.f[k]); await cargar(); toast('Compra registrada · ' + ins.n, 'tk-l');
+            }
+          }
+        }
+        else if (it && (a === 'insuso' || a === 'insmerma' || a === 'inscont' || a === 'insmin')) {
+          const q = numD('iq-' + it.id);
+          if (q === null || q < 0 || (a !== 'inscont' && a !== 'insmin' && q === 0)) alert('Escribe una cantidad.');
+          else if (a === 'insmin') { if (!fallo(await sb.from('resto_insumos').update({ stock_min: q }).eq('id', it.id))) { delete S.f['iq-' + it.id]; await cargar(); } }
+          else if ((a === 'insuso' || a === 'insmerma') && q > it.s) alert('No alcanza: solo hay ' + fmtQ(it.s) + ' ' + unTxt(it.u) + ' de ' + it.n + '.');
+          else {
+            const nota = a === 'insmerma' ? ((prompt('Motivo de la merma (se pierde o vence):') || '').trim() || null) : null;
+            const r = await mover(it.id, a === 'inscont' ? q - it.s : -q, a === 'insuso' ? 'uso' : a === 'insmerma' ? 'merma' : 'conteo', nota ? { p_nota: nota } : {});
+            if (!fallo(r)) { delete S.f['iq-' + it.id]; await cargar(); }
+          }
+        }
+        else if (it && a === 'insoff') { if (confirm('¿Quitar "' + it.n + '" del inventario de producción? Sus movimientos quedan registrados.')) { if (!fallo(await sb.from('resto_insumos').update({ activo: false }).eq('id', it.id))) await cargar(); } }
       }
       else if (a === 'setfondo' && esAdm()) {
         const raw = String(S.f['fondo-in'] ?? D.fondo ?? '').replace(/\D/g, ''), v = raw ? Math.min(+raw, 100000000) : 0;
