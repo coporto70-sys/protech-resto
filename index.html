@@ -311,6 +311,7 @@ async function cargar(parcial) {
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', t: +new Date(r.created_at) })) };
+  outLoad(); outAplicar();
   D.anuOk = !!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
   D.anulaciones = D.anuOk ? (anu.data || []) : [];
   D.sesiones = [];
@@ -1126,7 +1127,68 @@ document.addEventListener('keydown', e => {
   else if (id.startsWith('cb-')) { e.preventDefault(); S.f[id] = e.target.value; const b = document.querySelector('[data-act=cb_set][data-id="' + id.slice(3) + '"]'); if (b) b.click(); }
   else if (id === 'acb') e.preventDefault();
 });
-const fallo = r => { if (r && r.error) { S.lastErr = true; S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
+/* ---------- Sin conexión: cola de envío ----------
+   Tomar un pedido, marcarlo entregado y cobrar una mesa siguen funcionando sin internet: se guardan en este equipo,
+   se ven en pantalla y se envían solos al volver la conexión. Cada fila lleva su propio id, así un reintento nunca duplica. */
+const esRed = r => !!(r && r.error && (/fetch|network|load failed|timeout|conexi|offline/i.test(r.error.message || '') || (typeof navigator !== 'undefined' && navigator.onLine === false)));
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+let OUT = [], outBusy = false, OUTLID = null;
+const outKey = () => 'resto_out_' + (D ? D.id : '');
+function outLoad() { if (!D || OUTLID === D.id) return; OUTLID = D.id; try { OUT = JSON.parse(localStorage.getItem(outKey()) || '[]'); } catch (e) { OUT = []; } }
+function outSave() { try { localStorage.setItem(outKey(), JSON.stringify(OUT)); } catch (e) {} outBar(); }
+function outBar() {
+  let el = document.getElementById('offbar');
+  if (!el) { el = document.createElement('div'); el.id = 'offbar'; el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:60;padding:8px 14px;font-weight:700;text-align:center;color:#fff;font-size:.95rem'; document.body.appendChild(el); }
+  const off = navigator.onLine === false || S.sinRed;
+  if (!OUT.length && !off) { el.style.display = 'none'; return; }
+  el.style.display = 'block'; el.style.background = off ? '#b45309' : '#0369a1';
+  el.textContent = off ? '📶 Sin conexión' + (OUT.length ? ' · ' + OUT.length + ' operación(es) guardada(s), se enviarán solas' : ' · puedes seguir tomando pedidos y cobrando mesas') : '⏳ Enviando ' + OUT.length + ' operación(es) pendiente(s)…';
+}
+function comandaOpt(f) { return { id: f.id, mesa: f.mesa, items: f.items, est: (f.items && f.items[0] && f.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: f.nota || '', estado: f.estado, garzon: f.garzon || '', t: f.t || Date.now(), cerrada: false }; }
+/* vuelve a poner en pantalla lo que aún no llegó al servidor (para que una recarga no lo haga desaparecer) */
+function outAplicar() {
+  if (!D || !OUT.length) return;
+  OUT.forEach(o => {
+    if (o.k === 'enviar') {
+      o.filas.forEach(f => { if (!D.comandas.some(c => c.id === f.id)) D.comandas.push(comandaOpt(f)); });
+      if (!o.insOk) (o.stock || []).forEach(([mid, q]) => { const m = D.menu.find(x => x.id === mid); if (m && m.s != null) m.s -= q; });
+    } else if (o.k === 'pagar') {
+      D.comandas = D.comandas.filter(c => !o.cids.includes(c.id));
+      if (!D.cuentas.some(c => c.id === o.cuenta.id)) D.cuentas.push({ id: o.cuenta.id, mesa: o.cuenta.mesa, total: o.cuenta.total, propina: o.cuenta.propina || 0, pe: o.cuenta.propina_efec || 0, pt: o.cuenta.propina_tarj || 0, metodo: o.cuenta.metodo, garzon: o.cuenta.garzon || '', items: o.cuenta.items, turno_id: o.cuenta.turno_id || null, cobrado_por: o.cuenta.cobrado_por || '', t: o.t });
+    } else if (o.k === 'avanzar') {
+      const c = D.comandas.find(x => x.id === o.id); if (c) { c.estado = o.to; if (o.cierra) D.comandas = D.comandas.filter(x => x.id !== o.id); }
+    }
+  });
+}
+async function outVaciar() {
+  if (outBusy || !D || !OUT.length || navigator.onLine === false) return;
+  outBusy = true; outBar();
+  try {
+    while (OUT.length) {
+      const o = OUT[0]; let r;
+      if (o.k === 'enviar') {
+        if (!o.insOk) { r = await sb.from('resto_comandas').upsert(o.filas.map(f => ({ id: f.id, local_id: f.local_id, mesa: f.mesa, items: f.items, nota: f.nota, garzon: f.garzon, estado: f.estado })), { onConflict: 'id', ignoreDuplicates: true }); if (r && r.error) { if (esRed(r)) { S.sinRed = true; break; } OUT.shift(); outSave(); alert('No se pudo enviar un pedido guardado (mesa ' + o.filas[0].mesa + '): ' + r.error.message); continue; } o.insOk = true; outSave(); }
+        let cortado = false;
+        while ((o.stockHecho || 0) < (o.stock || []).length) { const [mid, q] = o.stock[o.stockHecho || 0]; const rr = await sb.rpc('resto_stock_mover', { p_menu: mid, p_delta: -q, p_motivo: 'venta', p_por: o.por || '', p_log: false }); if (rr && rr.error && esRed(rr)) { cortado = true; break; } o.stockHecho = (o.stockHecho || 0) + 1; outSave(); }
+        if (cortado) { S.sinRed = true; break; }
+      } else if (o.k === 'pagar') {
+        if (!o.cuentaOk && o.cuenta.total > 0) { r = await sb.from('resto_cuentas').upsert(o.cuenta, { onConflict: 'id', ignoreDuplicates: true }); if (r && r.error) { if (esRed(r)) { S.sinRed = true; break; } OUT.shift(); outSave(); alert('No se pudo enviar un cobro guardado (mesa ' + o.cuenta.mesa + '): ' + r.error.message); continue; } }
+        o.cuentaOk = true; outSave();
+        r = await sb.from('resto_comandas').update({ cerrada: true }).in('id', o.cids); if (r && r.error && esRed(r)) { S.sinRed = true; break; }
+        if (o.pedido) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', o.pedido);
+      } else if (o.k === 'avanzar') {
+        r = await sb.from('resto_comandas').update({ estado: o.to, ...(o.cierra ? { cerrada: true } : {}) }).eq('id', o.id); if (r && r.error && esRed(r)) { S.sinRed = true; break; }
+      }
+      OUT.shift(); S.sinRed = false; outSave();
+    }
+  } catch (e) { S.sinRed = true; }
+  outBusy = false; outBar();
+  if (!OUT.length && D) { try { await cargar(); render(); } catch (e) {} }
+}
+window.addEventListener('online', () => { S.sinRed = false; outBar(); outVaciar(); });
+window.addEventListener('offline', () => { S.sinRed = true; outBar(); });
+setInterval(() => { if (OUT.length) outVaciar(); outBar(); }, 12000);
+const fallo = r => { if (r && r.error) { if (esRed(r)) { S.sinRed = true; outBar(); alert('Sin conexión: esto no se pudo guardar. Reintenta cuando vuelva internet.'); return true; } S.lastErr = true; S.err = 'Error: ' + r.error.message; alert('No se pudo guardar: ' + r.error.message); return true; } return false; };
 
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
@@ -1282,8 +1344,14 @@ document.addEventListener('click', async e => {
         const items = L().menu.filter(i => S.cart[i.id]).map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e }));
         /* una comanda por estación: lo de cocina espera en Cocina; lo de cafetería queda anotado y ya entregado */
         const filas = ['cocina', 'cafeteria'].map(e => items.filter(x => x.e === e)).filter(g => g.length)
-          .map(g => ({ local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null, estado: g[0].e === 'cafeteria' ? 'entregado' : 'pendiente' }));
-        if (filas.length && !fallo(await sb.from('resto_comandas').insert(filas))) { for (const [mid, q] of conStock) await sb.rpc('resto_stock_mover', { p_menu: mid, p_delta: -q, p_motivo: 'venta', p_por: S.quien || '', p_log: false }); S.cart = {}; S.note = ''; }
+          .map(g => ({ id: uid(), local_id: D.id, mesa: S.mesa, items: g, nota: S.note.trim(), garzon: garzonDe(S.mesa) || null, estado: g[0].e === 'cafeteria' ? 'entregado' : 'pendiente', t: Date.now() }));
+        if (filas.length) {
+          const r = await sb.from('resto_comandas').insert(filas.map(({ t, ...f }) => f));
+          if (r && r.error && esRed(r)) {
+            OUT.push({ k: 'enviar', filas, stock: conStock, por: S.quien || '', t: Date.now() }); S.sinRed = true; outSave(); outAplicar();
+            S.cart = {}; S.note = ''; toast('Sin conexión: pedido guardado, se enviará solo', 'tk-l');
+          } else if (!fallo(r)) { for (const [mid, q] of conStock) await sb.rpc('resto_stock_mover', { p_menu: mid, p_delta: -q, p_motivo: 'venta', p_por: S.quien || '', p_log: false }); S.cart = {}; S.note = ''; }
+        }
       } else if (a === 'pagarparte') {
         /* un cliente se retira y paga solo lo suyo: se registra ese pago y esas unidades quedan descontadas de la mesa */
         const pick = [];
@@ -1307,11 +1375,19 @@ document.addEventListener('click', async e => {
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
         const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
-        const r = tot > 0 ? await sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }) : {};
-        if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } S.pe = ''; S.pt = ''; S.rc = ''; }
+        const cuenta = { id: uid(), local_id: D.id, mesa: S.mesa, total: tot, propina: S.propina ? Math.round(tot * 0.1) : 0, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) };
+        const r = tot > 0 ? await sb.from('resto_cuentas').insert(cuenta) : {};
+        const fin = () => { S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } S.pe = ''; S.pt = ''; S.rc = ''; };
+        if (r && r.error && esRed(r)) {
+          OUT.push({ k: 'pagar', cuenta, cids: ab.map(c => c.id), pedido: S.mesa >= 1000 ? S.mesa : 0, t: Date.now() }); S.sinRed = true; outSave(); outAplicar();
+          toast('Sin conexión: cobro guardado, se enviará solo', 'tk-l'); fin();
+        } else if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); fin(); }
       } else if (a === 'avanzar') {
         const c = L().comandas.find(x => x.id === d.id);
-        fallo(await sb.from('resto_comandas').update({ estado: d.to, ...(d.to === 'entregado' && c && pagada(c) ? { cerrada: true } : {}) }).eq('id', d.id));
+        const cierra = !!(d.to === 'entregado' && c && pagada(c));
+        const r = await sb.from('resto_comandas').update({ estado: d.to, ...(cierra ? { cerrada: true } : {}) }).eq('id', d.id);
+        if (r && r.error && esRed(r)) { OUT.push({ k: 'avanzar', id: d.id, to: d.to, cierra, t: Date.now() }); S.sinRed = true; outSave(); outAplicar(); toast('Sin conexión: se enviará solo', 'tk-l'); }
+        else fallo(r);
       }
       else if (a === 'anuok') {
         const f = S.an, c = f && abiertas(S.mesa).find(x => x.id === f.c), it = c && c.items.find(x => x.n === f.n);

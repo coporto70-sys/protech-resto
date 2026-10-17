@@ -12,13 +12,15 @@ function mk(t){
     is(c,v){st.f.push(r=>(r[c]??null)===v);return api;},
     order(c,o){st.ord.push([c,o&&o.ascending===false?-1:1]);return api;},
     limit(n){st.lim=n;return api;}, single(){st.single=true;return api;}, maybeSingle(){st.maybe=true;return api;},
-    insert(p){st.op='insert';st.payload=p;return api;}, update(p){st.op='update';st.payload=p;return api;}, delete(){st.op='delete';return api;},
+    insert(p){st.op='insert';st.payload=p;return api;}, upsert(p,o){st.op='upsert';st.payload=p;return api;}, in(c,v){st.f.push(r=>v.includes(r[c]));return api;}, update(p){st.op='update';st.payload=p;return api;}, delete(){st.op='delete';return api;},
     then(res,rej){ return Promise.resolve(run()).then(res,rej); }
   };
   function run(){
+    if(window.__OFFLINE) return {data:null,error:{message:'TypeError: Failed to fetch'}};
     if(SC.missing && SC.missing.includes(t)) return {data:null,error:{message:'relation "public.'+t+'" does not exist'}};
     const rows = DB[t] = DB[t] || [];
     if(SC.noDesglose && t==='resto_turnos' && st.payload && ('desglose_apertura' in st.payload || 'desglose_cierre' in st.payload)) return {data:null,error:{message:"Could not find the 'desglose_apertura' column of 'resto_turnos' in the schema cache"}};
+    if(st.op==='upsert'){ const arr=Array.isArray(st.payload)?st.payload:[st.payload]; arr.forEach(p=>{ if(!rows.some(r=>r.id===p.id)) rows.push(Object.assign({created_at:new Date().toISOString()},p)); }); return {data:null,error:null}; }
     if(st.op==='insert'){
       const n = Object.assign({id:'id'+Math.random().toString(36).slice(2,9),created_at:new Date().toISOString(),abierto_at:new Date().toISOString()}, st.payload);
       rows.push(n);
@@ -39,7 +41,7 @@ const user = {id:'u1',email:SC.email,app_metadata:{role:SC.role||''}};
 window.supabase={createClient:()=>({
   from:mk,
   functions:{invoke:async(name,opt)=>{ window.__IA_CALLS=(window.__IA_CALLS||0)+1; if(SC.ia==='sim'){ const u=opt.body.messages.slice(-1)[0].content; return {data:{texto:'Respuesta de IA simulada: '+u,humano:/mal hecho/.test(u)},error:null}; } const ia={error:'sin_clave'}; return {data:ia,error:{message:'fn'}}; }},
-  rpc:async(name,p)=>{ if(name==='resto_insumo_mover'){ const ins=(DB.resto_insumos||[]).find(i=>i.id===p.p_insumo); if(!ins) return {data:null,error:{message:'Insumo no encontrado'}}; const nuevo=(+ins.stock||0)+p.p_delta; if(nuevo<0) return {data:null,error:{message:'No alcanza el stock'}}; ins.stock=nuevo; if(p.p_motivo==='compra'&&p.p_costo) ins.costo_unit=Math.round(p.p_costo/p.p_delta*100)/100; (DB.resto_insumo_mov=DB.resto_insumo_mov||[]).push({id:'m'+Math.random(),local_id:ins.local_id,insumo_id:ins.id,delta:p.p_delta,motivo:p.p_motivo,stock_despues:ins.stock,costo_total:p.p_costo||null,tipo_doc:p.p_tipo||null,numero_doc:p.p_num||null,proveedor:p.p_prov||null,nota:p.p_nota||null,pagado_caja:!!p.p_caja,registrado_por:p.p_por,created_at:new Date().toISOString()}); return {data:ins.stock,error:null}; } return {data:0,error:null}; },
+  rpc:async(name,p)=>{ if(window.__OFFLINE) return {data:null,error:{message:'TypeError: Failed to fetch'}}; (window.__RPC=window.__RPC||[]).push([name,p]); if(name==='resto_insumo_mover'){ const ins=(DB.resto_insumos||[]).find(i=>i.id===p.p_insumo); if(!ins) return {data:null,error:{message:'Insumo no encontrado'}}; const nuevo=(+ins.stock||0)+p.p_delta; if(nuevo<0) return {data:null,error:{message:'No alcanza el stock'}}; ins.stock=nuevo; if(p.p_motivo==='compra'&&p.p_costo) ins.costo_unit=Math.round(p.p_costo/p.p_delta*100)/100; (DB.resto_insumo_mov=DB.resto_insumo_mov||[]).push({id:'m'+Math.random(),local_id:ins.local_id,insumo_id:ins.id,delta:p.p_delta,motivo:p.p_motivo,stock_despues:ins.stock,costo_total:p.p_costo||null,tipo_doc:p.p_tipo||null,numero_doc:p.p_num||null,proveedor:p.p_prov||null,nota:p.p_nota||null,pagado_caja:!!p.p_caja,registrado_por:p.p_por,created_at:new Date().toISOString()}); return {data:ins.stock,error:null}; } return {data:0,error:null}; },
   auth:{getSession:async()=>({data:{session:{user,access_token:'tok'}}}),onAuthStateChange(){},signOut:async()=>({}),refreshSession:async()=>({data:{session:{user}}}),updateUser:async()=>({}),resetPasswordForEmail:async()=>({}),signInWithPassword:async()=>({})},
   channel(){ const c={on(type,cfg,cb){handlers.push({table:cfg.table,event:cfg.event,cb});return c;},subscribe(){return c;}}; return c; },
   removeChannel(){}

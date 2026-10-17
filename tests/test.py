@@ -388,4 +388,30 @@ def I(pg):
     check('I: historial muestra sencillo inicial y efectivo contado', 'Sencillo inicial: 1×$20.000' in pg.inner_text('#app') and 'Efectivo contado: 1×$20.000' in pg.inner_text('#app'))
 e=run({'email':'u','role':'','db':db_roles()},I,LS_ADM); print('ERR I',e)
 
+
+
+def N(pg):
+    pg.on('dialog',lambda x:x.accept())
+    pg.click('[data-act="mesa"][data-n="4"]'); pg.wait_for_timeout(300)
+    pg.select_option('#garz','Ana'); pg.wait_for_timeout(200)
+    pg.evaluate('window.__OFFLINE=true')
+    pg.click('[data-act="inc"][data-id="m1"]'); pg.click('[data-act="inc"][data-id="m1"]'); pg.click('[data-act="enviar"]'); pg.wait_for_timeout(600)
+    check('N: sin conexión el pedido se guarda y aparece en pantalla', pg.evaluate('OUT.length')==1 and pg.evaluate('D.comandas.some(c=>c.mesa===4)') and pg.evaluate('window.__DB.resto_comandas.filter(c=>c.mesa===4).length')==0)
+    check('N: aviso de sin conexión visible', 'Sin conexión' in pg.inner_text('#offbar'))
+    pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(300)
+    check('N: una recarga fallida no hace desaparecer el pedido guardado', pg.evaluate('D.comandas.some(c=>c.mesa===4)'))
+    pg.click('[data-act="cerrar"]'); pg.wait_for_timeout(200); pg.click('[data-act="pagar"]'); pg.wait_for_timeout(600)
+    check('N: sin conexión el cobro de la mesa también se guarda', pg.evaluate('OUT.length')==2 and pg.evaluate('D.comandas.some(c=>c.mesa===4)')==False)
+    pg.evaluate('window.__OFFLINE=false'); pg.evaluate('outVaciar()'); pg.wait_for_timeout(1200)
+    db=pg.evaluate('window.__DB')
+    com=[c for c in db['resto_comandas'] if c['mesa']==4]; cue=[c for c in db['resto_cuentas'] if c['mesa']==4]
+    check('N: al volver internet el pedido llega una sola vez y queda cerrado', len(com)==1 and com[0].get('cerrada')==True and pg.evaluate('OUT.length')==0)
+    check('N: al volver internet el cobro llega una sola vez', len(cue)==1 and cue[0]['total']==5000)
+    check('N: el stock se descontó una sola vez', len([r for r in pg.evaluate('window.__RPC||[]') if r[0]=='resto_stock_mover'])==1)
+    pg.evaluate('outVaciar()'); pg.wait_for_timeout(300)
+    check('N: reintentar no duplica', len([c for c in pg.evaluate('window.__DB.resto_cuentas') if c['mesa']==4])==1)
+def db_n():
+    d=db_ins(True); d['resto_locales'][0]['admin_pin']=''; d['resto_garzones'][0]['pin']=''; return d
+e=run({'email':'u','role':'','db':db_n()},N); print('ERR N',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)
