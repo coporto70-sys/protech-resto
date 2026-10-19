@@ -1056,7 +1056,7 @@ function invHTML() {
     <label class="mut">Se prepara en<select id="ne" data-keep><option value="cocina" ${S.f.ne !== 'cafeteria' ? 'selected' : ''}>Cocina</option><option value="cafeteria" ${S.f.ne === 'cafeteria' ? 'selected' : ''}>Cafetería</option></select></label>
     <div style="display:flex;gap:8px"><button class="btn-ok" data-act="crearcb">Crear y registrar entrada</button><button class="btn-line" data-act="cancelcb">Cancelar</button></div></div>` : '';
   const bajosF = filtra(bajos, 'q-inv');
-  return `<h2>Inventario</h2>${buscaHTML('q-inv', 'Buscar producto en el inventario…')}${bajosF.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--warn)"><b>Stock bajo o agotado</b>${bajosF.map(i => `<div class="row"><span>${esc(i.n)}</span><b style="color:var(--bad)">${i.s}</b></div>`).join('')}</div>` : ''}
+  return `<h2>Inventario</h2>${buscaHTML('q-inv', 'Buscar producto en el inventario…')}${bajosF.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--warn)"><b>Stock bajo o agotado</b><p class="mut" style="margin:2px 0 4px">Escribe la cantidad que ingresa y toca "+ Entrada" para sumarla al stock.</p>${bajosF.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">Stock <b style="color:var(--bad)">${i.s}</b>${i.sm ? ' · mínimo ' + i.sm : ''}</div></div><div style="display:flex;gap:6px;align-items:center"><input id="sqb-${i.id}" data-keep type="number" inputmode="numeric" min="1" placeholder="Cant." aria-label="Cantidad que ingresa" style="width:80px" value="${fv('sqb-' + i.id)}"><button class="btn-ok" data-act="sk_add" data-src="sqb" data-id="${i.id}">+ Entrada</button></div></div>`).join('')}</div>` : ''}
   <div class="card" style="margin-bottom:12px;display:grid;gap:8px"><b>Ingreso por código de barras</b>
     <p class="mut">Haz clic en el campo y escanea cada producto: se suma a su stock. Si el código no existe, te pide crear el producto. Cambia la cantidad para ingresar de a varias unidades.</p>
     <div style="display:flex;gap:8px"><input id="scan-inv" autocomplete="off" placeholder="Escanear código de barras…" style="flex:1"><input id="scan-q" data-keep type="number" inputmode="numeric" min="1" placeholder="Cant." style="width:80px" value="${S.f['scan-q'] === undefined ? 1 : fv('scan-q')}"></div></div>
@@ -1795,7 +1795,7 @@ document.addEventListener('click', async e => {
         }
       }
       else if (a === 'sk_set' || a === 'sk_add' || a === 'sk_min' || a === 'sk_off') {
-        const it = L().menu.find(x => x.id === d.id), raw = S.f['sq-' + d.id], q = Math.round(+raw);
+        const it = L().menu.find(x => x.id === d.id), raw = S.f[(d.src === 'sqb' ? 'sqb-' : 'sq-') + d.id], q = Math.round(+raw);
         if (it) {
           if (a === 'sk_off') fallo(await sb.from('resto_menu').update({ stock: null }).eq('id', d.id));
           else if (raw === undefined || raw === '' || isNaN(q) || q < 0) alert('Escribe una cantidad.');
@@ -1805,7 +1805,7 @@ document.addEventListener('click', async e => {
             else if (a === 'sk_add') r = await sb.rpc('resto_stock_mover', { p_menu: d.id, p_delta: q, p_motivo: 'entrada', p_por: S.quien || '', p_log: true });
             else if (it.s == null) r = await sb.from('resto_menu').update({ stock: q }).eq('id', d.id);
             else r = await sb.rpc('resto_stock_mover', { p_menu: d.id, p_delta: q - it.s, p_motivo: 'conteo', p_por: S.quien || '', p_log: true });
-            if (!fallo(r)) delete S.f['sq-' + d.id];
+            if (!fallo(r)) { delete S.f['sq-' + d.id]; delete S.f['sqb-' + d.id]; }
           }
         }
       }
