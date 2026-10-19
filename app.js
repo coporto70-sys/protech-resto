@@ -407,6 +407,10 @@ function porCobrarHTML() {
   return `<div class="card" style="margin-bottom:12px"><b>Mesas por cobrar</b><p class="mut" style="margin:4px 0">Cuando un cliente termina y viene a pagar a la caja, cóbralo aquí.</p>${ms.map(n => { const a = abiertas(n), g = (a.find(c => c.garzon) || {}).garzon; return `<div class="row"><div><b>${nm(n)}</b>${g ? ' <small class="mut">' + esc(g) + '</small>' : ''}<div class="mut">${a.map(c => c.items.map(i => (i.q - (i.pg || 0)) + '× ' + esc(i.n)).join(', ')).join(' · ')}</div></div><div style="display:flex;gap:8px;align-items:center"><b>${money(totalMesa(n))}</b>${puedeCobrarEsta(n) ? `<button class="btn-ok" data-act="cobrarmesa" data-n="${n}">Cobrar</button>` : '<span class="mut">' + (puedeCobrarMesa() ? 'Mesa de ' + esc(duenoMesa(n)) : 'Cobra en caja') + '</span>'}</div></div>`; }).join('') || '<p class="mut" style="margin-top:8px">No hay mesas con consumo pendiente.</p>'}</div>`;
 }
 const norm = t => String(t ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+/* Lupita de búsqueda rápida para las listas de inventario y carta: filtra mientras se escribe, sin tildes ni mayúsculas. */
+const buscaHTML = (id, ph) => `<input id="${id}" data-keep type="search" autocomplete="off" placeholder="🔍 ${ph}" style="width:100%;margin:0 0 8px" value="${fv(id)}">`;
+const filtra = (arr, id) => { const q = norm(S.f[id]); if (!q) return arr; const ws = q.split(/\s+/); return arr.filter(i => { const t = norm(i.n + ' ' + (i.c || '')); return ws.every(w => t.includes(w)); }); };
+const BUSQ = ['q-inv', 'q-carta', 'q-prod'];
 function busMos() {
   const q = norm(S.f['bus-mos']); if (!q) return [];
   const ws = q.split(/\s+/);
@@ -930,7 +934,7 @@ function insumosHTML() {
       ${S.f['c-pago'] === 'caja' ? '<p class="mut" style="margin:0">También quedará anotado como gasto de la caja, con su boleta o factura.</p>' : ''}
       <button class="btn-ok" data-act="inscompra">Registrar compra</button></div></div>
   <div style="display:grid;gap:12px"><div class="card"><b>Insumos</b><p class="mut" style="margin:4px 0 6px">Escribe una cantidad y usa "Usó" cuando se gasta en producción, "Merma" si se pierde o vence, y "Contar" para fijar lo que realmente hay.</p>
-    ${ins.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">Hay <b style="color:${i.s <= i.sm ? 'var(--bad)' : 'inherit'}">${fmtQ(i.s)} ${esc(unTxt(i.u))}</b>${i.sm ? ' · avisar en ' + fmtQ(i.sm) : ''}${i.cu != null ? ' · última compra ' + money(i.cu) + ' por ' + esc(i.u) : ''}</div></div>
+    ${buscaHTML('q-prod', 'Buscar insumo…')}${filtra(ins, 'q-prod').map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">Hay <b style="color:${i.s <= i.sm ? 'var(--bad)' : 'inherit'}">${fmtQ(i.s)} ${esc(unTxt(i.u))}</b>${i.sm ? ' · avisar en ' + fmtQ(i.sm) : ''}${i.cu != null ? ' · última compra ' + money(i.cu) + ' por ' + esc(i.u) : ''}</div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="iq-${i.id}" data-keep inputmode="decimal" placeholder="Cant." style="width:80px" value="${fv('iq-' + i.id)}"><button class="btn-line" data-act="insuso" data-id="${i.id}">Usó</button><button class="btn-line" data-act="insmerma" data-id="${i.id}">Merma</button><button class="btn-line" data-act="inscont" data-id="${i.id}">Contar</button><button class="btn-line" data-act="insmin" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="insoff" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay insumos. Agrega el primero.</p>'}</div>
     <div class="card"><b>Movimientos</b>${D.insmov.slice(0, 60).map(m => `<div class="row"><div>${esc(nm2(m.iid))} · <b>${MOTIVO[m.mo] || esc(m.mo)}</b><div class="mut">${hora(m.t)} · ${esc(m.por)}${m.td ? ' · ' + esc(m.td) + (m.nd ? ' N° ' + esc(m.nd) : '') : ''}${m.pv ? ' · ' + esc(m.pv) : ''}${m.caja ? ' · pagado desde caja' : ''}${m.nota ? ' · ' + esc(m.nota) : ''}</div></div><div style="text-align:right"><b style="color:${m.d < 0 ? 'var(--bad)' : 'var(--ok)'}">${m.d > 0 ? '+' : ''}${fmtQ(m.d)} ${esc(unTxt(un2(m.iid)))}</b>${m.ct ? '<div class="mut">' + money(m.ct) + '</div>' : ''}</div></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no hay movimientos.</p>'}</div></div></div>`;
 }
@@ -1057,7 +1061,7 @@ function invHTML() {
     <div style="display:flex;gap:8px"><input id="scan-inv" autocomplete="off" placeholder="Escanear código de barras…" style="flex:1"><input id="scan-q" data-keep type="number" inputmode="numeric" min="1" placeholder="Cant." style="width:80px" value="${S.f['scan-q'] === undefined ? 1 : fv('scan-q')}"></div></div>
   ${nuevo}
   <div class="card"><p class="mut" style="margin-bottom:6px">Escribe una cantidad y usa "Controlar" para empezar a llevar el stock de un producto. Cada venta lo descuenta sola. "Entrada" suma mercadería; "Contar" fija el stock real; "Mín." fija el aviso de stock bajo. El código de barras se escanea directo en el campo de cada producto.</p>
-  ${[...l.menu].sort(porNombre).map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
+  ${buscaHTML('q-inv', 'Buscar producto en el inventario…')}${filtra([...l.menu].sort(porNombre), 'q-inv').map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="pr-${i.id}" data-keep type="number" inputmode="numeric" min="1" placeholder="Precio" style="width:90px" value="${S.f['pr-' + i.id] === undefined ? i.p : fv('pr-' + i.id)}"><button class="btn-line" data-act="pr_set" data-id="${i.id}">Cambiar precio</button><input id="cb-${i.id}" data-keep autocomplete="off" placeholder="Código de barras" style="width:150px" value="${S.f['cb-' + i.id] === undefined ? esc(i.cb) : fv('cb-' + i.id)}"><button class="btn-line" data-act="cb_set" data-id="${i.id}">Guardar código</button>
     <input id="sq-${i.id}" data-keep type="number" inputmode="numeric" placeholder="Cant." style="width:80px" value="${fv('sq-' + i.id)}">
     ${i.s == null ? `<button class="btn" data-act="sk_set" data-id="${i.id}">Controlar</button>` : `<button class="btn-ok" data-act="sk_add" data-id="${i.id}">+ Entrada</button><button class="btn-line" data-act="sk_set" data-id="${i.id}">Contar</button><button class="btn-line" data-act="sk_min" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="sk_off" data-id="${i.id}">Quitar</button>`}</div></div>`).join('') || '<p class="mut">Sin productos.</p>'}</div>`;
@@ -1095,7 +1099,7 @@ function cajaHTML() {
 function cartaHTML() {
   const l = L();
   return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
-    ${l.menu.map(i => `<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
+    ${buscaHTML('q-carta', 'Buscar plato o producto de la carta…')}${filtra(l.menu, 'q-carta').map(i =>`<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
       <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="opcedit" data-id="${i.id}" title="Opciones rápidas para la comanda">Opciones${i.o ? ' ✓' : ''}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
   <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b><p class="mut" style="margin:0">Aquí solo se agregan productos para la venta. Lo que compras para producirlos (mermeladas, tarros de duraznos, cremas…) va en la pestaña Inventario de producción.</p>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
@@ -1189,7 +1193,7 @@ function imprimirQR() {
 /* ---------- Acciones ---------- */
 document.addEventListener('input', e => {
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
-  if (e.target.id === 'bus-mos') render();
+  if (e.target.id === 'bus-mos' || BUSQ.includes(e.target.id)) render();
   /* si el lector no manda Enter al final, el código se toma solo cuando termina de llegar */
   if (e.target.id === 'scan-mos') { clearTimeout(scanT); const el = e.target; scanT = setTimeout(() => { const v = el.value; if (S.mos && el.isConnected && v.trim().length >= 6) { el.value = ''; escanMostrador(v); } }, 250); }
   if (e.target.id === 'nota') S.note = e.target.value;
