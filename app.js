@@ -342,20 +342,20 @@ async function inicio() {
 function loginHTML() {
   if (S.loading) return `<div class="login"><div class="card"><div class="mut">Cargando…</div></div></div>`;
   if (S.setpass) return `<div class="login"><div class="card">
-    <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Crea tu clave para entrar</div></div>
+    <div><b style="font-size:1.4rem">PROTECH <span style="color:var(--brand)">RESTO</span></b><div class="mut">Crea tu clave para entrar</div></div>
     <label class="mut">Clave nueva (mínimo 8 caracteres)<input id="np1" type="password" autocomplete="new-password"></label>
     <label class="mut">Repite la clave<input id="np2" type="password" autocomplete="new-password"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
     <button class="btn" data-act="guardarclave" ${S.busy ? 'disabled' : ''}>Guardar clave y entrar</button></div></div>`;
   if (S.olvide) return `<div class="login"><div class="card">
-    <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Crear o recuperar mi clave</div></div>
+    <div><b style="font-size:1.4rem">PROTECH <span style="color:var(--brand)">RESTO</span></b><div class="mut">Crear o recuperar mi clave</div></div>
     <label class="mut">Correo del local<input id="rmail" type="email" autocomplete="username" placeholder="local@correo.cl"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
     ${S.ok ? `<div style="color:var(--ok);font-size:.9rem">${esc(S.ok)}</div>` : ''}
     <button class="btn" data-act="enviarlink" ${S.busy ? 'disabled' : ''}>Enviarme un enlace al correo</button>
     <button class="btn-line" data-act="volverlogin">Volver</button></div></div>`;
   return `<div class="login"><div class="card">
-    <div><b style="font-size:1.4rem">PROTECH <span style="color:#0284c7">RESTO</span></b><div class="mut">Pedidos y comandas para restaurantes y cafeterías</div></div>
+    <div><b style="font-size:1.4rem">PROTECH <span style="color:var(--brand)">RESTO</span></b><div class="mut">Pedidos y comandas para restaurantes y cafeterías</div></div>
     <label class="mut">Correo del local<input id="lmail" type="email" autocomplete="username" placeholder="local@correo.cl"></label>
     <label class="mut">Clave<input id="lpass" type="password" autocomplete="current-password" placeholder="••••••••"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
@@ -383,7 +383,7 @@ function mesasHTML() {
   const tarjeta = n => {
     const a = abiertas(n), lis = a.some(c => c.estado === 'listo');
     const rv = !a.length && resDe(n);
-    return `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" ${rv ? 'style="border-color:var(--brand);background:#f0f9ff"' : ''} data-act="mesa" data-n="${n}"><b>${n > 100 ? n - 100 : n}</b>
+    return `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" ${rv ? 'style="border-color:var(--brand);background:var(--soft)"' : ''} data-act="mesa" data-n="${n}"><b>${n > 100 ? n - 100 : n}</b>
       <span>${lis ? 'Pedido listo' : a.length ? 'Ocupada · ' + money(totalMesa(n)) + (a.find(c => c.garzon) ? '<br><b>' + esc(a.find(c => c.garzon).garzon) + '</b>' : '') : rv ? 'Reservada ' + esc(rv.hora) + ' · ' + esc(rv.nombre) : 'Libre'}</span></button>`;
   };
   for (let n = 1; n <= l.mesas; n++) g += tarjeta(n);
@@ -1286,7 +1286,7 @@ function outBar() {
   if (!el) { el = document.createElement('div'); el.id = 'offbar'; el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:60;padding:8px 14px;font-weight:700;text-align:center;color:#fff;font-size:.95rem'; document.body.appendChild(el); }
   const off = navigator.onLine === false || S.sinRed;
   if (!OUT.length && !off) { el.style.display = 'none'; return; }
-  el.style.display = 'block'; el.style.background = off ? '#b45309' : '#0369a1';
+  el.style.display = 'block'; el.style.background = off ? '#b45309' : '#1c1917';
   el.textContent = off ? '📶 Sin conexión' + (OUT.length ? ' · ' + OUT.length + ' operación(es) guardada(s), se enviarán solas' : ' · puedes seguir tomando pedidos y cobrando mesas') : '⏳ Enviando ' + OUT.length + ' operación(es) pendiente(s)…';
 }
 function comandaOpt(f) { return { id: f.id, mesa: f.mesa, items: f.items, est: (f.items && f.items[0] && f.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: f.nota || '', estado: f.estado, garzon: f.garzon || '', t: f.t || Date.now(), cerrada: false }; }
