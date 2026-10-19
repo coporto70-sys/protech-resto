@@ -120,7 +120,9 @@ const cajaAbierta = () => !rolesOn() || !!D.turno;
 const consumirRecetas = pares => { (pares || []).filter(([m]) => D.recetas.some(r => r.m === m)).forEach(([m, q]) => { Promise.resolve(sb.rpc('resto_receta_consumir', { p_menu: m, p_cant: q, p_por: S.quien || '' })).catch(() => {}); }); };
 const hoyIso = () => fechaIso(new Date());
 const resDe = n => ((D && D.reservas) || []).filter(r => r.mesa === n && r.estado === 'pendiente' && r.fecha === hoyIso()).sort((a, b) => a.hora.localeCompare(b.hora))[0];
-const bajoStock = () => L().menu.filter(i => i.s != null && i.s <= i.sm);
+/* Orden alfabético (A–Z) sin distinguir mayúsculas ni tildes, y los números en orden natural. Se usa en todos los inventarios. */
+const porNombre = (a, b) => String(a.n || '').localeCompare(String(b.n || ''), 'es', { sensitivity: 'base', numeric: true });
+const bajoStock = () => L().menu.filter(i => i.s != null && i.s <= i.sm).sort(porNombre);
 const hoy = t => new Date(t).toDateString() === new Date().toDateString();
 
 /* ---------- Sonidos y avisos ---------- */
@@ -268,8 +270,9 @@ async function cargar(parcial) {
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', t: +new Date(r.created_at) })) };
+  D.insumos.sort(porNombre); D.provs.sort(porNombre); /* inventario de producción y proveedores siempre de la A a la Z */
   outLoad(); outAplicar();
-  D.anuOk = !!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
+  D.anuOk =!!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
   D.anulaciones = D.anuOk ? (anu.data || []) : [];
   D.sesiones = [];
   if (D.turno) { const ss = await sb.from('resto_sesiones').select('*').eq('turno_id', D.turno.id).order('entrada'); D.sesiones = ss.data || []; await ensureSes(); }
@@ -1054,7 +1057,7 @@ function invHTML() {
     <div style="display:flex;gap:8px"><input id="scan-inv" autocomplete="off" placeholder="Escanear código de barras…" style="flex:1"><input id="scan-q" data-keep type="number" inputmode="numeric" min="1" placeholder="Cant." style="width:80px" value="${S.f['scan-q'] === undefined ? 1 : fv('scan-q')}"></div></div>
   ${nuevo}
   <div class="card"><p class="mut" style="margin-bottom:6px">Escribe una cantidad y usa "Controlar" para empezar a llevar el stock de un producto. Cada venta lo descuenta sola. "Entrada" suma mercadería; "Contar" fija el stock real; "Mín." fija el aviso de stock bajo. El código de barras se escanea directo en el campo de cada producto.</p>
-  ${l.menu.map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
+  ${[...l.menu].sort(porNombre).map(i => `<div class="row"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${i.s == null ? 'sin control de stock' : 'stock <b>' + i.s + '</b>' + (i.sm ? ' · mínimo ' + i.sm : '')}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="pr-${i.id}" data-keep type="number" inputmode="numeric" min="1" placeholder="Precio" style="width:90px" value="${S.f['pr-' + i.id] === undefined ? i.p : fv('pr-' + i.id)}"><button class="btn-line" data-act="pr_set" data-id="${i.id}">Cambiar precio</button><input id="cb-${i.id}" data-keep autocomplete="off" placeholder="Código de barras" style="width:150px" value="${S.f['cb-' + i.id] === undefined ? esc(i.cb) : fv('cb-' + i.id)}"><button class="btn-line" data-act="cb_set" data-id="${i.id}">Guardar código</button>
     <input id="sq-${i.id}" data-keep type="number" inputmode="numeric" placeholder="Cant." style="width:80px" value="${fv('sq-' + i.id)}">
     ${i.s == null ? `<button class="btn" data-act="sk_set" data-id="${i.id}">Controlar</button>` : `<button class="btn-ok" data-act="sk_add" data-id="${i.id}">+ Entrada</button><button class="btn-line" data-act="sk_set" data-id="${i.id}">Contar</button><button class="btn-line" data-act="sk_min" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="sk_off" data-id="${i.id}">Quitar</button>`}</div></div>`).join('') || '<p class="mut">Sin productos.</p>'}</div>`;
