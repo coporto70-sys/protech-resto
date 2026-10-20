@@ -621,4 +621,43 @@ def M_(pg):
     check('M: total propinas $4.000', 'Total propinas' in t and '$4.000' in t)
 e=run({'email':'u','role':'','db':db_prop2()},M_,LS_ADM2); print('ERR M',e)
 
+def db_prop0(con_retiro=False):
+    d=db_prop(); d['resto_cuentas']=[]; n=d['resto_turnos'][0]['created_at']
+    if con_retiro: d['resto_gastos']=[{'id':'r1','local_id':'L1','turno_id':'T1','tipo':'Retiro','numero':None,'proveedor':'Retiro de efectivo','detalle':'Depósito al banco','monto':30000,'registrado_por':'Administradora','created_at':n}]
+    return d
+
+def R1(pg):
+    d=[]; pg.on('dialog',lambda x:(d.append(x.message),x.accept()))
+    nav_caja(pg)
+    t=pg.inner_text('#app')
+    check('R1: la administradora ve el formulario de retiros', 'Retiros de efectivo de la caja' in t and pg.locator('#r-monto').count()==1)
+    pg.click('[data-act="retiro"]'); pg.wait_for_timeout(300)
+    check('R1: pide monto antes de registrar el retiro', any('monto' in m for m in d) and not pg.evaluate('window.__DB.resto_gastos'))
+    pg.fill('#r-monto','30000'); pg.fill('#r-mot','Depósito al banco'); pg.click('[data-act="retiro"]'); pg.wait_for_timeout(700)
+    g=pg.evaluate('window.__DB.resto_gastos')
+    check('R1: el retiro queda registrado como movimiento de caja', len(g)==1 and g[0]['tipo']=='Retiro' and g[0]['monto']==30000 and g[0]['detalle']=='Depósito al banco')
+    t=pg.inner_text('#app')
+    check('R1: se muestra el total retirado', 'Total retirado en el turno' in t and '$30.000' in t)
+    check('R1: el efectivo esperado descuenta el retiro', 'Retiros de la administradora' in t and 'Sistema $70.000' not in t and '$70.000' in t)
+    check('R1: el retiro no aparece como gasto con boleta', 'Total gastos del turno' not in t)
+    pg.fill('#dnc-20000','60000'); pg.fill('#dnc-10000','10000'); pg.wait_for_timeout(300)
+    c=pg.inner_text('#cuadre')
+    check('R1: el cuadre avisa que la caja cuadra', '¡La caja cuadra!' in c and 'de retiros' in c)
+    pg.fill('#dnc-10000','20000'); pg.wait_for_timeout(300)
+    check('R1: el cuadre avisa si hay diferencias', 'tiene diferencias' in pg.inner_text('#cuadre'))
+e=run({'email':'u','role':'','db':db_prop0()},R1,LS_ADM2); print('ERR R1',e)
+
+def R2(pg):
+    nav_caja(pg)
+    t=pg.inner_text('#app')
+    check('R2: el cajero ve los retiros pero no puede registrarlos', 'Retiros de efectivo de la caja' in t and 'Depósito' in t and pg.locator('#r-monto').count()==0)
+e=run({'email':'u','role':'','db':db_prop0(True)},R2,LS_ANA); print('ERR R2',e)
+
+def A1(pg):
+    pg.evaluate("1"); nav_caja(pg)
+    pg.fill('#dna-20000','100000'); pg.wait_for_timeout(300)
+    t=pg.inner_text('#aper')
+    check('A1: la apertura muestra con cuánto se abre', 'Abres con $100.000' in t)
+e=run({'email':'u','role':'','db':dict(db_roles(),**{})},A1,LS_ANA); print('ERR A1',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

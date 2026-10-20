@@ -53,3 +53,9 @@ table{border-collapse:collapse}
 #toast div{pointer-events:auto;padding:14px 16px;border-radius:12px;color:#fff;font-weight:800;font-size:1.1rem;box-shadow:0 8px 24px rgba(0,0,0,.35);animation:pulso .8s ease-in-out 6}
 #toast .tk-c{background:var(--bad)}#toast .tk-l{background:var(--ok)}
 @keyframes pulso{50%{transform:scale(1.03);filter:brightness(1.25)}}
+
+.paso{display:flex;gap:10px;align-items:flex-start;margin-top:6px}
+.paso .num{flex:none;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem}
+.cuadre-b{padding:10px 12px;border-radius:10px;font-weight:700;margin-bottom:6px}
+.cuadre-b.ok{background:#dcfce7;color:var(--ok)}
+.cuadre-b.mal{background:#fee2e2;color:var(--bad)}

@@ -801,14 +801,14 @@ async function turnoCargar() {
 function turnoRes(t) {
   const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
   cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; if (c.pq) ef += c.pe; pr += c.propina + c.pe + c.pt; });
-  const gs = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul), gt = gs.reduce((a, g) => a + g.m, 0);
+  const gsT = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul), gs = gsT.filter(g => g.tipo !== 'Retiro'), rts = gsT.filter(g => g.tipo === 'Retiro'), gt = gs.reduce((a, g) => a + g.m, 0), rt = rts.reduce((a, g) => a + g.m, 0);
   /* Propinas por garzón del turno. Se pagan en efectivo desde la caja: la propina de las cuentas (10%) y la propina extra con tarjeta.
      La propina en efectivo que quedó en la caja (del vuelto) también se le paga al cerrar; la que le dieron directo en la mano (pe) ya la recibió: solo se muestra. Cada turno nuevo parte en cero. */
   const pg = {}; cu.forEach(c => { const n = c.garzon || ''; const o = pg[n] || (pg[n] = { n, c: 0, pc: 0, pt: 0, pe: 0, pq: 0, m: 0 }); o.c++; o.pc += c.propina; o.pt += c.pt; if (c.pq) o.pq += c.pe; else o.pe += c.pe; o.m += c.propina + c.pt + (c.pq ? c.pe : 0); });
   const propGar = Object.values(pg).filter(o => o.n && o.m > 0).sort((a, b) => a.n.localeCompare(b.n)), sinGar = (pg[''] || { m: 0 }).m;
   const pp = propGar.reduce((a, o) => a + o.m, 0);
   const dsc = cu.filter(c => c.desc > 0), dt = dsc.reduce((a, c) => a + c.desc, 0);
-  return { cuentas: cu.length, vt, ef, tj, tr, pr, gt, gs: gs.length, pp, propGar, sinGar, dsc, dt, esp: (t.monto_inicial || 0) + ef - gt - pp };
+  return { cuentas: cu.length, vt, ef, tj, tr, pr, gt, gs: gs.length, pp, propGar, sinGar, dsc, dt, rt, rts: rts.length, esp: (t.monto_inicial || 0) + ef - gt - rt - pp };
 }
 const hora = t => new Date(t).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 function cajerosHTML(t) {
@@ -841,10 +841,12 @@ function cuadreHTML(t) {
   const r = turnoRes(t), ec = dnTotal('c'), hayEf = DEN.some(([v]) => S.f[dnId('c', v)] !== undefined && S.f[dnId('c', v)] !== ''), tj = numF('ctarj'), tr = numF('ctrans');
   const fila = (n, esp, got, extra) => { const d = got - esp; return `<div class="row"><div>${n}<div class="mut">Sistema ${money(esp)} · contado ${money(got)}${extra || ''}</div></div><b style="color:${d === 0 ? 'var(--ok)' : 'var(--bad)'}">${d === 0 ? 'Cuadra' : (d > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(d))}</b></div>`; };
   const out = [];
-  if (hayEf) out.push(fila('Efectivo', r.esp, ec, ' · incluye ' + money(t.monto_inicial || 0) + ' de sencillo inicial' + (r.gt ? ' y descuenta ' + money(r.gt) + ' de gastos' : '') + (r.pp ? (r.gt ? ' y ' : ' y descuenta ') + money(r.pp) + ' de propinas pagadas' : '')));
+  if (hayEf) out.push(fila('Efectivo', r.esp, ec, ' · incluye ' + money(t.monto_inicial || 0) + ' de sencillo inicial' + [r.gt ? money(r.gt) + ' de gastos' : '', r.rt ? money(r.rt) + ' de retiros' : '', r.pp ? money(r.pp) + ' de propinas pagadas' : ''].filter(Boolean).reduce((a, x, i, arr) => a + (i === 0 ? ' y descuenta ' : i === arr.length - 1 ? ' y ' : ', ') + x, '')));
   if (tj !== null) out.push(fila('Tarjetas', r.tj, tj));
   if (tr !== null) out.push(fila('Transferencias', r.tr, tr));
-  return (out.join('') || '<p class="mut">Escribe lo que contaste para ver si la caja cuadra.</p>') + retiroHTML();
+  const dif = (hayEf ? ec - r.esp : 0) + (tj !== null ? tj - r.tj : 0) + (tr !== null ? tr - r.tr : 0), mal = (hayEf && ec !== r.esp) || (tj !== null && tj !== r.tj) || (tr !== null && tr !== r.tr);
+  const banner = out.length ? `<div class="cuadre-b ${mal ? 'mal' : 'ok'}">${mal ? '⚠️ La caja tiene diferencias. Revisa lo contado o escribe una observación.' : '✅ ¡La caja cuadra!'}</div>` : '';
+  return banner + (out.join('') || '<p class="mut">Escribe lo que contaste para ver si la caja cuadra.</p>') + retiroHTML();
 }
 /* Sencillo fijo: lo que siempre debe quedar en caja. Lo demás del efectivo contado es efectivo de ventas y se retira. */
 function retiroHTML() {
@@ -857,18 +859,33 @@ function retiroHTML() {
 function dnActualiza() {
   ['a', 'c', 'd'].forEach(p => { DEN.forEach(([v]) => { const el = document.getElementById(dnId(p, v) + '-s'); if (el) { const x = dnSub(p, v); el.textContent = x.t; el.style.color = x.bad ? 'var(--bad)' : ''; } }); const t = document.getElementById('dnt-' + p); if (t) t.textContent = money(dnTotal(p)); });
   const c = document.getElementById('cuadre'); if (c && D && D.turno) c.innerHTML = cuadreHTML(D.turno);
+  const ap = document.getElementById('aper'); if (ap) ap.innerHTML = aperturaChk();
+}
+function aperturaChk() {
+  const a = dnTotal('a'), f = D.fondo || 0; if (!a) return '';
+  if (!f) return `<div class="cuadre-b ok">Abres con ${money(a)}</div>`;
+  const d = a - f; return d === 0 ? `<div class="cuadre-b ok">✅ Coincide con el sencillo fijo (${money(f)})</div>` : `<div class="cuadre-b mal">⚠️ ${d > 0 ? 'Sobran ' : 'Faltan '}${money(Math.abs(d))} respecto del sencillo fijo (${money(f)})</div>`;
 }
 function abrirCajaHTML() {
-  return `<div class="card" style="display:grid;gap:8px"><b>Abrir caja</b>${D.fondo ? `<p class="mut">Sencillo fijo de la caja: <b>${money(D.fondo)}</b>. Debe ser lo que recibes.</p>` : ''}<p class="mut">Cuenta el sencillo con el que recibes la caja y escribe en pesos cuánto hay de cada tipo. Ejemplo: si hay 4 billetes de $20.000, escribe 80000.</p>${contadorHTML('a')}<button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
+  return `<div class="card" style="display:grid;gap:10px"><b style="font-size:1.1rem">Abrir caja</b>
+    <div class="paso"><span class="num">1</span><div><b>Cuenta el sencillo con el que recibes la caja</b><p class="mut" style="margin:2px 0 0">Escribe en pesos cuánto hay de cada tipo. Ejemplo: 4 billetes de $20.000 = 80000.${D.fondo ? ' Debes recibir <b>' + money(D.fondo) + '</b>.' : ''}</p></div></div>
+    ${contadorHTML('a')}<div id="aper">${aperturaChk()}</div>
+    <div class="paso"><span class="num">2</span><div><b>Abre la caja</b><p class="mut" style="margin:2px 0 0">Desde aquí se cuentan las ventas, los gastos y los retiros del turno.</p></div></div>
+    <button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
 }
 function cerrarCajaHTML(t) {
-  return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cerrar caja (cuadre del día)</b>
-    <p class="mut">1) Cuenta el efectivo y escribe en pesos cuánto hay de cada billete y moneda (ej.: 4 billetes de $20.000 = 80000). 2) Escribe el total de tarjetas según el terminal y lo recibido por transferencia. Abajo verás si cuadra con lo vendido.</p>
-    <b>Efectivo contado</b>${contadorHTML('c')}
+  const r = turnoRes(t);
+  return `<div class="card" style="margin-top:12px;display:grid;gap:10px"><b style="font-size:1.1rem">Cerrar caja (cuadre del día)</b>
+    <div class="paso"><span class="num">1</span><div><b>Entrega las propinas</b><p class="mut" style="margin:2px 0 0">${r.pp ? 'Paga ' + money(r.pp) + ' en efectivo a los garzones (detalle arriba) antes de contar.' : 'No hay propinas por pagar en este turno.'}</p></div></div>
+    <div class="paso"><span class="num">2</span><div><b>Efectivo contado</b><p class="mut" style="margin:2px 0 0">Escribe en pesos cuánto hay de cada billete y moneda (ej.: 4 billetes de $20.000 = 80000). Debe haber <b>${money(r.esp)}</b>.</p></div></div>
+    ${contadorHTML('c')}
+    <div class="paso"><span class="num">3</span><div><b>Tarjetas y transferencias</b><p class="mut" style="margin:2px 0 0">Anota el total del terminal de tarjetas y lo recibido por transferencia (0 si no hubo).</p></div></div>
     <label class="mut">Tarjetas: total según el terminal<input id="ctarj" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctarj')}"></label>
     <label class="mut">Transferencias recibidas<input id="ctrans" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctrans')}"></label>
-    <b>Sencillo que queda en caja${D.fondo ? ' (debe ser ' + money(D.fondo) + ')' : ''}</b><p class="mut" style="margin:0">Separa el sencillo para vueltos y escribe en pesos qué billetes y monedas dejas en la caja. El resto del efectivo es de ventas y se retira.</p>${contadorHTML('d')}
-    <div class="card" style="background:#f8fafc;padding:10px"><b>Cuadre con lo vendido</b><div id="cuadre">${cuadreHTML(t)}</div></div>
+    <div class="paso"><span class="num">4</span><div><b>Sencillo que queda en caja${D.fondo ? ' (debe ser ' + money(D.fondo) + ')' : ''}</b><p class="mut" style="margin:2px 0 0">Separa el sencillo para vueltos y escribe qué billetes y monedas dejas. El resto del efectivo es de ventas y se retira.</p></div></div>
+    ${contadorHTML('d')}
+    <div class="paso"><span class="num">5</span><div><b>Cuadre con lo vendido</b></div></div>
+    <div class="card" style="background:#f8fafc;padding:10px"><div id="cuadre">${cuadreHTML(t)}</div></div>
     <input id="tnota" data-keep placeholder="Observación (obligatoria si hay diferencia)" value="${fv('tnota')}"><button class="btn-bad" data-act="tcerrar">Cerrar caja</button></div>`;
 }
 /* ---------- Sencillo fijo y gastos pagados desde caja ---------- */
@@ -911,7 +928,7 @@ function propinasHTML(t) {
     ${r.sinGar ? `<p class="mut" style="margin:6px 0 0">Propinas de ventas sin garzón asignado (mostrador de la administradora): ${money(r.sinGar)}. No se pagan a ningún garzón.</p>` : ''}</div>`;
 }
 function gastosHTML(t) {
-  const todos = (D.gastos || []).filter(g => g.turno_id === t.id), gs = todos.filter(g => !g.anul), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
+  const todos = (D.gastos || []).filter(g => g.turno_id === t.id && g.tipo !== 'Retiro'), gs = todos.filter(g => !g.anul), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
   return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Gastos pagados desde caja</b>
     <p class="mut" style="margin:0">Cada vez que salga dinero de la caja para pagar algo, anótalo aquí con el número de boleta o factura. Se descuenta del efectivo que debe haber y queda registrado. Si hay un error en el monto, la administradora puede corregirlo (queda el monto original) o anularlo.</p>
     <label class="mut">Documento<select id="g-tipo" data-keep>${GTIPOS.map(x => `<option ${x === tipo ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -921,6 +938,15 @@ function gastosHTML(t) {
     <input id="g-monto" data-keep type="number" inputmode="numeric" min="1" placeholder="Monto que salió de la caja ($)" value="${fv('g-monto')}">
     <button class="btn-ok" data-act="gasto">Registrar gasto</button>
     ${todos.length ? todos.map(g => gastoFila(g, true)).join('') + `<div class="total"><span>Total gastos del turno</span><span>${money(tot)}</span></div>` : '<p class="mut" style="margin:0">Aún no hay gastos en este turno.</p>'}</div>`;
+}
+/* Retiros: la administradora saca efectivo de la caja durante el turno (depósito, pago personal, etc.). Se guardan como movimiento de caja tipo "Retiro" y se descuentan del efectivo esperado. */
+function retirosHTML(t) {
+  const lista = (D.gastos || []).filter(g => g.turno_id === t.id && g.tipo === 'Retiro'), tot = lista.filter(g => !g.anul).reduce((a, g) => a + g.m, 0);
+  if (!esAdm() && !lista.length) return '';
+  return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Retiros de efectivo de la caja</b>
+    <p class="mut" style="margin:0">${esAdm() ? 'Cuando saques dinero de la caja (para depositar, guardar o uso personal), anótalo aquí. Se descuenta del efectivo que debe haber, así la caja sigue cuadrando.' : 'Dinero que la administradora sacó de la caja. Ya está descontado del efectivo que debe haber.'}</p>
+    ${esAdm() ? `<input id="r-monto" data-keep type="number" inputmode="numeric" min="1" placeholder="Monto retirado ($)" value="${fv('r-monto')}"><input id="r-mot" data-keep autocomplete="off" placeholder="Motivo o destino (ej.: depósito al banco)" value="${fv('r-mot')}"><button class="btn-ok" data-act="retiro">Registrar retiro</button>` : ''}
+    ${lista.length ? lista.map(g => gastoFila(g, true).replace(/Retiro de efectivo/, 'Retiro')).join('') + `<div class="total"><span>Total retirado en el turno</span><span>${money(tot)}</span></div>` : '<p class="mut" style="margin:0">Aún no hay retiros en este turno.</p>'}</div>`;
 }
 function gastosHistHTML() {
   const g = (D.gastos || []).slice(0, 60);
@@ -933,7 +959,7 @@ function turnoCajeroHTML() {
   const mis = D.cuentas.filter(c => c.turno_id === t.id && (c.cobrado_por || '') === S.quien);
   return `<h2>Caja · ${esc(S.quien)}</h2>
   <div class="card"><b>Mis cobros de este turno</b>${mis.map(c => `<div class="row"><div>${nm(c.mesa)}<div class="mut">${hora(c.t)} · ${esc(c.metodo)}</div></div><b>${money(c.total + c.propina + c.pt)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no has cobrado en este turno.</p>'}
-  ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${gastosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}`;
+  ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${gastosHTML(t)}${retirosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}`;
 }
 function turnoHTML() {
   if (!esAdm()) return turnoCajeroHTML();
@@ -946,10 +972,10 @@ function turnoHTML() {
   return `<h2>Caja · turno abierto</h2>${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
   <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
-    ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}${r.pp ? `<div class="row"><span>Propinas pagadas a garzones</span><b>−${money(r.pp)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta los gastos. No incluye la propina en efectivo entregada directo al garzón.</p></div>
+    ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}${r.rt ? `<div class="row"><span>Retiros de la administradora</span><b>−${money(r.rt)}</b></div>` : ''}${r.pp ? `<div class="row"><span>Propinas pagadas a garzones</span><b>−${money(r.pp)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta gastos, retiros y propinas pagadas. No incluye la propina en efectivo entregada directo al garzón.</p></div>
   ${cobrosHTML(t)}
   <div class="card" style="margin-top:12px"><b>Quién estuvo en caja</b>${cajerosHTML(t)}</div>
-  ${gastosHTML(t)}${descuentosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
+  ${gastosHTML(t)}${retirosHTML(t)}${descuentosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
   <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
 }
 /* ---------- Inventario de producción: lo que se compra para producir (mermeladas, tarros de duraznos, cremas…). Aparte de la carta. ---------- */
@@ -1424,7 +1450,7 @@ document.addEventListener('click', async e => {
   const a = b.dataset.act, d = b.dataset;
   if (['mostrador', 'mospagar'].includes(a) && !puedeCobrar()) { alert('La venta por mostrador la cobra la administradora o un garzón autorizado con PIN.'); return; }
   if (a.startsWith('ins') && ['insadd', 'inscompra', 'insuso', 'insmerma', 'inscont', 'insmin', 'insoff'].includes(a) && !esAdm()) { alert('El inventario de producción lo maneja la administradora.'); return; }
-  if (['tabrir', 'tcerrar', 'gasto'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado con PIN puede abrir y cerrar la caja.'); return; }
+  if (['tabrir', 'tcerrar', 'gasto', 'retiro'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado con PIN puede abrir y cerrar la caja.'); return; }
   if (['cobrarmesa', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && !puedeCobrarMesa()) { alert('Solo la administradora o los garzones pueden cobrar mesas.'); return; }
   if (a === 'mesa' && !puedeVerMesa(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede tomar pedidos en esta mesa.'); return; }
   if (a === 'cobrarmesa' && !puedeCobrarEsta(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede cobrarla.'); return; }
@@ -1885,6 +1911,17 @@ document.addEventListener('click', async e => {
           if (!fallo(r)) { ['g-tipo', 'g-num', 'g-prov', 'g-det', 'g-monto'].forEach(k => delete S.f[k]); toast('Gasto registrado · ' + money(m), 'tk-l'); }
         }
       }
+      else if (a === 'retiro' && D.turno) {
+        const m = Math.round(+S.f['r-monto']), mot = (S.f['r-mot'] || '').trim();
+        if (!esAdm()) alert('Solo la administradora puede registrar retiros de la caja.');
+        else if (!(m > 0)) alert('Escribe el monto que retiraste de la caja.');
+        else if (!mot) alert('Escribe el motivo o destino del retiro.');
+        else if (m > Math.max(0, turnoRes(D.turno).esp) && !confirm('El retiro (' + money(m) + ') es mayor que el efectivo que debe haber en caja (' + money(Math.max(0, turnoRes(D.turno).esp)) + '). ¿Registrarlo igual?')) { /* cancelado */ }
+        else if (confirm('¿Registrar retiro de ' + money(m) + ' de la caja (' + mot + ')? Se descuenta del efectivo esperado.')) {
+          const r = await sb.from('resto_gastos').insert({ local_id: D.id, turno_id: D.turno.id, tipo: 'Retiro', numero: null, proveedor: 'Retiro de efectivo', detalle: mot, monto: m, registrado_por: S.quien || 'Administradora' });
+          if (!fallo(r)) { ['r-monto', 'r-mot'].forEach(k => delete S.f[k]); toast('Retiro registrado · ' + money(m), 'tk-l'); }
+        }
+      }
       else if (a === 'tcerrar' && D.turno) {
         const t = D.turno, r = turnoRes(t), open = D.comandas.filter(x => !x.cerrada).length;
         const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim(), mal = dnBad('c').concat(dnBad('d')), dj = dnTotal('d'), fondo = D.fondo || 0, retiro = ec - dj;
@@ -1900,7 +1937,7 @@ document.addEventListener('click', async e => {
           const base = { cerrado_at: new Date().toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: ec, diferencia: dEf, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas };
           const des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr }, deja = dnObj('d'), pagoProp = r.propGar.map(o => ({ n: o.n, m: o.m, c: o.c }));
           let u = await sb.from('resto_turnos').update({ ...base, nota: nota || null, desglose_cierre: des, desglose_deja: deja, retiro_efectivo: retiro, gastos_total: r.gt, propinas_pagadas: r.pp, pago_propinas: pagoProp }).eq('id', t.id);
-          if (u.error && /desglose|retiro_efectivo|gastos_total|propinas_pagadas|pago_propinas/i.test(u.error.message || '')) u = await sb.from('resto_turnos').update({ ...base, nota: [t.nota, nota, 'Cierre: ' + (dnTxt(des.efectivo) || 'sin efectivo') + ' · tarjetas ' + money(tj) + ' · transferencias ' + money(tr), 'Quedó en caja: ' + (dnTxt(deja) || 'nada') + ' · efectivo de ventas retirado ' + money(retiro) + (r.gt ? ' · gastos ' + money(r.gt) : ''), r.pp ? 'Propinas pagadas: ' + pagoProp.map(x => x.n + ' ' + money(x.m)).join(', ') : ''].filter(Boolean).join(' | ') }).eq('id', t.id);
+          if (u.error && /desglose|retiro_efectivo|gastos_total|propinas_pagadas|pago_propinas/i.test(u.error.message || '')) u = await sb.from('resto_turnos').update({ ...base, nota: [t.nota, nota, 'Cierre: ' + (dnTxt(des.efectivo) || 'sin efectivo') + ' · tarjetas ' + money(tj) + ' · transferencias ' + money(tr), 'Quedó en caja: ' + (dnTxt(deja) || 'nada') + ' · efectivo de ventas retirado ' + money(retiro) + (r.gt ? ' · gastos ' + money(r.gt) : '') + (r.rt ? ' · retiros ' + money(r.rt) : ''), r.pp ? 'Propinas pagadas: ' + pagoProp.map(x => x.n + ' ' + money(x.m)).join(', ') : ''].filter(Boolean).join(' | ') }).eq('id', t.id);
           if (!fallo(u)) { await sb.from('resto_sesiones').update({ salida: new Date().toISOString() }).eq('turno_id', t.id).is('salida', null); S.ses = null; S.f = {}; S.th = null; }
         }
       }
