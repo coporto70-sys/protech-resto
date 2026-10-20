@@ -281,6 +281,26 @@ def K4(pg):
     check('K4: se ve tachado con el motivo y ya no suma', 'Anulado por Administradora: Se pagó dos veces' in t and 'Total gastos del turno' not in t.split('Anulado por')[0][-5:] and pg.locator('[data-act="ganular"]').count()==0)
 e=run({'email':'u','role':'','db':db_gasto()},K4,LS_ADM2); print('ERR K4',e)
 
+def db_gasto_mal():
+    d=db_gasto(); d['resto_gastos'][0]['monto']=1000000; return d
+def K5(pg):
+    pg.on('dialog',lambda x:x.accept('100.000' if 'Monto correcto' in x.message else 'Error al digitar el monto') if x.type=='prompt' else x.accept())
+    nav_caja(pg)
+    check('K5: la administradora ve el botón Corregir monto', pg.locator('[data-act="geditar"]').count()==1 and '$1.000.000' in pg.inner_text('#app'))
+    pg.click('[data-act="geditar"]'); pg.wait_for_timeout(700)
+    g=pg.evaluate('window.__DB.resto_gastos[0]')
+    check('K5: el monto queda corregido con quién y por qué', g['monto']==100000 and g.get('editado_motivo')=='Error al digitar el monto' and g.get('editado_por')=='Administradora' and not g.get('anulado'))
+    pg.evaluate("window.__DB.resto_gastos[0].monto_original=1000000")  # lo hace el trigger de la base real
+    pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(400)
+    t=pg.inner_text('#app')
+    check('K5: se ve el monto nuevo y el original', 'Corregido por Administradora: era $1.000.000' in t and '$100.000' in t)
+e=run({'email':'u','role':'','db':db_gasto_mal()},K5,LS_ADM2); print('ERR K5',e)
+
+def K6(pg):
+    nav_caja(pg)
+    check('K6: el cajero no ve Corregir monto', pg.locator('[data-act="geditar"]').count()==0)
+e=run({'email':'u','role':'','db':db_gasto_mal()},K6,LS_ANA); print('ERR K6',e)
+
 
 def db_prop():
     d=db_roles(); n=(__import__('datetime').datetime.utcnow()-__import__('datetime').timedelta(minutes=5)).isoformat()+'Z'
