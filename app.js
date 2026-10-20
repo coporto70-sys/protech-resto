@@ -269,7 +269,7 @@ async function cargar(parcial) {
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
-    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', t: +new Date(r.created_at) })) };
+    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
   D.insumos.sort(porNombre); D.provs.sort(porNombre); /* inventario de producción y proveedores siempre de la A a la Z */
   outLoad(); outAplicar();
   D.anuOk =!!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
@@ -822,6 +822,14 @@ function gastoFila(g, editable) {
   const btn = !editable || g.anul ? '' : esAdm() ? `<button class="btn-line" data-act="geditar" data-id="${g.id}">Corregir monto</button> <button class="btn-bad" data-act="ganular" data-id="${g.id}">Anular</button>` : g.pedMot ? '' : `<button class="btn-line" data-act="gpedir" data-id="${g.id}">Pedir anulación</button>`;
   return `<div class="row"><div>${doc}<div class="mut">${sub}</div>${extra}</div><div style="text-align:right"><b style="${g.anul ? 'text-decoration:line-through;color:var(--mut)' : ''}">${money(g.m)}</b>${btn ? '<div style="margin-top:4px">' + btn + '</div>' : ''}</div></div>`;
 }
+/* Cobros del turno: la administradora puede corregir la forma de pago si el cajero se equivocó (queda el original y el motivo) */
+const METODOS = ['Efectivo', 'Tarjeta', 'Transferencia'];
+function cobrosHTML(t) {
+  if (!esAdm()) return '';
+  const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)).sort((a, b) => b.t - a.t);
+  return `<div class="card" style="margin-top:12px"><b>Cobros del turno</b><p class="mut" style="margin:4px 0 8px">Si se cobró con una forma de pago equivocada (por ejemplo, se anotó tarjeta y fue efectivo), corrígela aquí. El cuadre de caja se recalcula y el cambio queda registrado.</p>
+    ${cu.map(c => `<div class="row"><div><b>${esc(c.mesa > 0 ? nm(c.mesa) : 'Mostrador')}</b> · ${esc(c.metodo)}<div class="mut">${hora(c.t)} · ${esc(c.cobrado_por || c.garzon || '')}${c.pt ? ' · incluye propina extra con tarjeta ' + money(c.pt) : ''}</div>${c.mOrig && c.mOrig !== c.metodo ? `<div class="mut" style="color:var(--warn)">Corregido por ${esc(c.mPor || 'la administradora')}: era ${esc(c.mOrig)} · ${esc(c.mMot)}</div>` : ''}</div><div style="text-align:right"><b>${money(c.total + c.propina + c.pt)}</b><div style="margin-top:4px"><button class="btn-line" data-act="cmetodo" data-id="${c.id}">Corregir forma de pago</button></div></div></div>`).join('') || '<p class="mut" style="margin:0">Aún no hay cobros en este turno.</p>'}</div>`;
+}
 function descuentosHTML(t) {
   const r = turnoRes(t); if (!r.dsc.length) return '';
   return `<div class="card" style="margin-top:12px"><b>Descuentos y cortesías del turno</b> <span class="mut">· total ${money(r.dt)}</span>
@@ -872,6 +880,7 @@ function turnoHTML() {
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
   <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
     ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}${r.pp ? `<div class="row"><span>Propinas pagadas a garzones</span><b>−${money(r.pp)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta los gastos. No incluye la propina en efectivo entregada directo al garzón.</p></div>
+  ${cobrosHTML(t)}
   <div class="card" style="margin-top:12px"><b>Quién estuvo en caja</b>${cajerosHTML(t)}</div>
   ${gastosHTML(t)}${descuentosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
   <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
@@ -881,9 +890,9 @@ const UNIDADES = [['un', 'unidades'], ['kg', 'kilos'], ['g', 'gramos'], ['lt', '
 const unTxt = u => (UNIDADES.find(x => x[0] === u) || [0, u])[1];
 const fmtQ = n => (Math.round(n * 100) / 100).toLocaleString('es-CL');
 /* ---------- Registro de cambios (quién cambió qué y cuándo) ---------- */
-const BIT_TABLA = { resto_menu: 'Carta', resto_garzones: 'Garzón', resto_cocineras: 'Cocinera', resto_locales: 'Local', resto_insumos: 'Inventario de producción', resto_turnos: 'Caja', resto_gastos: 'Gasto de caja' };
+const BIT_TABLA = { resto_menu: 'Carta', resto_garzones: 'Garzón', resto_cocineras: 'Cocinera', resto_locales: 'Local', resto_insumos: 'Inventario de producción', resto_turnos: 'Caja', resto_gastos: 'Gasto de caja', resto_cuentas: 'Cobro' };
 const BIT_ACC = { INSERT: 'agregó', UPDATE: 'cambió', DELETE: 'eliminó' };
-const BIT_CAMPO = { nombre: 'nombre', categoria: 'sección', precio: 'precio', activo: 'activo', estacion: 'se prepara en', codigo: 'código', stock_min: 'mínimo', mesas: 'mesas (piso 1)', mesas2: 'mesas (piso 2)', fondo_caja: 'sencillo fijo', qr_activo: 'pedido por QR', pin: 'PIN', caja: 'cobra en caja', unidad: 'unidad', costo_unit: 'costo unitario', monto: 'monto', monto_original: 'monto original', editado_por: 'corregido por', editado_at: 'corregido', editado_motivo: 'motivo de la corrección', anulado: 'anulado', anulado_por: 'anulado por', anulado_motivo: 'motivo', anul_pedida_por: 'anulación pedida por', anul_pedida_motivo: 'motivo pedido', tipo: 'documento', numero: 'número', proveedor: 'proveedor', detalle: 'detalle', cerrado_at: 'cerrado', cerrado_por: 'cerrado por', abierto_por: 'abierto por', monto_inicial: 'sencillo inicial', contado_efectivo: 'efectivo contado', diferencia: 'diferencia', esperado_efectivo: 'efectivo esperado' };
+const BIT_CAMPO = { nombre: 'nombre', categoria: 'sección', precio: 'precio', activo: 'activo', estacion: 'se prepara en', codigo: 'código', stock_min: 'mínimo', mesas: 'mesas (piso 1)', mesas2: 'mesas (piso 2)', fondo_caja: 'sencillo fijo', qr_activo: 'pedido por QR', pin: 'PIN', caja: 'cobra en caja', unidad: 'unidad', costo_unit: 'costo unitario', monto: 'monto', monto_original: 'monto original', metodo: 'forma de pago', metodo_original: 'forma de pago original', metodo_editado_por: 'corregido por', metodo_editado_motivo: 'motivo de la corrección', metodo_editado_at: 'corregido', propina_tarj: 'propina extra tarjeta', editado_por: 'corregido por', editado_at: 'corregido', editado_motivo: 'motivo de la corrección', anulado: 'anulado', anulado_por: 'anulado por', anulado_motivo: 'motivo', anul_pedida_por: 'anulación pedida por', anul_pedida_motivo: 'motivo pedido', tipo: 'documento', numero: 'número', proveedor: 'proveedor', detalle: 'detalle', cerrado_at: 'cerrado', cerrado_por: 'cerrado por', abierto_por: 'abierto por', monto_inicial: 'sencillo inicial', contado_efectivo: 'efectivo contado', diferencia: 'diferencia', esperado_efectivo: 'efectivo esperado' };
 const bitVal = (k, v) => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v ? 'sí' : 'no') : ['precio', 'monto', 'monto_original', 'fondo_caja', 'monto_inicial', 'contado_efectivo', 'diferencia', 'esperado_efectivo', 'costo_unit'].includes(k) && typeof v === 'number' ? money(v) : String(v).length > 60 ? String(v).slice(0, 60) + '…' : String(v);
 async function cargarBit() {
   S.bitCarg = true;
@@ -1765,6 +1774,19 @@ document.addEventListener('click', async e => {
         const g = (D.gastos || []).find(x => x.id === d.id && x.turno_id === D.turno.id && !x.anul);
         const mot = g ? (prompt('Motivo de la anulación del gasto ' + g.tipo + (g.num ? ' N° ' + g.num : '') + ' por ' + money(g.m) + ' (queda registrado):', g.pedMot || '') || '').trim() : '';
         if (g && mot) { if (!fallo(await sb.from('resto_gastos').update({ anulado: true, anulado_por: S.quien || 'Administradora', anulado_at: new Date().toISOString(), anulado_motivo: mot }).eq('id', g.id))) toast('Gasto anulado · el registro se conserva', 'tk-l'); }
+      }
+      else if (a === 'cmetodo' && esAdm() && D.turno) {
+        const c = D.cuentas.find(x => x.id === d.id && x.t >= +new Date(D.turno.abierto_at));
+        const sug = c ? (c.metodo === 'Tarjeta' ? 'Efectivo' : 'Tarjeta') : '';
+        const raw = c ? prompt('Forma de pago correcta de ' + (c.mesa > 0 ? nm(c.mesa) : 'Mostrador') + ' (' + money(c.total + c.propina + c.pt) + '). Hoy figura ' + c.metodo + '. Escribe Efectivo, Tarjeta o Transferencia:', sug) : null;
+        const x = String(raw || '').trim().toLowerCase(), nuevo = /^e/.test(x) ? 'Efectivo' : /^tar|^tj/.test(x) ? 'Tarjeta' : /^tr/.test(x) ? 'Transferencia' : '';
+        if (c && raw !== null && !nuevo) alert('Escribe Efectivo, Tarjeta o Transferencia.');
+        else if (c && nuevo === c.metodo) alert('Ese cobro ya figura como ' + c.metodo + '.');
+        else if (c && nuevo && c.pt && nuevo !== 'Tarjeta' && !confirm('Este cobro incluía ' + money(c.pt) + ' de propina extra con tarjeta. Al pasarlo a ' + nuevo + ' esa propina extra se quita. ¿Continuar?')) { /* cancelado */ }
+        else if (c && nuevo) {
+          const mot = (prompt('Motivo de la corrección de ' + c.metodo + ' a ' + nuevo + ' (queda registrado):', 'Se registró con la forma de pago equivocada') || '').trim();
+          if (mot && !fallo(await sb.from('resto_cuentas').update({ metodo: nuevo, ...(nuevo !== 'Tarjeta' && c.pt ? { propina_tarj: 0 } : {}), metodo_editado_por: S.quien || 'Administradora', metodo_editado_motivo: mot }).eq('id', c.id))) toast('Cobro corregido · ' + c.metodo + ' → ' + nuevo, 'tk-l');
+        }
       }
       else if (a === 'geditar' && esAdm() && D.turno) {
         const g = (D.gastos || []).find(x => x.id === d.id && x.turno_id === D.turno.id && !x.anul);

@@ -302,6 +302,30 @@ def K6(pg):
 e=run({'email':'u','role':'','db':db_gasto_mal()},K6,LS_ANA); print('ERR K6',e)
 
 
+def db_cobro_mal():
+    d=db_gasto(); n=(__import__('datetime').datetime.utcnow()-__import__('datetime').timedelta(minutes=2)).isoformat()+'Z'
+    d['resto_gastos']=[]
+    d['resto_cuentas']=[{'id':'C1','local_id':'L1','mesa':3,'total':20000,'propina':2000,'propina_efec':0,'propina_tarj':0,'metodo':'Tarjeta','garzon':'Ana','items':[],'turno_id':'T1','cobrado_por':'Ana','created_at':n}]
+    return d
+def K7(pg):
+    pg.on('dialog',lambda x:x.accept('Efectivo' if 'Forma de pago correcta' in x.message else 'Garzona marcó tarjeta y pagaron en efectivo') if x.type=='prompt' else x.accept())
+    nav_caja(pg)
+    check('K7: la administradora ve el cobro y el botón Corregir forma de pago', pg.locator('[data-act="cmetodo"]').count()==1 and 'Cobros del turno' in pg.inner_text('#app'))
+    pg.click('[data-act="cmetodo"]'); pg.wait_for_timeout(700)
+    c=pg.evaluate('window.__DB.resto_cuentas[0]')
+    check('K7: el cobro pasa a Efectivo con quién y por qué', c['metodo']=='Efectivo' and c.get('metodo_editado_motivo')=='Garzona marcó tarjeta y pagaron en efectivo' and c.get('metodo_editado_por')=='Administradora' and c['total']==20000)
+    pg.evaluate("window.__DB.resto_cuentas[0].metodo_original='Tarjeta'")  # lo hace el trigger de la base real
+    pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(400)
+    t=pg.inner_text('#app')
+    check('K7: se ve la corrección y el efectivo esperado sube', 'Corregido por Administradora: era Tarjeta' in t and '$120.000' in t)
+e=run({'email':'u','role':'','db':db_cobro_mal()},K7,LS_ADM2); print('ERR K7',e)
+
+def K8(pg):
+    nav_caja(pg)
+    check('K8: el cajero no ve Corregir forma de pago', pg.locator('[data-act="cmetodo"]').count()==0)
+e=run({'email':'u','role':'','db':db_cobro_mal()},K8,LS_ANA); print('ERR K8',e)
+
+
 def db_prop():
     d=db_roles(); n=(__import__('datetime').datetime.utcnow()-__import__('datetime').timedelta(minutes=5)).isoformat()+'Z'
     d['resto_turnos']=[{'id':'T1','local_id':'L1','abierto_por':'Ana','monto_inicial':100000,'abierto_at':n,'created_at':n}]
