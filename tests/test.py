@@ -605,4 +605,20 @@ def T1(pg):
     check('T1: descarga el respaldo sin PIN', dl2.value.suggested_filename.startswith('respaldo_') and 'admin_pin' not in open(dl2.value.path()).read())
 e=run({'email':'u','role':'','db':db_s()},T1); print('ERR T1',e)
 
+def db_prop2():
+    d=db_prop()
+    n=d['resto_cuentas'][0]['created_at']
+    def c(i,mesa,tot,pro,pe,pt,met,g,pq): return {'id':i,'local_id':'L1','mesa':mesa,'total':tot,'propina':pro,'propina_efec':pe,'propina_tarj':pt,'propina_efec_caja':pq,'metodo':met,'garzon':g,'items':[],'turno_id':'T1','cobrado_por':'Ana','created_at':n}
+    d['resto_cuentas']=[c('p1',1,20000,2000,0,500,'Tarjeta','Ana',False),c('p2',2,10000,1000,300,0,'Efectivo','Luis',True),c('p3',3,5000,0,200,0,'Efectivo','Luis',False)]
+    return d
+def M_(pg):
+    pg.click('[data-act="tab"][data-v="garz"]'); pg.wait_for_timeout(800)
+    t=pg.inner_text('#app')
+    check('M: Garzones separa tarjeta, efectivo en caja y directo en mano', 'Propinas por garzón' in t and '💳' in t and '💵' in t and '🤝' in t)
+    check('M: Ana recibe $2.500 por tarjeta', 'Tarjeta o transferencia $2.500' in t)
+    check('M: Luis tiene $1.300 en caja y $200 directo', 'Efectivo en caja $1.300' in t and 'Directo en mano $200' in t)
+    check('M: total a pagar desde la caja = $3.800', 'Total a pagar desde la caja' in t and '$3.800' in t)
+    check('M: total propinas $4.000', 'Total propinas' in t and '$4.000' in t)
+e=run({'email':'u','role':'','db':db_prop2()},M_,LS_ADM2); print('ERR M',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

@@ -12,3 +12,4 @@ Para saber cuál falta: la tabla `resto_migraciones` (desde la 015) lista las ap
 - 020_gastos_editar.sql: la administradora puede corregir el monto de un gasto de caja del turno abierto (motivo obligatorio, queda el monto original y el registro de cambios).
 - 021_cuentas_metodo.sql: la administradora puede corregir la forma de pago de un cobro del turno abierto (p. ej. tarjeta → efectivo), con motivo obligatorio; queda el método original y el registro de cambios.
 - 022_push.sql: avisos push a la administradora (anulación de producto, anulación de gasto, descuentos). Requiere publicar la función Edge resto-push (supabase/functions/resto-push) con la verificación de JWT desactivada.
+- 023_propina_caja.sql: la propina en efectivo puede quedar en la caja (del vuelto) y se paga al cerrar, o ir directo al garzón; el informe de Garzones separa tarjeta, efectivo en caja y directo en mano.

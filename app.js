@@ -16,6 +16,10 @@ const mins = t => Math.max(0, Math.round((Date.now() - t) / 60000));
 let D = null; // datos del local: {id,name,mesas,menu,comandas,cuentas}
 let S = { garzon: '', rp: null, rpd: null, rph: null, user: null, loading: true, view: 'mesas', mesa: null, cart: {}, note: '', cerrando: false, parcial: false, sel: {}, propina: true, metodo: 'Efectivo', err: '', ok: '', busy: false, setpass: false, olvide: false, admin: false, rol: null, quien: '', f: {}, np: null, th: null, mos: false, ses: null, back: null, qk: null, rc: '', pinErr: '', av: { locales: [], cargado: false, msg: '', err: '' }, af: { nombre: '', mesas: '6', email: '' } };
 const L = () => D;
+/* Si la base todavía no tiene la columna propina_efec_caja (falta la migración 023), el cobro se guarda igual sin ella */
+const sinColPq = c => { const { propina_efec_caja, ...resto } = c; return resto; };
+const errPq = r => r && r.error && /propina_efec_caja/i.test(r.error.message || '');
+const insertarCuenta = async c => { let r = await sb.from('resto_cuentas').insert(c); if (errPq(r)) r = await sb.from('resto_cuentas').insert(sinColPq(c)); return r; };
 const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S.quien ? { cobrado_por: S.quien } : {}) });
 /* ---------- Roles y PIN ----------
    Si el local tiene PIN de administradora, cada persona elige quién es y entra con su PIN.
@@ -269,7 +273,7 @@ async function cargar(parcial) {
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
-    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
+    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
   D.insumos.sort(porNombre); D.provs.sort(porNombre); /* inventario de producción y proveedores siempre de la A a la Z */
   outLoad(); outAplicar();
   D.anuOk =!!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
@@ -451,9 +455,13 @@ function mostradorHTML() {
 const pctProp = () => { const p = D && D.propinaPct; return p === undefined || p === null || isNaN(+p) ? 10 : +p; };
 const pctEfect = () => S.propPct != null ? S.propPct : pctProp();
 const descMonto = base => { const d = S.desc; if (!d) return 0; const v = d.t === 'cortesia' ? base : d.t === 'pct' ? Math.round(base * Math.min(100, Math.max(0, d.v)) / 100) : Math.round(d.v); return Math.max(0, Math.min(base, v)); };
-const calcPago = base => { const desc = descMonto(base), neto = base - desc, prop = S.propina ? Math.round(neto * pctEfect() / 100) : 0, ptj = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0; return { desc, neto, prop, ptj, total: neto + prop + ptj }; };
+/* Propina en efectivo: por defecto queda en la caja (el cliente deja el vuelto) y se le paga al garzón al cerrar. Si se la dieron directo en la mano, se marca aparte. */
+const peEnCaja = () => S.peDonde !== 'mano';
+const peMonto = () => Math.max(0, Math.round(+S.pe || 0));
+const peCampos = pe => pe ? { propina_efec: pe, ...(peEnCaja() ? { propina_efec_caja: true } : {}) } : {};
+const calcPago = base => { const desc = descMonto(base), neto = base - desc, prop = S.propina ? Math.round(neto * pctEfect() / 100) : 0, ptj = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0; const pcj = S.metodo === 'Efectivo' && peEnCaja() ? peMonto() : 0; return { desc, neto, prop, ptj, pcj, total: neto + prop + ptj + pcj }; };
 const descCampos = base => { const x = descMonto(base); return x > 0 ? { descuento: x, desc_motivo: S.desc.motivo || '', desc_aut: S.desc.aut || '' } : {}; };
-const resetCobro = () => { S.pe = ''; S.pt = ''; S.rc = ''; S.desc = null; S.aut = null; S.propPct = null; S.autForm = null; S.autPend = null; S.autErr = ''; delete S.f['aut-pin']; delete S.f['d-val']; delete S.f['d-mot']; };
+const resetCobro = () => { S.pe = ''; S.peDonde = null; S.pt = ''; S.rc = ''; S.desc = null; S.aut = null; S.propPct = null; S.autForm = null; S.autPend = null; S.autErr = ''; delete S.f['aut-pin']; delete S.f['d-val']; delete S.f['d-mot']; };
 const conAut = async f => { const keep = RTOK; if (S.aut && S.aut.tok) RTOK = S.aut.tok; try { return await f(); } finally { RTOK = keep; } };
 const DESC_MOTIVOS = ['Cortesía de la casa', 'Cliente frecuente', 'Error o demora en el servicio', 'Reclamo del cliente', 'Cumpleaños', 'Otro'];
 function autFormHTML() {
@@ -476,7 +484,8 @@ function camposPago(base) {
     ${S.propina ? `<label class="mut" style="display:block;margin-top:4px">Porcentaje de propina<select id="proppct">${[0, 5, 10, 15, 20, 25].concat([pctProp()]).filter((v, i, a) => a.indexOf(v) === i).sort((x, y) => x - y).map(v => `<option value="${v}" ${v === pct ? 'selected' : ''}>${v}%${v === pctProp() ? ' (sugerida)' : ''}</option>`).join('')}</select></label>` : ''}
     <label class="mut" style="display:block;margin-top:8px">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option></select></label>
     ${S.metodo === 'Tarjeta' ? `<label class="mut" style="display:block;margin-top:8px">Propina o recargo adicional en la tarjeta (se suma al total)<input id="ptarj" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pt)}"></label>` : ''}
-    <label class="mut" style="display:block;margin-top:8px">Propina en efectivo que le dieron al garzón (no se suma al total)<input id="pefec" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pe)}"></label>
+    <label class="mut" style="display:block;margin-top:8px">Propina en efectivo (no se suma a la cuenta)<input id="pefec" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pe)}"></label>
+    <label class="mut" style="display:block;margin-top:8px">¿Dónde quedó la propina en efectivo?<select id="pedonde"><option value="caja" ${peEnCaja() ? 'selected' : ''}>Quedó en la caja (del vuelto): se le paga al cerrar</option><option value="mano" ${peEnCaja() ? '' : 'selected'}>Se la dieron directo al garzón</option></select></label>
     <div class="total"><span>Total a pagar</span><span id="totpagar" data-base="${base}">${money(cp.total)}</span></div>
     ${pagoDetalleHTML(cp.total)}`;
 }
@@ -682,33 +691,49 @@ function garzSel(n) {
   return `<label class="mut">Atiende<select id="garz" ${fijo ? 'disabled' : ''}><option value="">— elegir garzón —</option>${g.map(x => `<option ${x.n === cur ? 'selected' : ''}>${esc(x.n)}</option>`).join('')}</select></label>`;
 }
 function fechaIso(d) { const z = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()); }
+/* Propinas por garzón, separadas según dónde está el dinero:
+   · tarjeta: la propina de cuentas pagadas con tarjeta o transferencia y el recargo extra con tarjeta (el dinero entró por el terminal o el banco; se le paga en efectivo desde la caja)
+   · caja: la propina de cuentas pagadas en efectivo y la propina en efectivo que quedó en la caja del vuelto (ya está en la caja; se le paga al cerrar)
+   · mano: la propina en efectivo que el cliente le dio directo al garzón (ya la recibió) */
 function resumenGarz(rows) {
-  const m = {}; rows.forEach(c => { const k = c.garzon || '(sin garzón)'; const o = m[k] || (m[k] = { n: k, cuentas: 0, venta: 0, prop: 0, ext: 0 }); o.cuentas++; o.venta += c.total; o.prop += c.propina + (c.pe || 0) + (c.pt || 0); o.ext += (c.pe || 0) + (c.pt || 0); });
+  const m = {}; rows.forEach(c => { const k = c.garzon || '(sin garzón)'; const o = m[k] || (m[k] = { n: k, cuentas: 0, venta: 0, tarj: 0, caja: 0, mano: 0 }); o.cuentas++; o.venta += c.total;
+    if (c.metodo === 'Efectivo') o.caja += c.propina || 0; else o.tarj += c.propina || 0;
+    o.tarj += c.pt || 0;
+    if (c.pq) o.caja += c.pe || 0; else o.mano += c.pe || 0; });
+  Object.values(m).forEach(o => { o.pagar = o.tarj + o.caja; o.prop = o.pagar + o.mano; });
   return Object.values(m).sort((a, b) => b.prop - a.prop);
 }
 async function garzCargar() {
   if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
   const d = new Date(S.rpd + 'T00:00:00'), h = new Date(S.rph + 'T00:00:00'); h.setDate(h.getDate() + 1);
   const { data, error } = await sb.from('resto_cuentas').select('*').eq('local_id', D.id).gte('created_at', d.toISOString()).lt('created_at', h.toISOString()).order('created_at');
-  S.rp = error ? [] : data.map(r => ({ mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', t: +new Date(r.created_at) }));
+  S.rp = error ? [] : data.map(r => ({ mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', t: +new Date(r.created_at) }));
 }
 function garzHTML() {
   if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
   if (S.rp === null) { garzCargar().then(render); return '<h2>Garzones</h2><p class="mut">Cargando…</p>'; }
-  const r = resumenGarz(S.rp), tp = r.reduce((a, x) => a + x.prop, 0), tv = r.reduce((a, x) => a + x.venta, 0);
+  const r = resumenGarz(S.rp), tp = r.reduce((a, x) => a + x.prop, 0), tv = r.reduce((a, x) => a + x.venta, 0), tm = r.reduce((a, x) => a + x.mano, 0), tpg = r.reduce((a, x) => a + x.pagar, 0), tt = r.reduce((a, x) => a + x.tarj, 0), tc = r.reduce((a, x) => a + x.caja, 0);
   return `<h2>Garzones · ventas y propinas</h2>
   <div class="card" style="display:grid;gap:8px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <label class="mut">Desde<input id="rpd" type="date" value="${S.rpd}"></label><label class="mut">Hasta<input id="rph" type="date" value="${S.rph}"></label></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="rpver">Ver</button><button class="btn-line" data-act="rphoy">Hoy</button><button class="btn-line" data-act="rpsem">Últimos 7 días</button><button class="btn-line" data-act="rpmes">Este mes</button><button class="btn-ok" data-act="rpcsv">Descargar Excel (CSV)</button></div></div>
   ${L().adminPin ? `<div class="card" style="margin-top:12px"><b>PIN de los garzones</b><p class="mut">PIN de cada garzón (vacío = entra sin PIN). Todos los garzones cobran sus mesas. "Cobra mostrador" además le permite vender por mostrador y usar la pestaña Caja; para autorizarlo necesita PIN.</p>${L().garzones.map(g => `<div class="row"><div>${esc(g.n)}<div class="mut">${g.pin ? 'con PIN' : 'sin PIN'} · ${g.pin && g.cj ? '<b style="color:var(--ok)">cobra mostrador</b>' : 'solo mesas'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><input id="gp-${g.id}" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:90px"><button class="btn-line" data-act="setgpin" data-id="${g.id}">Guardar PIN</button><button class="${g.pin && g.cj ? 'btn-bad' : 'btn-ok'}" data-act="gcaja" data-id="${g.id}">${g.pin && g.cj ? 'Quitar mostrador' : 'Autorizar mostrador'}</button></div></div>`).join('') || ''}</div>` : '<div class="card" style="margin-top:12px"><b>PIN de los garzones</b><p class="mut">Primero crea el PIN de la administradora en "Carta y mesas" para poder asignar PIN a los garzones.</p></div>'}
-  <div class="card" style="margin-top:12px"><b>Por garzón</b>${r.map(x => `<div class="row"><div>${esc(x.n)}<div class="mut">${x.cuentas} cuenta${x.cuentas === 1 ? '' : 's'} · ventas ${money(x.venta)}${x.ext ? ' · incluye ' + money(x.ext) + ' en efectivo/tarjeta' : ''}</div></div><b>${money(x.prop)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin cuentas cerradas en ese período.</p>'}
-    <div class="total"><span>Total propinas</span><span>${money(tp)}</span></div><div class="row"><span class="mut">Total ventas</span><span class="mut">${money(tv)}</span></div></div>
-  <p class="mut" style="margin-top:12px">Cada garzón se lleva la propina de las mesas que atendió, más lo que anotaste como propina en efectivo o recargo en tarjeta. Las cuentas sin garzón elegido aparecen como "(sin garzón)".</p>`;
+  <div class="card" style="margin-top:12px"><b>Propinas por garzón</b><p class="mut" style="margin:4px 0 8px">Cada propina se muestra según dónde está el dinero, para que la caja cuadre: <b>tarjeta o transferencia</b> (entró por el terminal o el banco y se le paga en efectivo desde la caja), <b>efectivo en caja</b> (quedó en la caja, por ejemplo del vuelto, y se le paga al cerrar) y <b>directo en mano</b> (el cliente se la dio al garzón: ya la recibió).</p>
+    ${r.map(x => `<div class="row" style="align-items:flex-start"><div>${esc(x.n)}<div class="mut">${x.cuentas} cuenta${x.cuentas === 1 ? '' : 's'} · ventas ${money(x.venta)}</div>
+      <div class="mut" style="margin-top:4px">💳 Tarjeta o transferencia <b>${money(x.tarj)}</b> · 💵 Efectivo en caja <b>${money(x.caja)}</b> · 🤝 Directo en mano <b>${money(x.mano)}</b></div></div>
+      <div style="text-align:right"><b>${money(x.prop)}</b><div class="mut">Se le paga de la caja</div><b style="color:var(--ok)">${money(x.pagar)}</b></div></div>`).join('') || '<p class="mut" style="margin-top:8px">Sin cuentas cerradas en ese período.</p>'}
+    <div class="total"><span>Total propinas</span><span>${money(tp)}</span></div>
+    <div class="row"><span class="mut">💳 Tarjeta o transferencia</span><span class="mut">${money(tt)}</span></div>
+    <div class="row"><span class="mut">💵 Efectivo en caja</span><span class="mut">${money(tc)}</span></div>
+    <div class="row"><span class="mut">🤝 Directo en mano (ya recibido)</span><span class="mut">${money(tm)}</span></div>
+    <div class="row"><b>Total a pagar desde la caja</b><b>${money(tpg)}</b></div>
+    <div class="row"><span class="mut">Total ventas</span><span class="mut">${money(tv)}</span></div></div>
+  <p class="mut" style="margin-top:12px">"Se le paga de la caja" es lo que cada garzón debe retirar de la caja: tarjeta o transferencia más efectivo en caja. Lo que recibió directo en mano no se paga de nuevo. Las cuentas sin garzón elegido aparecen como "(sin garzón)".</p>`;
 }
 function garzCSV() {
   const q = v => '"' + String(v).replace(/"/g, '""') + '"';
-  let t = '﻿Garzón;Cuentas;Ventas;Propinas\n' + resumenGarz(S.rp).map(x => [q(x.n), x.cuentas, x.venta, x.prop].join(';')).join('\n');
-  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina 10%;Propina efectivo;Propina tarjeta;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa === 0 ? 'Mostrador' : c.mesa >= 1000 ? 'Pedido ' + (c.mesa - 1000) : c.mesa > 100 ? 'Piso 2 - ' + (c.mesa - 100) : c.mesa, q(c.garzon), c.total, c.propina, c.pe || 0, c.pt || 0, c.metodo].join(';')).join('\n');
+  let t = '﻿Garzón;Cuentas;Ventas;Propina tarjeta o transferencia;Propina efectivo en caja;Propina directa en mano;Total propinas;A pagar desde la caja\n' + resumenGarz(S.rp).map(x => [q(x.n), x.cuentas, x.venta, x.tarj, x.caja, x.mano, x.prop, x.pagar].join(';')).join('\n');
+  t += '\n\nFecha;Mesa;Garzón;Consumo;Propina 10%;Propina extra tarjeta;Propina efectivo en caja;Propina efectivo directa;Forma de pago\n' + S.rp.map(c => [new Date(c.t).toLocaleString('es-CL'), c.mesa === 0 ? 'Mostrador' : c.mesa >= 1000 ? 'Pedido ' + (c.mesa - 1000) : c.mesa > 100 ? 'Piso 2 - ' + (c.mesa - 100) : c.mesa, q(c.garzon), c.total, c.propina, c.pt || 0, c.pq ? c.pe || 0 : 0, c.pq ? 0 : c.pe || 0, c.metodo].join(';')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/csv;charset=utf-8' }));
   a.download = 'propinas_' + S.rpd + '_a_' + S.rph + '.csv'; document.body.appendChild(a); a.click(); a.remove();
 }
@@ -775,11 +800,11 @@ async function turnoCargar() {
 }
 function turnoRes(t) {
   const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
-  cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; pr += c.propina + c.pe + c.pt; });
+  cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; if (c.pq) ef += c.pe; pr += c.propina + c.pe + c.pt; });
   const gs = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul), gt = gs.reduce((a, g) => a + g.m, 0);
   /* Propinas por garzón del turno. Se pagan en efectivo desde la caja: la propina de las cuentas (10%) y la propina extra con tarjeta.
-     La propina en efectivo que el cliente le dio directo al garzón (pe) ya la recibió: solo se muestra. Cada turno nuevo parte en cero. */
-  const pg = {}; cu.forEach(c => { const n = c.garzon || ''; const o = pg[n] || (pg[n] = { n, c: 0, pc: 0, pt: 0, pe: 0, m: 0 }); o.c++; o.pc += c.propina; o.pt += c.pt; o.pe += c.pe; o.m += c.propina + c.pt; });
+     La propina en efectivo que quedó en la caja (del vuelto) también se le paga al cerrar; la que le dieron directo en la mano (pe) ya la recibió: solo se muestra. Cada turno nuevo parte en cero. */
+  const pg = {}; cu.forEach(c => { const n = c.garzon || ''; const o = pg[n] || (pg[n] = { n, c: 0, pc: 0, pt: 0, pe: 0, pq: 0, m: 0 }); o.c++; o.pc += c.propina; o.pt += c.pt; if (c.pq) o.pq += c.pe; else o.pe += c.pe; o.m += c.propina + c.pt + (c.pq ? c.pe : 0); });
   const propGar = Object.values(pg).filter(o => o.n && o.m > 0).sort((a, b) => a.n.localeCompare(b.n)), sinGar = (pg[''] || { m: 0 }).m;
   const pp = propGar.reduce((a, o) => a + o.m, 0);
   const dsc = cu.filter(c => c.desc > 0), dt = dsc.reduce((a, c) => a + c.desc, 0);
@@ -880,8 +905,8 @@ function descuentosHTML(t) {
 function propinasHTML(t) {
   const r = turnoRes(t);
   return `<div class="card" style="margin-top:12px"><b>Propinas de los garzones (se pagan al cerrar)</b>
-    <p class="mut" style="margin:4px 0 8px">Cada garzón recibe en efectivo, desde la caja, la propina acumulada de sus ventas de este turno (la propina de la cuenta y la propina extra con tarjeta). Primero entrega las propinas y después cuenta el efectivo que queda. Al cerrar la caja el acumulado vuelve a cero para el turno siguiente.</p>
-    ${r.propGar.map(o => `<div class="row"><div><b>${esc(o.n)}</b><div class="mut">${o.c} cuenta${o.c === 1 ? '' : 's'} · propina de cuentas ${money(o.pc)}${o.pt ? ' · propina extra tarjeta ' + money(o.pt) : ''}${o.pe ? ' · propina directa en efectivo (ya la recibió) ' + money(o.pe) : ''}</div></div><b>${money(o.m)}</b></div>`).join('') || '<p class="mut" style="margin:0">Aún no hay propinas acumuladas en este turno.</p>'}
+    <p class="mut" style="margin:4px 0 8px">Cada garzón recibe en efectivo, desde la caja, la propina acumulada de sus ventas de este turno (la propina de la cuenta, la propina extra con tarjeta y la propina en efectivo que quedó en la caja del vuelto). Primero entrega las propinas y después cuenta el efectivo que queda. Al cerrar la caja el acumulado vuelve a cero para el turno siguiente.</p>
+    ${r.propGar.map(o => `<div class="row"><div><b>${esc(o.n)}</b><div class="mut">${o.c} cuenta${o.c === 1 ? '' : 's'} · propina de cuentas ${money(o.pc)}${o.pt ? ' · propina extra tarjeta ' + money(o.pt) : ''}${o.pq ? ' · efectivo que quedó en caja ' + money(o.pq) : ''}${o.pe ? ' · efectivo directo en mano (ya la recibió) ' + money(o.pe) : ''}</div></div><b>${money(o.m)}</b></div>`).join('') || '<p class="mut" style="margin:0">Aún no hay propinas acumuladas en este turno.</p>'}
     ${r.pp ? `<div class="total"><span>Total a pagar en efectivo desde la caja</span><span>${money(r.pp)}</span></div>` : ''}
     ${r.sinGar ? `<p class="mut" style="margin:6px 0 0">Propinas de ventas sin garzón asignado (mostrador de la administradora): ${money(r.sinGar)}. No se pagan a ningún garzón.</p>` : ''}</div>`;
 }
@@ -1252,7 +1277,11 @@ document.addEventListener('input', e => {
   if (e.target.id === 'scan-mos') { clearTimeout(scanT); const el = e.target; scanT = setTimeout(() => { const v = el.value; if (S.mos && el.isConnected && v.trim().length >= 6) { el.value = ''; escanMostrador(v); } }, 250); }
   if (e.target.id === 'nota') S.note = e.target.value;
   if (/^(dn[acd]-\d+|ctarj|ctrans)$/.test(e.target.id)) dnActualiza();
-  if (e.target.id === 'pefec') S.pe = e.target.value;
+  if (e.target.id === 'pefec') {
+    S.pe = e.target.value;
+    const t = $('#totpagar');
+    if (t) { const b = +t.dataset.base, tot = calcPago(b).total; t.textContent = money(tot); const v = $('#vuelto'); if (v) { v.dataset.total = tot; actualizaVuelto(); } const j = document.querySelector('[data-act="rec"]'); if (j) j.dataset.v = tot; }
+  }
   if (e.target.id === 'recib') { S.rc = e.target.value; actualizaVuelto(); }
   if (e.target.id === 'ptarj') {
     S.pt = e.target.value;
@@ -1267,6 +1296,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
+  if (e.target.id === 'pedonde') { S.peDonde = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.id === 'cmg') render();
   if (e.target.id === 'g-tipo' || e.target.id === 'c-tipo' || e.target.id === 'c-pago' || e.target.id === 'bit-t' || e.target.id === 'd-tipo') render();
@@ -1351,7 +1381,7 @@ function outAplicar() {
       if (!o.insOk) (o.stock || []).forEach(([mid, q]) => { const m = D.menu.find(x => x.id === mid); if (m && m.s != null) m.s -= q; });
     } else if (o.k === 'pagar') {
       D.comandas = D.comandas.filter(c => !o.cids.includes(c.id));
-      if (!D.cuentas.some(c => c.id === o.cuenta.id)) D.cuentas.push({ id: o.cuenta.id, mesa: o.cuenta.mesa, total: o.cuenta.total, propina: o.cuenta.propina || 0, pe: o.cuenta.propina_efec || 0, pt: o.cuenta.propina_tarj || 0, metodo: o.cuenta.metodo, garzon: o.cuenta.garzon || '', items: o.cuenta.items, turno_id: o.cuenta.turno_id || null, cobrado_por: o.cuenta.cobrado_por || '', t: o.t });
+      if (!D.cuentas.some(c => c.id === o.cuenta.id)) D.cuentas.push({ id: o.cuenta.id, mesa: o.cuenta.mesa, total: o.cuenta.total, propina: o.cuenta.propina || 0, pe: o.cuenta.propina_efec || 0, pq: !!o.cuenta.propina_efec_caja, pt: o.cuenta.propina_tarj || 0, metodo: o.cuenta.metodo, garzon: o.cuenta.garzon || '', items: o.cuenta.items, turno_id: o.cuenta.turno_id || null, cobrado_por: o.cuenta.cobrado_por || '', t: o.t });
     } else if (o.k === 'avanzar') {
       const c = D.comandas.find(x => x.id === o.id); if (c) { c.estado = o.to; if (o.cierra) D.comandas = D.comandas.filter(x => x.id !== o.id); }
     }
@@ -1369,7 +1399,7 @@ async function outVaciar() {
         while ((o.stockHecho || 0) < (o.stock || []).length) { const [mid, q] = o.stock[o.stockHecho || 0]; const rr = await sb.rpc('resto_stock_mover', { p_menu: mid, p_delta: -q, p_motivo: 'venta', p_por: o.por || '', p_log: false }); if (rr && rr.error && esRed(rr)) { cortado = true; break; } o.stockHecho = (o.stockHecho || 0) + 1; outSave(); }
         if (cortado) { S.sinRed = true; break; }
       } else if (o.k === 'pagar') {
-        if (!o.cuentaOk && o.cuenta.total > 0) { r = await sb.from('resto_cuentas').upsert(o.cuenta, { onConflict: 'id', ignoreDuplicates: true }); if (r && r.error) { if (esRed(r)) { S.sinRed = true; break; } OUT.shift(); outSave(); alert('No se pudo enviar un cobro guardado (mesa ' + o.cuenta.mesa + '): ' + r.error.message); continue; } }
+        if (!o.cuentaOk && o.cuenta.total > 0) { r = await sb.from('resto_cuentas').upsert(o.cuenta, { onConflict: 'id', ignoreDuplicates: true }); if (errPq(r)) r = await sb.from('resto_cuentas').upsert(sinColPq(o.cuenta), { onConflict: 'id', ignoreDuplicates: true }); if (r && r.error) { if (esRed(r)) { S.sinRed = true; break; } OUT.shift(); outSave(); alert('No se pudo enviar un cobro guardado (mesa ' + o.cuenta.mesa + '): ' + r.error.message); continue; } }
         o.cuentaOk = true; outSave();
         r = await sb.from('resto_comandas').update({ cerrada: true }).in('id', o.cids); if (r && r.error && esRed(r)) { S.sinRed = true; break; }
         if (o.pedido) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', o.pedido);
@@ -1610,7 +1640,7 @@ document.addEventListener('click', async e => {
           const sub = pick.reduce((s, x) => s + x.q * x.i.p, 0);
           const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
           const cpp = calcPago(sub);
-          const r = await conAut(() => sb.from('resto_cuentas').insert({ local_id: D.id, mesa: S.mesa, total: cpp.neto, propina: cpp.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: pick.map(x => ({ n: x.i.n, q: x.q, p: x.i.p, e: x.i.e })), ...extraCuenta(), ...descCampos(sub), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }));
+          const r = await conAut(() => insertarCuenta({ local_id: D.id, mesa: S.mesa, total: cpp.neto, propina: cpp.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: pick.map(x => ({ n: x.i.n, q: x.q, p: x.i.p, e: x.i.e })), ...extraCuenta(), ...descCampos(sub), ...peCampos(pe), ...(pt ? { propina_tarj: pt } : {}) }));
           if (!fallo(r)) {
             for (const c of new Set(pick.map(x => x.c))) {
               const items = c.items.map((it, ix) => { const x = pick.find(y => y.c === c && y.ix === ix); return x ? { ...it, pg: (it.pg || 0) + x.q } : it; });
@@ -1626,8 +1656,8 @@ document.addEventListener('click', async e => {
         const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
         const cpg = calcPago(tot);
-        const cuenta = { id: uid(), local_id: D.id, mesa: S.mesa, total: cpg.neto, propina: cpg.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...descCampos(tot), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) };
-        const r = tot > 0 ? await conAut(() => sb.from('resto_cuentas').insert(cuenta)) : {};
+        const cuenta = { id: uid(), local_id: D.id, mesa: S.mesa, total: cpg.neto, propina: cpg.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...descCampos(tot), ...peCampos(pe), ...(pt ? { propina_tarj: pt } : {}) };
+        const r = tot > 0 ? await conAut(() => insertarCuenta(cuenta)) : {};
         const fin = () => { S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } resetCobro(); };
         if (r && r.error && esRed(r) && !S.desc && !S.aut) {
           OUT.push({ k: 'pagar', cuenta, cids: ab.map(c => c.id), pedido: S.mesa >= 1000 ? S.mesa : 0, t: Date.now() }); S.sinRed = true; outSave(); outAplicar();
@@ -1678,7 +1708,7 @@ document.addEventListener('click', async e => {
           const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
           await ensureSes();
           const cpm = calcPago(sub);
-          const r = await conAut(() => sb.from('resto_cuentas').insert({ local_id: D.id, mesa: 0, total: cpm.neto, propina: cpm.prop, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...descCampos(sub), ...(pe ? { propina_efec: pe } : {}), ...(pt ? { propina_tarj: pt } : {}) }));
+          const r = await conAut(() => insertarCuenta({ local_id: D.id, mesa: 0, total: cpm.neto, propina: cpm.prop, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...descCampos(sub), ...peCampos(pe), ...(pt ? { propina_tarj: pt } : {}) }));
           if (!fallo(r)) {
             for (const i of sel) if (i.s != null) await sb.rpc('resto_stock_mover', { p_menu: i.id, p_delta: -S.cart[i.id], p_motivo: 'venta', p_por: S.quien || '', p_log: false });
             consumirRecetas(sel.map(i => [i.id, S.cart[i.id]]));
