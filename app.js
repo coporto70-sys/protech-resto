@@ -399,7 +399,7 @@ function mesasHTML() {
   const ocup = []; for (let n = 1; n <= l.mesas; n++) ocup.push(n); for (let k = 1; k <= l.mesas2; k++) ocup.push(100 + k);
   const oc = ocup.filter(n => abiertas(n).length), enMesas = oc.reduce((a, n) => a + totalMesa(n), 0);
   const resumen = `<p class="mut" style="margin-bottom:10px"><b>${oc.length}</b> de ${ocup.length} mesas ocupadas · por cobrar en mesas <b>${money(enMesas)}</b></p>`;
-  return `<h2>Mesas</h2>${resumen}${anuPendientesHTML()}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  return `<h2>Mesas</h2>${resumen}${pushCardHTML()}${anuPendientesHTML()}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
 }
 const mesasAbiertas = () => [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0).map(c => c.mesa))].sort((a, b) => a - b);
 function porCobrarHTML() {
@@ -566,6 +566,48 @@ function anuFormHTML(n) {
   return h;
 }
 /* solicitudes pendientes, a la vista de la administradora en la pantalla de Mesas */
+/* ---------- Avisos en el celular (push): le llegan a la administradora aunque Resto esté cerrado ---------- */
+const pushSoporta = () => window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const enPWA = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const b64u = t => { const r = atob((t + '='.repeat((4 - t.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); };
+async function pushSubActual() { try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; } }
+async function pushGuardar(sub) { const j = sub.toJSON(); return sb.from('resto_push_subs').upsert({ local_id: D.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, quien: S.quien || 'Administradora' }, { onConflict: 'endpoint' }); }
+/* Estado: 'no' (apagado), 'si' (activo en este equipo), 'denegado' (bloqueado en el navegador), 'ios' (en iPhone hay que instalar la app primero), 'nosoporta' */
+async function pushEstado() {
+  if (!pushSoporta()) S.pushOn = 'nosoporta';
+  else if (esIOS && !enPWA()) S.pushOn = 'ios';
+  else if (Notification.permission === 'denied') S.pushOn = 'denegado';
+  else { const sub = await pushSubActual(); S.pushOn = sub ? 'si' : 'no'; if (sub && D && !S.pushSync) { S.pushSync = true; pushGuardar(sub).catch(() => { }); } }
+  render();
+}
+async function pushActivar() {
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { S.pushOn = perm === 'denied' ? 'denegado' : 'no'; render(); return; }
+  const r = await fetch(SB_URL + '/functions/v1/resto-push', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SB_KEY }, body: JSON.stringify({ accion: 'clave' }) });
+  const j = r.ok ? await r.json() : {};
+  if (!j.clave) throw new Error('El servicio de avisos todavía no está activado. Falta publicar la función resto-push en Supabase.');
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(j.clave) });
+  const g = await pushGuardar(sub); if (g.error) throw new Error(g.error.message);
+  S.pushOn = 'si'; render();
+}
+async function pushApagar() {
+  const sub = await pushSubActual();
+  if (sub) { const ep = sub.endpoint; await sub.unsubscribe().catch(() => { }); await sb.from('resto_push_subs').delete().eq('endpoint', ep); }
+  S.pushOn = 'no'; render();
+}
+function pushCardHTML() {
+  if (!esAdm() || !D) return '';
+  if (S.pushOn === undefined) { S.pushOn = null; pushEstado(); }
+  const e = S.pushOn;
+  if (!e || e === 'nosoporta') return '';
+  const caja = t => `<div class="card" style="margin-bottom:12px">${t}</div>`;
+  if (e === 'si') return `<p class="mut" style="margin:0 0 10px">🔔 Avisos activados en este equipo: te llega una notificación aunque Resto esté cerrado. <button class="btn-line" style="margin-left:6px" data-act="pushoff">Desactivar</button></p>`;
+  if (e === 'ios') return caja(`<b>Avisos en el celular</b><p class="mut" style="margin:4px 0 0">Para recibir avisos en iPhone, primero instala Resto: toca <b>Compartir</b> y luego <b>Agregar a pantalla de inicio</b>. Ábrela desde ese ícono y activa los avisos aquí.</p>`);
+  if (e === 'denegado') return caja(`<b>Avisos en el celular</b><p class="mut" style="margin:4px 0 0">Los avisos están bloqueados en este equipo. Actívalos en la configuración del navegador (permiso de notificaciones de este sitio) y vuelve a esta pantalla.</p>`);
+  return caja(`<b>Avisos en el celular</b><p class="mut" style="margin:4px 0 8px">Recibe una notificación, aunque Resto esté cerrado, cuando alguien pida anular un producto o un gasto, o se dé un descuento. Actívalo en el celular de la administradora.</p><button class="btn-ok" data-act="pushon">Activar avisos en este equipo</button>`);
+}
 function anuPendientesHTML() {
   if (!esAdm() || !D.anuOk) return '';
   const p = (D.anulaciones || []).filter(a => a.estado === 'pendiente' && D.comandas.some(c => c.id === a.comanda_id && !c.cerrada));
@@ -1775,6 +1817,8 @@ document.addEventListener('click', async e => {
         const mot = g ? (prompt('Motivo de la anulación del gasto ' + g.tipo + (g.num ? ' N° ' + g.num : '') + ' por ' + money(g.m) + ' (queda registrado):', g.pedMot || '') || '').trim() : '';
         if (g && mot) { if (!fallo(await sb.from('resto_gastos').update({ anulado: true, anulado_por: S.quien || 'Administradora', anulado_at: new Date().toISOString(), anulado_motivo: mot }).eq('id', g.id))) toast('Gasto anulado · el registro se conserva', 'tk-l'); }
       }
+      else if (a === 'pushon' && esAdm()) { try { await pushActivar(); toast('Avisos activados en este equipo', 'tk-l'); } catch (e) { alert('No se pudieron activar los avisos: ' + (e.message || e)); } }
+      else if (a === 'pushoff' && esAdm()) { try { await pushApagar(); toast('Avisos desactivados', 'tk-l'); } catch (e) { alert('No se pudieron desactivar los avisos: ' + (e.message || e)); } }
       else if (a === 'cmetodo' && esAdm() && D.turno) {
         const c = D.cuentas.find(x => x.id === d.id && x.t >= +new Date(D.turno.abierto_at));
         const sug = c ? (c.metodo === 'Tarjeta' ? 'Efectivo' : 'Tarjeta') : '';

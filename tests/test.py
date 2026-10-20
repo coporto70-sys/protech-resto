@@ -326,6 +326,18 @@ def K8(pg):
 e=run({'email':'u','role':'','db':db_cobro_mal()},K8,LS_ANA); print('ERR K8',e)
 
 
+def K9(pg):
+    pg.wait_for_timeout(800)
+    t=pg.inner_text('#app')
+    check('K9: la administradora ve la opción de activar avisos en el celular', 'Avisos en el celular' in t and pg.locator('[data-act="pushon"]').count()==1)
+e=run({'email':'u','role':'','db':db_gasto()},K9,LS_ADM2+"try{Object.defineProperty(Notification,'permission',{get:()=>'default'})}catch(e){}"); print('ERR K9',e)
+
+def K10(pg):
+    pg.wait_for_timeout(800)
+    check('K10: el garzón no ve los avisos de la administradora', 'Avisos en el celular' not in pg.inner_text('#app') and pg.locator('[data-act="pushon"]').count()==0)
+e=run({'email':'u','role':'','db':db_gasto()},K10,LS_ANA); print('ERR K10',e)
+
+
 def db_prop():
     d=db_roles(); n=(__import__('datetime').datetime.utcnow()-__import__('datetime').timedelta(minutes=5)).isoformat()+'Z'
     d['resto_turnos']=[{'id':'T1','local_id':'L1','abierto_por':'Ana','monto_inicial':100000,'abierto_at':n,'created_at':n}]
