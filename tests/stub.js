@@ -43,6 +43,14 @@ window.supabase={createClient:()=>({
   from:mk,
   functions:{invoke:async(name,opt)=>{ window.__IA_CALLS=(window.__IA_CALLS||0)+1; if(SC.ia==='sim'){ const u=opt.body.messages.slice(-1)[0].content; return {data:{texto:'Respuesta de IA simulada: '+u,humano:/mal hecho/.test(u)},error:null}; } const ia={error:'sin_clave'}; return {data:ia,error:{message:'fn'}}; }},
   rpc:async(name,p)=>{ if(window.__OFFLINE) return {data:null,error:{message:'TypeError: Failed to fetch'}}; (window.__RPC=window.__RPC||[]).push([name,p]);
+    if(name==='resto_cerrar_turno_corte'){ if(SC.sinCorte) return {data:null,error:{message:'Could not find the function public.resto_cerrar_turno_corte in the schema cache'}};
+      const T=(DB.resto_turnos=DB.resto_turnos||[]), t=T.find(x=>x.id===p.p_turno&&!x.cerrado_at); if(!t) return {data:null,error:{message:'No hay un turno abierto con ese identificador'}};
+      const c=new Date(p.p_corte); if(c<=new Date(t.abierto_at)||c>new Date()) return {data:null,error:{message:'La fecha de corte debe estar entre la apertura del turno y este momento'}};
+      const nid='T'+Math.random().toString(36).slice(2,7); T.push({id:nid,local_id:t.local_id,abierto_por:p.p_cierre.cerrado_por,abierto_at:p.p_corte,monto_inicial:p.p_cierre.monto_nuevo||0,desglose_apertura:p.p_cierre.desglose_deja,cerrado_at:null});
+      ['resto_gastos','resto_cuentas'].forEach(k=>(DB[k]||[]).forEach(r=>{ if(r.turno_id===t.id&&new Date(r.created_at)>c) r.turno_id=nid; }));
+      (DB.resto_sesiones||[]).forEach(r=>{ if(r.turno_id===t.id&&new Date(r.entrada)>c) r.turno_id=nid; else if(r.turno_id===t.id&&!r.salida) r.salida=p.p_corte; });
+      Object.assign(t,{cerrado_at:p.p_corte,cerrado_por:p.p_cierre.cerrado_por,esperado_efectivo:p.p_cierre.esperado_efectivo,contado_efectivo:p.p_cierre.contado_efectivo,diferencia:p.p_cierre.diferencia,ventas_total:p.p_cierre.ventas_total,cuentas:p.p_cierre.cuentas,nota:p.p_cierre.nota,desglose_cierre:p.p_cierre.desglose_cierre,desglose_deja:p.p_cierre.desglose_deja,retiro_efectivo:p.p_cierre.retiro_efectivo,gastos_total:p.p_cierre.gastos_total,propinas_pagadas:p.p_cierre.propinas_pagadas,pago_propinas:p.p_cierre.pago_propinas});
+      return {data:nid,error:null}; }
     if(name==='resto_sesion_estado') return {data:SC.sesionVencida?null:{rol:'admin',quien:'x',caja:true},error:null};
     if(name==='resto_login'||name==='resto_login_ing'||name==='resto_pin_set'||name==='resto_logout'){ if(SC.noPases) return {data:null,error:{message:'Could not find the function public.'+name+' in the schema cache'}}; }
     if(name==='resto_login'){ window.__LOGINS=(window.__LOGINS||0)+1; if(SC.bloq) return {data:{ok:false,error:'bloqueado'},error:null}; return {data:(p.p_pin===(SC.pinOk||'1234')||(!p.p_pin&&SC.sinPinOk))?{ok:true,token:'TOK'+p.p_rol,quien:p.p_rol==='admin'?'Administradora':'Ana',rol:p.p_rol,caja:true}:{ok:false,error:'pin'},error:null}; }

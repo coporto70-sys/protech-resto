@@ -660,4 +660,49 @@ def A1(pg):
     check('A1: la apertura muestra con cuánto se abre', 'Abres con $100.000' in t)
 e=run({'email':'u','role':'','db':dict(db_roles(),**{})},A1,LS_ANA); print('ERR A1',e)
 
+
+# --- CORTE: cerrar solo hasta el final de ayer cuando el turno quedó abierto y hoy ya hay ventas
+def corte_db():
+    d=db_roles(); mid=datetime.datetime.now().replace(hour=0,minute=0,second=0,microsecond=0).astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    f=lambda dt:dt.isoformat()+'Z'
+    ayer=lambda h:f(mid-datetime.timedelta(hours=h)); hoy=lambda m:f(mid+datetime.timedelta(minutes=m))
+    d['resto_turnos']=[{'id':'T1','local_id':'L1','abierto_por':'Administradora','abierto_at':ayer(20),'monto_inicial':100000,'cerrado_at':None}]
+    mk=lambda i,tot,met,ts,**k:dict({'id':i,'local_id':'L1','mesa':2,'total':tot,'propina':0,'propina_efec':0,'propina_tarj':0,'metodo':met,'garzon':'Ana','items':[],'turno_id':'T1','cobrado_por':'Ana','created_at':ts},**k)
+    d['resto_cuentas']=[mk('a1',10000,'Efectivo',ayer(5)),mk('a2',20000,'Tarjeta',ayer(3)),mk('h1',7000,'Efectivo',hoy(1)),mk('h2',9000,'Tarjeta',hoy(2))]
+    d['resto_gastos']=[{'id':'g1','local_id':'L1','turno_id':'T1','tipo':'Factura','numero':'1','proveedor':'Mayorista','detalle':'Avena','monto':2000,'registrado_por':'Ana','created_at':ayer(4)},
+                       {'id':'g2','local_id':'L1','turno_id':'T1','tipo':'Retiro','numero':None,'proveedor':'Retiro de efectivo','detalle':'depósito','monto':50000,'registrado_por':'Administradora','created_at':hoy(1)}]
+    d['resto_sesiones']=[{'id':'s1','local_id':'L1','turno_id':'T1','usuario':'Ana','rol':'garzon','entrada':ayer(19),'salida':None}]
+    return d
+def CORTE(pg):
+    pg.on('dialog',lambda x:x.accept()); nav_caja(pg)
+    t=pg.inner_text('#app')
+    check('CORTE: sin corte el turno incluye ayer y hoy (4 cuentas)', 'Cuentas\n4' in t.replace(' ','') or '4' in pg.inner_text('.stats'))
+    check('CORTE: la administradora ve el selector de corte', pg.locator('#c-corte').count()==1)
+    opts=pg.eval_on_selector_all('#c-corte option','o=>o.map(x=>x.value)')
+    check('CORTE: ofrece cerrar hasta el día de ayer', len(opts)==2 and opts[0]=='' and opts[1]!='')
+    pg.select_option('#c-corte',opts[1]); pg.wait_for_timeout(300)
+    t=pg.inner_text('#app'); st=pg.inner_text('.stats')
+    check('CORTE: con corte solo cuenta lo de ayer (2 cuentas, $30.000)', '2' in st and '$30.000' in st and '$7.000' not in t)
+    check('CORTE: efectivo esperado hasta el corte = 100.000 + 10.000 - 2.000', 'Debe haber $108.000' in t or '$108.000' in t)
+    check('CORTE: el retiro de hoy no aparece en el cierre de ayer', 'Retiro de efectivo' not in pg.inner_text('#app').split('Retiros de efectivo de la caja')[1].split('Propinas de los garzones')[0] or '$50.000' not in pg.inner_text('#app').split('Retiros de efectivo de la caja')[1].split('Propinas de los garzones')[0])
+    pg.fill('#dnc-20000','100000'); pg.fill('#dnc-5000','5000'); pg.fill('#dnc-2000','2000'); pg.fill('#dnc-1000','1000'); pg.fill('#ctarj','20000'); pg.fill('#ctrans','0')
+    pg.fill('#dnd-20000','100000'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
+    T=pg.evaluate('window.__DB.resto_turnos'); old=[x for x in T if x['id']=='T1'][0]; new=[x for x in T if x['id']!='T1']
+    check('CORTE: el turno viejo queda cerrado en el corte', old['cerrado_at'] is not None and old['ventas_total']==30000 and old['cuentas']==2 and old['esperado_efectivo']==108000)
+    check('CORTE: se abre un turno nuevo con el sencillo que quedó', len(new)==1 and new[0]['cerrado_at'] is None and new[0]['monto_inicial']==100000 and new[0]['abierto_at']==old['cerrado_at'])
+    cu={c['id']:c['turno_id'] for c in pg.evaluate('window.__DB.resto_cuentas')}; ga={g['id']:g['turno_id'] for g in pg.evaluate('window.__DB.resto_gastos')}
+    check('CORTE: lo de ayer queda en el turno cerrado y lo de hoy pasa al nuevo', cu['a1']=='T1' and cu['a2']=='T1' and cu['h1']==new[0]['id'] and cu['h2']==new[0]['id'] and ga['g1']=='T1' and ga['g2']==new[0]['id'])
+    check('CORTE: no se pierde ningún cobro ni gasto', len(cu)==4 and len(ga)==2)
+    pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(500)
+    t=pg.inner_text('#app'); st=pg.inner_text('.stats')
+    check('CORTE: el turno nuevo muestra solo lo de hoy ($16.000, 2 cuentas)', '$16.000' in st and 'turno abierto' in t.lower())
+e=run({'email':'u','role':'','db':corte_db()},CORTE,LS_ADM); print('ERR CORTE',e)
+def CORTE2(pg):
+    pg.on('dialog',lambda x:x.accept()); nav_caja(pg)
+    opts=pg.eval_on_selector_all('#c-corte option','o=>o.map(x=>x.value)'); pg.select_option('#c-corte',opts[1]); pg.wait_for_timeout(200)
+    pg.fill('#dnc-20000','100000'); pg.fill('#dnd-20000','100000'); pg.fill('#ctarj','20000'); pg.fill('#ctrans','0'); pg.fill('#tnota','prueba'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
+    T=pg.evaluate('window.__DB.resto_turnos')
+    check('CORTE2: sin la migración 025 no se cierra nada y avisa', len(T)==1 and T[0]['cerrado_at'] is None)
+e=run({'email':'u','role':'','db':corte_db(),'sinCorte':True},CORTE2,LS_ADM); print('ERR CORTE2',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

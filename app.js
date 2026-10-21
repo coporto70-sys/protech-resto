@@ -798,10 +798,23 @@ async function turnoCargar() {
   const { data } = await sb.from('resto_turnos').select('*').eq('local_id', D.id).not('cerrado_at', 'is', null).order('abierto_at', { ascending: false }).limit(15);
   S.th = data || [];
 }
+/* Fecha de corte del cierre: la administradora puede cerrar el turno solo hasta el final de un día pasado (ej. cerrar ayer cuando hoy ya hay ventas).
+   Lo posterior al corte pasa al turno nuevo. Devuelve el corte en milisegundos o null si se cierra todo el turno. */
+function corteDe(t) {
+  const v = +(S.f['c-corte'] || 0);
+  return t && v > +new Date(t.abierto_at) && v <= Date.now() ? v : null;
+}
+function cortesPosibles(t) {
+  const out = [], a = new Date(t.abierto_at); let d = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 1, 0, 0, 0, 0);
+  while (+d > +a && +d <= Date.now() && out.length < 31) { out.push(+d); d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0); }
+  return out;
+}
+const diaCorte = ms => { const d = new Date(ms - 1); return d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' }); };
+const enCorte = (t, ms, hasta) => !hasta || ms <= hasta;
 function turnoRes(t) {
-  const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
+  const hasta = corteDe(t), cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at) && enCorte(t, c.t, hasta)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
   cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; if (c.pq) ef += c.pe; pr += c.propina + c.pe + c.pt; });
-  const gsT = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul), gs = gsT.filter(g => g.tipo !== 'Retiro'), rts = gsT.filter(g => g.tipo === 'Retiro'), gt = gs.reduce((a, g) => a + g.m, 0), rt = rts.reduce((a, g) => a + g.m, 0);
+  const gsT = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul && enCorte(t, g.t, hasta)), gs = gsT.filter(g => g.tipo !== 'Retiro'), rts = gsT.filter(g => g.tipo === 'Retiro'), gt = gs.reduce((a, g) => a + g.m, 0), rt = rts.reduce((a, g) => a + g.m, 0);
   /* Propinas por garzón del turno. Se pagan en efectivo desde la caja: la propina de las cuentas (10%) y la propina extra con tarjeta.
      La propina en efectivo que quedó en la caja (del vuelto) también se le paga al cerrar; la que le dieron directo en la mano (pe) ya la recibió: solo se muestra. Cada turno nuevo parte en cero. */
   const pg = {}; cu.forEach(c => { const n = c.garzon || ''; const o = pg[n] || (pg[n] = { n, c: 0, pc: 0, pt: 0, pe: 0, pq: 0, m: 0 }); o.c++; o.pc += c.propina; o.pt += c.pt; if (c.pq) o.pq += c.pe; else o.pe += c.pe; o.m += c.propina + c.pt + (c.pq ? c.pe : 0); });
@@ -873,9 +886,17 @@ function abrirCajaHTML() {
     <div class="paso"><span class="num">2</span><div><b>Abre la caja</b><p class="mut" style="margin:2px 0 0">Desde aquí se cuentan las ventas, los gastos y los retiros del turno.</p></div></div>
     <button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
 }
+function corteHTML(t) {
+  if (!esAdm()) return '';
+  const cs = cortesPosibles(t); if (!cs.length) return '';
+  const hasta = corteDe(t), fuera = hasta ? D.cuentas.filter(c => c.t >= +new Date(t.abierto_at) && c.t > hasta).length : 0;
+  return `<div class="card" style="background:#fff7ed;padding:10px;display:grid;gap:6px"><label><b>¿Hasta cuándo cierras?</b>
+    <select id="c-corte" data-keep style="width:100%;margin-top:4px"><option value="">Todo el turno, hasta ahora</option>${cs.map(ms => `<option value="${ms}" ${hasta === ms ? 'selected' : ''}>Solo hasta el día ${diaCorte(ms)} (23:59)</option>`).join('')}</select></label>
+    ${hasta ? `<p class="mut" style="margin:0">Se cierra solo lo cobrado, gastado y retirado hasta el ${diaCorte(hasta)} a las 23:59. ${fuera ? 'Los ' + fuera + ' cobro' + (fuera === 1 ? '' : 's') + ' de después, con sus gastos y retiros, pasan al turno nuevo.' : 'Lo de después pasa al turno nuevo.'} Cuenta el efectivo como estaba al terminar ese día.</p>` : '<p class="mut" style="margin:0">Elige un día anterior si el turno quedó abierto y quieres cerrar solo ese día.</p>'}</div>`;
+}
 function cerrarCajaHTML(t) {
   const r = turnoRes(t);
-  return `<div class="card" style="margin-top:12px;display:grid;gap:10px"><b style="font-size:1.1rem">Cerrar caja (cuadre del día)</b>
+  return `<div class="card" style="margin-top:12px;display:grid;gap:10px"><b style="font-size:1.1rem">Cerrar caja (cuadre del día)</b>${corteHTML(t)}
     <div class="paso"><span class="num">1</span><div><b>Entrega las propinas</b><p class="mut" style="margin:2px 0 0">${r.pp ? 'Paga ' + money(r.pp) + ' en efectivo a los garzones (detalle arriba) antes de contar.' : 'No hay propinas por pagar en este turno.'}</p></div></div>
     <div class="paso"><span class="num">2</span><div><b>Efectivo contado</b><p class="mut" style="margin:2px 0 0">Escribe en pesos cuánto hay de cada billete y moneda (ej.: 4 billetes de $20.000 = 80000). Debe haber <b>${money(r.esp)}</b>.</p></div></div>
     ${contadorHTML('c')}
@@ -910,7 +931,7 @@ function gastoFila(g, editable) {
 const METODOS = ['Efectivo', 'Tarjeta', 'Transferencia'];
 function cobrosHTML(t) {
   if (!esAdm()) return '';
-  const cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at)).sort((a, b) => b.t - a.t);
+  const hasta = corteDe(t), cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at) && enCorte(t, c.t, hasta)).sort((a, b) => b.t - a.t);
   return `<div class="card" style="margin-top:12px"><b>Cobros del turno</b><p class="mut" style="margin:4px 0 8px">Si se cobró con una forma de pago equivocada (por ejemplo, se anotó tarjeta y fue efectivo), corrígela aquí. El cuadre de caja se recalcula y el cambio queda registrado.</p>
     ${cu.map(c => `<div class="row"><div><b>${esc(c.mesa > 0 ? nm(c.mesa) : 'Mostrador')}</b> · ${esc(c.metodo)}<div class="mut">${hora(c.t)} · ${esc(c.cobrado_por || c.garzon || '')}${c.pt ? ' · incluye propina extra con tarjeta ' + money(c.pt) : ''}</div>${c.mOrig && c.mOrig !== c.metodo ? `<div class="mut" style="color:var(--warn)">Corregido por ${esc(c.mPor || 'la administradora')}: era ${esc(c.mOrig)} · ${esc(c.mMot)}</div>` : ''}</div><div style="text-align:right"><b>${money(c.total + c.propina + c.pt)}</b><div style="margin-top:4px"><button class="btn-line" data-act="cmetodo" data-id="${c.id}">Corregir forma de pago</button></div></div></div>`).join('') || '<p class="mut" style="margin:0">Aún no hay cobros en este turno.</p>'}</div>`;
 }
@@ -928,7 +949,7 @@ function propinasHTML(t) {
     ${r.sinGar ? `<p class="mut" style="margin:6px 0 0">Propinas de ventas sin garzón asignado (mostrador de la administradora): ${money(r.sinGar)}. No se pagan a ningún garzón.</p>` : ''}</div>`;
 }
 function gastosHTML(t) {
-  const todos = (D.gastos || []).filter(g => g.turno_id === t.id && g.tipo !== 'Retiro'), gs = todos.filter(g => !g.anul), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
+  const todos = (D.gastos || []).filter(g => g.turno_id === t.id && g.tipo !== 'Retiro' && enCorte(t, g.t, corteDe(t))), gs = todos.filter(g => !g.anul), tot = gs.reduce((a, g) => a + g.m, 0), tipo = GTIPOS.includes(S.f['g-tipo']) ? S.f['g-tipo'] : 'Boleta';
   return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Gastos pagados desde caja</b>
     <p class="mut" style="margin:0">Cada vez que salga dinero de la caja para pagar algo, anótalo aquí con el número de boleta o factura. Se descuenta del efectivo que debe haber y queda registrado. Si hay un error en el monto, la administradora puede corregirlo (queda el monto original) o anularlo.</p>
     <label class="mut">Documento<select id="g-tipo" data-keep>${GTIPOS.map(x => `<option ${x === tipo ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -941,7 +962,7 @@ function gastosHTML(t) {
 }
 /* Retiros: la administradora saca efectivo de la caja durante el turno (depósito, pago personal, etc.). Se guardan como movimiento de caja tipo "Retiro" y se descuentan del efectivo esperado. */
 function retirosHTML(t) {
-  const lista = (D.gastos || []).filter(g => g.turno_id === t.id && g.tipo === 'Retiro'), tot = lista.filter(g => !g.anul).reduce((a, g) => a + g.m, 0);
+  const lista = (D.gastos || []).filter(g => g.turno_id === t.id && g.tipo === 'Retiro' && enCorte(t, g.t, corteDe(t))), tot = lista.filter(g => !g.anul).reduce((a, g) => a + g.m, 0);
   if (!esAdm() && !lista.length) return '';
   return `<div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Retiros de efectivo de la caja</b>
     <p class="mut" style="margin:0">${esAdm() ? 'Cuando saques dinero de la caja (para depositar, guardar o uso personal), anótalo aquí. Se descuenta del efectivo que debe haber, así la caja sigue cuadrando.' : 'Dinero que la administradora sacó de la caja. Ya está descontado del efectivo que debe haber.'}</p>
@@ -1325,7 +1346,7 @@ document.addEventListener('change', e => {
   if (e.target.id === 'pedonde') { S.peDonde = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.id === 'cmg') render();
-  if (e.target.id === 'g-tipo' || e.target.id === 'c-tipo' || e.target.id === 'c-pago' || e.target.id === 'bit-t' || e.target.id === 'd-tipo') render();
+  if (e.target.id === 'g-tipo' || e.target.id === 'c-tipo' || e.target.id === 'c-pago' || e.target.id === 'bit-t' || e.target.id === 'd-tipo' || e.target.id === 'c-corte') render();
   if (e.target.dataset && e.target.dataset.act === 'propina') {
     /* quitar o dejar la propina ya no necesita autorización: la decide el garzón */
     S.propina = e.target.checked;
@@ -1933,12 +1954,21 @@ document.addEventListener('click', async e => {
         else if (fondo && dj !== fondo && !nota) alert('El sencillo que queda en caja (' + money(dj) + ') no es el sencillo fijo (' + money(fondo) + '). Déjalo completo o escribe una observación que explique por qué.');
         else if ((dEf || dTj || dTr) && !nota) alert('La caja no cuadra. Escribe una observación que explique la diferencia antes de cerrar.');
         else if (r.pp && !confirm('Propinas a pagar en efectivo desde la caja: ' + money(r.pp) + '\n' + r.propGar.map(o => o.n + ': ' + money(o.m)).join('\n') + '\n\n¿Ya entregaste estas propinas a los garzones? Si no, entrégalas y vuelve a contar el efectivo antes de cerrar.')) { /* cancelado */ }
+        else if (corteDe(t) && !confirm('Vas a cerrar la caja SOLO hasta el ' + diaCorte(corteDe(t)) + ' a las 23:59.\n\nSe cierra con ' + r.cuentas + ' cuenta' + (r.cuentas === 1 ? '' : 's') + ' y ventas por ' + money(r.vt) + '.\nTodo lo cobrado, gastado o retirado después pasa a un turno nuevo que parte con ' + money(dj) + ' de sencillo.\n\nEl cierre no se puede deshacer. ¿Continuar?')) { /* cancelado */ }
         else if (!open || confirm('Hay ' + open + ' pedido(s) todavía abiertos en mesas. ¿Cerrar la caja igual?')) {
-          const base = { cerrado_at: new Date().toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: ec, diferencia: dEf, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas };
+          const hasta = corteDe(t);
+          const base = { cerrado_at: new Date(hasta || Date.now()).toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: ec, diferencia: dEf, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas };
           const des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr }, deja = dnObj('d'), pagoProp = r.propGar.map(o => ({ n: o.n, m: o.m, c: o.c }));
+          if (hasta) {
+            /* Cierre con fecha de corte: una sola operación en la base (cierra el turno, abre el nuevo y traslada lo posterior) */
+            const rr = await sb.rpc('resto_cerrar_turno_corte', { p_turno: t.id, p_corte: base.cerrado_at, p_cierre: { ...base, nota: nota || null, desglose_cierre: des, desglose_deja: deja, retiro_efectivo: retiro, gastos_total: r.gt, propinas_pagadas: r.pp, pago_propinas: pagoProp, monto_nuevo: dj } });
+            if (rr.error && /resto_cerrar_turno_corte|schema cache|does not exist/i.test(rr.error.message || '')) alert('Falta ejecutar la migración 025 (cierre con corte) en Supabase. Avisa a Protech.');
+            else if (!fallo(rr)) { await sb.from('resto_sesiones').update({ salida: new Date().toISOString() }).eq('turno_id', t.id).is('salida', null); S.ses = null; S.f = {}; S.th = null; toast('Caja cerrada hasta el ' + diaCorte(hasta) + ' · turno nuevo abierto', 'tk-l'); }
+          } else {
           let u = await sb.from('resto_turnos').update({ ...base, nota: nota || null, desglose_cierre: des, desglose_deja: deja, retiro_efectivo: retiro, gastos_total: r.gt, propinas_pagadas: r.pp, pago_propinas: pagoProp }).eq('id', t.id);
           if (u.error && /desglose|retiro_efectivo|gastos_total|propinas_pagadas|pago_propinas/i.test(u.error.message || '')) u = await sb.from('resto_turnos').update({ ...base, nota: [t.nota, nota, 'Cierre: ' + (dnTxt(des.efectivo) || 'sin efectivo') + ' · tarjetas ' + money(tj) + ' · transferencias ' + money(tr), 'Quedó en caja: ' + (dnTxt(deja) || 'nada') + ' · efectivo de ventas retirado ' + money(retiro) + (r.gt ? ' · gastos ' + money(r.gt) : '') + (r.rt ? ' · retiros ' + money(r.rt) : ''), r.pp ? 'Propinas pagadas: ' + pagoProp.map(x => x.n + ' ' + money(x.m)).join(', ') : ''].filter(Boolean).join(' | ') }).eq('id', t.id);
           if (!fallo(u)) { await sb.from('resto_sesiones').update({ salida: new Date().toISOString() }).eq('turno_id', t.id).is('salida', null); S.ses = null; S.f = {}; S.th = null; }
+          }
         }
       }
       else if (a === 'sk_set' || a === 'sk_add' || a === 'sk_min' || a === 'sk_off') {
