@@ -6,6 +6,10 @@
 -- Opcional: el secreto ANTHROPIC_API_KEY (ya usado por resto-whatsapp) para que redacte un resumen en lenguaje simple.
 -- Depende de la 022 (resto_push_config y resto_push_enviar). Solo AGREGA tablas, una función y un disparador. Es seguro ejecutarlo más de una vez.
 
+-- Solo se revisan los locales que tienen el control activado (por defecto, ninguno). Así no se manda ningún aviso a otros clientes sin que lo pidan.
+-- Para activarlo en un local:  update public.resto_locales set control_caja = true where nombre ilike '%super pastel%';
+alter table public.resto_locales add column if not exists control_caja boolean not null default false;
+
 -- Una fila por turno y fase revisados (evita avisar dos veces la misma apertura o el mismo cierre)
 create table if not exists public.resto_control_revisiones (
   turno_id uuid not null,
@@ -96,7 +100,10 @@ end $$;
 
 create or replace function public.resto_control_caja_disparar() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare v_on boolean;
 begin
+  select control_caja into v_on from public.resto_locales where id = new.local_id;
+  if not coalesce(v_on, false) then return null; end if;
   if TG_OP = 'INSERT' then
     perform public.resto_control_caja_pedir('revisar_apertura', new.id);
   elsif old.cerrado_at is null and new.cerrado_at is not null then
