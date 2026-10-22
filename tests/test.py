@@ -794,4 +794,17 @@ def RB3(pg):
     check('ROBI: cuando todo cuadra dice que puede cerrar', 'Todo cuadra' in pg.inner_text('#robi') and pg.locator('#robi.ok').count()==1)
 e=run({'email':'u','role':'','db':robi_db(2)},RB3,LS_ADM); print('ERR RB3',e)
 
+def RB4(pg):
+    nav_caja(pg)
+    b0=pg.evaluate("(()=>{const r=document.getElementById('robi').getBoundingClientRect();return [r.right,r.bottom]})()")
+    cx,cy=pg.evaluate("(()=>{const r=document.querySelector('#robi .robi-cara').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
+    pg.mouse.move(cx,cy); pg.mouse.down(); pg.mouse.move(cx-200,cy-150,steps=8); pg.mouse.up(); pg.wait_for_timeout(200)
+    b1=pg.evaluate("(()=>{const r=document.getElementById('robi').getBoundingClientRect();return [r.right,r.bottom]})()")
+    check('ROBI: se puede arrastrar con el mouse', b1[0]<b0[0]-150 and b1[1]<b0[1]-100)
+    check('ROBI: arrastrar no lo esconde ni cambia el globo', pg.locator('#robi.min').count()==0)
+    pg.evaluate("render()"); pg.wait_for_timeout(200)
+    b2=pg.evaluate("(()=>{const r=document.getElementById('robi').getBoundingClientRect();return [r.right,r.bottom]})()")
+    check('ROBI: recuerda dónde lo dejaron', abs(b2[0]-b1[0])<3 and abs(b2[1]-b1[1])<3)
+e=run({'email':'u','role':'','db':robi_db(2)},RB4,LS_ADM); print('ERR RB4',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)
