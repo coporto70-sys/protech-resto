@@ -4,7 +4,7 @@
 // (por ejemplo lo que esperaba en tarjetas) se usa un valor estimado, marcado como "estimado".
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { revisarTurno, resumenPush, pesos, type Turno, type Gasto } from "./reglas.ts";
+import { revisarTurno, revisarApertura, resumenPush, pesos, type Turno, type Gasto } from "./reglas.ts";
 
 const FONDO = 169_310;
 const base = (o: Partial<Turno>): Turno => ({ id: "t", local_id: "l", abierto_at: "2026-10-21T10:00:00Z", cerrado_at: "2026-10-21T20:00:00Z", ...o });
@@ -115,4 +115,35 @@ test("resumen para push: título con la cantidad y los títulos más graves", ()
   const p = resumenPush(revisarTurno(t, [], { fondo: FONDO, retirosRecientes: [] }));
   assert.match(p.titulo, /Revisión de caja: 1 alerta$/);
   assert.ok(p.cuerpo.length <= 180);
+});
+
+// ---------- Apertura ----------
+const aper = (o: Partial<Turno>, anteriorDeja: number | null = FONDO) => revisarApertura(base({ cerrado_at: null, ...o }), { fondo: FONDO, anteriorDeja }).map((a) => a.regla);
+const CONTEO_OK = { "5000": 16, "1000": 80, "500": 11, "100": 23, "50": 13, "10": 86 }; // suma $169.310
+
+test("apertura correcta: sin alertas", () => {
+  assert.deepEqual(aper({ monto_inicial: FONDO, desglose_apertura: CONTEO_OK }), []);
+});
+
+test("21/10 16:50: caja abierta sin sencillo", () => {
+  const a = revisarApertura(base({ cerrado_at: null, abierto_por: "Administradora", monto_inicial: 0, desglose_apertura: null }), { fondo: FONDO, anteriorDeja: 164_450 });
+  assert.equal(a[0].regla, "apertura_sin_sencillo");
+  assert.equal(a[0].gravedad, "alta");
+});
+
+test("apertura con sencillo distinto al fijo y distinto a lo que dejó el turno anterior", () => {
+  const conteo = { "5000": 10, "1000": 50 }; // $100.000
+  const r = aper({ monto_inicial: 100_000, desglose_apertura: conteo }, 164_450);
+  assert.ok(r.includes("apertura_distinta_fondo"));
+  assert.ok(r.includes("apertura_distinta_anterior"));
+  assert.equal(revisarApertura(base({ monto_inicial: 100_000, desglose_apertura: conteo }), { fondo: FONDO, anteriorDeja: null }).find((x) => x.regla === "apertura_distinta_fondo")!.gravedad, "alta");
+});
+
+test("apertura: el detalle no suma el monto, o falta el detalle", () => {
+  assert.ok(aper({ monto_inicial: FONDO, desglose_apertura: { "5000": 16 } }).includes("apertura_no_suma"));
+  assert.ok(aper({ monto_inicial: FONDO, desglose_apertura: null }).includes("apertura_sin_detalle"));
+});
+
+test("apertura: 3200 monedas de $50", () => {
+  assert.ok(aper({ monto_inicial: 160_000, desglose_apertura: { "50": 3200 } }, null).includes("cantidad_absurda"));
 });

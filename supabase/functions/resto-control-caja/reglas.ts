@@ -72,6 +72,7 @@ export const UMBRALES = {
   gastoGrande: 150_000, // un gasto de compra por este monto o más se avisa
   turnoLargoHoras: 16, // un turno abierto más tiempo que esto se avisa
   retiroRepetidoHoras: 24, // ventana para detectar el mismo retiro cargado dos veces
+  aperturaDifAlta: 20_000, // diferencia entre el sencillo recibido y el fijo/anterior que se considera grave
 };
 
 const RANGO: Record<Gravedad, number> = { alta: 0, media: 1, baja: 2 };
@@ -79,7 +80,7 @@ const RANGO: Record<Gravedad, number> = { alta: 0, media: 1, baja: 2 };
 export const pesos = (n: number): string =>
   "$" + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 
-const totalDen = (d?: Den | null): number =>
+export const totalDen = (d?: Den | null): number =>
   Object.entries(d || {}).reduce((a, [v, c]) => a + Number(v) * Number(c), 0);
 
 const nDen = (d?: Den | null): number => Object.keys(d || {}).length;
@@ -237,4 +238,55 @@ export function resumenPush(alertas: Alerta[]): { titulo: string; cuerpo: string
   const titulo = n === 1 ? "Revisión de caja: 1 alerta" : `Revisión de caja: ${n} alertas`;
   const cuerpo = ordenar(alertas).slice(0, 3).map((a) => a.titulo).join(" · ");
   return { titulo, cuerpo: cuerpo.slice(0, 180) };
+}
+
+// ---------- Apertura de caja ----------
+export interface ContextoApertura {
+  fondo: number; // sencillo fijo del local
+  anteriorDeja: number | null; // sencillo que dejó el turno anterior al cerrar (null si no hay turno anterior)
+}
+
+// Revisa el conteo del sencillo al abrir la caja. Se llama apenas se abre el turno.
+export function revisarApertura(t: Turno, ctx: ContextoApertura, u = UMBRALES): Alerta[] {
+  const out: Alerta[] = [];
+  const add = (regla: string, gravedad: Gravedad, titulo: string, detalle: string, revisar: string) =>
+    out.push({ regla, gravedad, titulo, detalle, revisar });
+  const inicial = t.monto_inicial ?? 0;
+  const fondo = ctx.fondo || 0;
+  const por = t.abierto_por ? ` por ${t.abierto_por}` : "";
+
+  if (fondo > 0 && inicial <= 0) {
+    add("apertura_sin_sencillo", "alta", "Caja abierta sin sencillo",
+      `La caja se abrió${por} sin registrar sencillo, pero el sencillo fijo del local es ${pesos(fondo)}. El cierre mostrará una diferencia que no es real.`,
+      "Contar el sencillo que hay en la caja y registrarlo antes de seguir cobrando.");
+  } else if (inicial > 0) {
+    if (nDen(t.desglose_apertura) === 0) {
+      add("apertura_sin_detalle", "media", "Apertura sin detalle de billetes",
+        `La caja se abrió${por} con ${pesos(inicial)}, pero sin el detalle de billetes y monedas.`,
+        "Pedir que cuenten el sencillo por denominación.");
+    } else if (totalDen(t.desglose_apertura) !== inicial) {
+      add("apertura_no_suma", "alta", "El conteo de apertura no suma",
+        `El sencillo inicial es ${pesos(inicial)} pero los billetes y monedas anotados suman ${pesos(totalDen(t.desglose_apertura))}.`,
+        "Recontar el sencillo al abrir.");
+    }
+    if (fondo > 0 && inicial !== fondo) {
+      const g: Gravedad = Math.abs(inicial - fondo) >= u.aperturaDifAlta ? "alta" : "media";
+      add("apertura_distinta_fondo", g, "Sencillo de apertura distinto al fijo",
+        `Se abrió${por} con ${pesos(inicial)} y el sencillo fijo es ${pesos(fondo)} (${inicial > fondo ? "sobran" : "faltan"} ${pesos(Math.abs(inicial - fondo))}).`,
+        "Confirmar el conteo, o actualizar el sencillo fijo si cambió.");
+    }
+    if (ctx.anteriorDeja != null && ctx.anteriorDeja > 0 && inicial !== ctx.anteriorDeja) {
+      add("apertura_distinta_anterior", "media", "No coincide con lo que dejó el turno anterior",
+        `El turno anterior dejó ${pesos(ctx.anteriorDeja)} en la caja y se recibió con ${pesos(inicial)}.`,
+        "Revisar si se movió dinero entre un turno y el otro.");
+    }
+    for (const [v, c] of Object.entries(t.desglose_apertura || {})) {
+      if (Number(c) > (Number(v) <= 500 ? u.monedasMax : u.billetesMax)) {
+        add("cantidad_absurda", "media", "Cantidad de billetes o monedas poco creíble",
+          `En el sencillo inicial figuran ${c} de ${pesos(Number(v))}.`,
+          "Revisar el conteo: probablemente hay un cero o dígito de más.");
+      }
+    }
+  }
+  return ordenar(out);
 }
