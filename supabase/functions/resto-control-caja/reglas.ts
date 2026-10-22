@@ -59,7 +59,7 @@ export interface Alerta {
 }
 
 export interface Contexto {
-  fondo: number; // sencillo fijo del local (resto_locales.fondo_caja)
+  fondo: number; // sencillo que se esperaba recibir al abrir ESE turno (lo que dejó el anterior o, al partir, el sencillo de partida)
   retirosRecientes: Gasto[]; // todos los retiros del local en las 24 h previas al cierre (incluye anulados y los de este turno)
 }
 
@@ -130,7 +130,7 @@ export function revisarTurno(t: Turno, gastos: Gasto[], ctx: Contexto, u = UMBRA
   // 3) Apertura sin sencillo registrado
   if (fondo > 0 && !((t.monto_inicial ?? 0) > 0)) {
     add("apertura_sin_sencillo", "alta", "Caja abierta sin sencillo",
-      `El turno se abrió sin registrar sencillo, pero el sencillo fijo del local es ${pesos(fondo)}. Por eso el cierre puede mostrar una diferencia que no es real.`,
+      `El turno se abrió sin registrar sencillo, pero se esperaba recibir ${pesos(fondo)}. Por eso el cierre puede mostrar una diferencia que no es real.`,
       "Confirmar cuánto sencillo había al abrir y corregir la diferencia con una observación.");
   } else if ((t.monto_inicial ?? 0) > 0 && nDen(t.desglose_apertura) === 0) {
     add("apertura_sin_detalle", "baja", "Apertura sin detalle de billetes",
@@ -138,10 +138,11 @@ export function revisarTurno(t: Turno, gastos: Gasto[], ctx: Contexto, u = UMBRA
       "Pedir que cuenten el sencillo por denominación al abrir.");
   }
 
-  // 4) Solo se contó el sencillo
-  if (contado != null && fondo > 0 && contado === fondo && (t.ventas_efectivo ?? 1) > 0 && !((t.retiro_efectivo ?? 0) > 0)) {
+  // 4) Solo se contó el sencillo (el efectivo contado es justo lo que se deja para el turno siguiente)
+  const deja = totalDen(t.desglose_deja);
+  if (contado != null && deja > 0 && contado === deja && (t.ventas_efectivo ?? 1) > 0 && !((t.retiro_efectivo ?? 0) > 0)) {
     add("contado_igual_sencillo", "media", "Efectivo contado = solo el sencillo",
-      `El efectivo contado (${pesos(contado)}) es exactamente el sencillo fijo y no se retiró efectivo de ventas.`,
+      `El efectivo contado (${pesos(contado)}) es exactamente el sencillo que se deja en caja y no se retiró efectivo de ventas.`,
       "Confirmar que se contó también el efectivo de las ventas.");
   }
 
@@ -242,8 +243,13 @@ export function resumenPush(alertas: Alerta[]): { titulo: string; cuerpo: string
 
 // ---------- Apertura de caja ----------
 export interface ContextoApertura {
-  fondo: number; // sencillo fijo del local
-  anteriorDeja: number | null; // sencillo que dejó el turno anterior al cerrar (null si no hay turno anterior)
+  fondo: number; // sencillo de partida del local (se usa solo cuando no hay un turno anterior válido)
+  anteriorDeja: number | null; // sencillo que dejó el turno anterior al cerrar (null si no hay, o si es anterior al inicio del control)
+}
+
+// El sencillo ya no es fijo: cada turno debe recibir lo que dejó el anterior (mañana → tarde → mañana siguiente).
+export function esperadoApertura(ctx: ContextoApertura): { monto: number; de: "turno" | "partida" } {
+  return ctx.anteriorDeja != null && ctx.anteriorDeja > 0 ? { monto: ctx.anteriorDeja, de: "turno" } : { monto: ctx.fondo || 0, de: "partida" };
 }
 
 // Revisa el conteo del sencillo al abrir la caja. Se llama apenas se abre el turno.
@@ -252,12 +258,13 @@ export function revisarApertura(t: Turno, ctx: ContextoApertura, u = UMBRALES): 
   const add = (regla: string, gravedad: Gravedad, titulo: string, detalle: string, revisar: string) =>
     out.push({ regla, gravedad, titulo, detalle, revisar });
   const inicial = t.monto_inicial ?? 0;
-  const fondo = ctx.fondo || 0;
+  const esp = esperadoApertura(ctx);
   const por = t.abierto_por ? ` por ${t.abierto_por}` : "";
+  const origen = esp.de === "turno" ? "lo que dejó el turno anterior" : "el sencillo de partida";
 
-  if (fondo > 0 && inicial <= 0) {
+  if (esp.monto > 0 && inicial <= 0) {
     add("apertura_sin_sencillo", "alta", "Caja abierta sin sencillo",
-      `La caja se abrió${por} sin registrar sencillo, pero el sencillo fijo del local es ${pesos(fondo)}. El cierre mostrará una diferencia que no es real.`,
+      `La caja se abrió${por} sin registrar sencillo, pero se esperaba recibir ${pesos(esp.monto)} (${origen}). El cierre mostrará una diferencia que no es real.`,
       "Contar el sencillo que hay en la caja y registrarlo antes de seguir cobrando.");
   } else if (inicial > 0) {
     if (nDen(t.desglose_apertura) === 0) {
@@ -269,16 +276,12 @@ export function revisarApertura(t: Turno, ctx: ContextoApertura, u = UMBRALES): 
         `El sencillo inicial es ${pesos(inicial)} pero los billetes y monedas anotados suman ${pesos(totalDen(t.desglose_apertura))}.`,
         "Recontar el sencillo al abrir.");
     }
-    if (fondo > 0 && inicial !== fondo) {
-      const g: Gravedad = Math.abs(inicial - fondo) >= u.aperturaDifAlta ? "alta" : "media";
-      add("apertura_distinta_fondo", g, "Sencillo de apertura distinto al fijo",
-        `Se abrió${por} con ${pesos(inicial)} y el sencillo fijo es ${pesos(fondo)} (${inicial > fondo ? "sobran" : "faltan"} ${pesos(Math.abs(inicial - fondo))}).`,
-        "Confirmar el conteo, o actualizar el sencillo fijo si cambió.");
-    }
-    if (ctx.anteriorDeja != null && ctx.anteriorDeja > 0 && inicial !== ctx.anteriorDeja) {
-      add("apertura_distinta_anterior", "media", "No coincide con lo que dejó el turno anterior",
-        `El turno anterior dejó ${pesos(ctx.anteriorDeja)} en la caja y se recibió con ${pesos(inicial)}.`,
-        "Revisar si se movió dinero entre un turno y el otro.");
+    if (esp.monto > 0 && inicial !== esp.monto) {
+      const g: Gravedad = Math.abs(inicial - esp.monto) >= u.aperturaDifAlta ? "alta" : "media";
+      add(esp.de === "turno" ? "apertura_distinta_anterior" : "apertura_distinta_partida", g,
+        esp.de === "turno" ? "No coincide con lo que dejó el turno anterior" : "No coincide con el sencillo de partida",
+        `Se abrió${por} con ${pesos(inicial)} y se esperaba ${pesos(esp.monto)} (${origen}): ${inicial > esp.monto ? "sobran" : "faltan"} ${pesos(Math.abs(inicial - esp.monto))}.`,
+        "Recontar el sencillo; si cambió dinero entre un turno y otro, anotarlo en una observación.");
     }
     for (const [v, c] of Object.entries(t.desglose_apertura || {})) {
       if (Number(c) > (Number(v) <= 500 ? u.monedasMax : u.billetesMax)) {

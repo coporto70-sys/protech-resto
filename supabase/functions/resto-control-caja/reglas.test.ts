@@ -4,7 +4,7 @@
 // (por ejemplo lo que esperaba en tarjetas) se usa un valor estimado, marcado como "estimado".
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { revisarTurno, revisarApertura, resumenPush, pesos, type Turno, type Gasto } from "./reglas.ts";
+import { revisarTurno, revisarApertura, esperadoApertura, resumenPush, pesos, type Turno, type Gasto } from "./reglas.ts";
 
 const FONDO = 169_310;
 const base = (o: Partial<Turno>): Turno => ({ id: "t", local_id: "l", abierto_at: "2026-10-21T10:00:00Z", cerrado_at: "2026-10-21T20:00:00Z", ...o });
@@ -19,6 +19,7 @@ test("21/10 16:50 (Pedro): tarjetas mayores que las ventas, apertura sin sencill
   const t = base({
     monto_inicial: 0, desglose_apertura: null, ventas_total: 350_690, ventas_tarjeta: 300_000 /* estimado */,
     esperado_efectivo: 39_430, contado_efectivo: 169_310, diferencia: 129_880, retiro_efectivo: 0,
+    desglose_deja: { "5000": 16, "1000": 80, "500": 11, "100": 23, "50": 13, "10": 86 } /* $169.310 */,
     desglose_cierre: { tarjeta: 929_536, transferencia: 0, efectivo: { "20000": 4, "1000": 80, "500": 11, "100": 23, "50": 13, "10": 86 } },
   });
   const r = reglas(t);
@@ -131,12 +132,20 @@ test("21/10 16:50: caja abierta sin sencillo", () => {
   assert.equal(a[0].gravedad, "alta");
 });
 
-test("apertura con sencillo distinto al fijo y distinto a lo que dejó el turno anterior", () => {
+test("el sencillo ya no es fijo: se espera lo que dejó el turno anterior", () => {
   const conteo = { "5000": 10, "1000": 50 }; // $100.000
+  assert.deepEqual(esperadoApertura({ fondo: FONDO, anteriorDeja: 164_450 }), { monto: 164_450, de: "turno" });
+  assert.deepEqual(esperadoApertura({ fondo: FONDO, anteriorDeja: null }), { monto: FONDO, de: "partida" });
   const r = aper({ monto_inicial: 100_000, desglose_apertura: conteo }, 164_450);
-  assert.ok(r.includes("apertura_distinta_fondo"));
   assert.ok(r.includes("apertura_distinta_anterior"));
-  assert.equal(revisarApertura(base({ monto_inicial: 100_000, desglose_apertura: conteo }), { fondo: FONDO, anteriorDeja: null }).find((x) => x.regla === "apertura_distinta_fondo")!.gravedad, "alta");
+  assert.ok(!r.includes("apertura_distinta_fondo"));
+  const p = revisarApertura(base({ monto_inicial: 100_000, desglose_apertura: conteo }), { fondo: FONDO, anteriorDeja: null });
+  assert.equal(p.find((x) => x.regla === "apertura_distinta_partida")!.gravedad, "alta");
+});
+
+test("sencillo distinto del fijo pero igual a lo que dejó el turno anterior: no hay alerta", () => {
+  // 7 billetes de 20.000 + 28.570 = $168.570 (lo que dejó la administradora el 21/10)
+  assert.deepEqual(aper({ monto_inicial: 168_570, desglose_apertura: { "20000": 8, "5000": 1, "2000": 1, "1000": 1, "500": 1, "50": 1, "10": 2 } }, 168_570), []);
 });
 
 test("apertura: el detalle no suma el monto, o falta el detalle", () => {

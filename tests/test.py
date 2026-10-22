@@ -231,15 +231,17 @@ def K(pg):
     pg.fill('#dnd-20000','80000'); pg.fill('#dnd-10000','60000'); pg.wait_for_timeout(300)
     c=pg.inner_text('#cuadre')
     check('K: el efectivo esperado descuenta el gasto y cuadra', 'Sistema $175.000' in c and 'descuenta $15.000' in c)
-    check('K: avisa que el sencillo fijo está incompleto', 'Falta $20.000' in c)
-    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(500)
-    check('K: no cierra con sencillo distinto al fijo sin observación', any('sencillo fijo' in m for m in d) and pg.evaluate('window.__DB.resto_turnos[0].cerrado_at') is None)
-    pg.fill('#dnd-20000','100000'); pg.wait_for_timeout(300)
-    c=pg.inner_text('#cuadre')
-    check('K: con el sencillo completo muestra Correcto y el retiro', 'Correcto' in c and 'Efectivo de ventas a retirar' in c and '$15.000' in c)
+    check('K: el sencillo que se deja es libre (ya no hay sencillo fijo)', 'Anotado' in c and 'Falta $20.000' not in c and 'Efectivo de ventas a retirar' in c and '$35.000' in c)
     pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(800)
     tu=pg.evaluate('window.__DB.resto_turnos')[0]
-    check('K: cierre guarda retiro, sencillo dejado y gastos', tu.get('cerrado_at') and tu['retiro_efectivo']==15000 and tu['desglose_deja']=={'20000':5,'10000':6} and tu['gastos_total']==15000 and tu['diferencia']==0)
+    check('K: cierre guarda retiro, sencillo dejado y gastos', tu.get('cerrado_at') and tu['retiro_efectivo']==35000 and tu['desglose_deja']=={'20000':4,'10000':6} and tu['gastos_total']==15000 and tu['diferencia']==0)
+    pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(500)
+    nav_caja(pg); t=pg.inner_text('#app')
+    check('K: el turno siguiente debe recibir lo que dejó el anterior', 'Debes recibir $140.000' in t and 'lo que dejó el turno anterior' in t)
+    pg.fill('#dna-20000','100000'); pg.wait_for_timeout(200)
+    check('K: avisa si el sencillo recibido no coincide con el que se dejó', 'Faltan $40.000' in pg.inner_text('#aper'))
+    pg.fill('#dna-20000','140000'); pg.wait_for_timeout(200)
+    check('K: coincide con lo que dejó el turno anterior', 'Coincide con lo que dejó el turno anterior' in pg.inner_text('#aper'))
 e=run({'email':'u','role':'','db':db_fondo()},K,LS_ANA); print('ERR K',e)
 
 LS_ADM2="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'admin',quien:'Administradora',tok:'T',t:Date.now()}));"
@@ -695,7 +697,7 @@ def CORTE(pg):
     check('CORTE: no se pierde ningún cobro ni gasto', len(cu)==4 and len(ga)==2)
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(500)
     t=pg.inner_text('#app'); st=pg.inner_text('.stats')
-    check('CORTE: el turno nuevo muestra solo lo de hoy ($16.000, 2 cuentas)', '$16.000' in st and 'turno abierto' in t.lower())
+    check('CORTE: el turno nuevo muestra solo lo de hoy ($16.000, 2 cuentas)', '$16.000' in st and 'turno de la' in t.lower())
 e=run({'email':'u','role':'','db':corte_db()},CORTE,LS_ADM); print('ERR CORTE',e)
 def CORTE2(pg):
     pg.on('dialog',lambda x:x.accept()); nav_caja(pg)
@@ -724,7 +726,7 @@ def TR1(pg):
     pg.click('[data-act="tab"][data-v="inv"]'); pg.wait_for_timeout(300)
     check('TRAMOS: Inventario dice tramo 3', 'se activa en el tramo 3' in pg.inner_text('#app'))
     nav_caja(pg)
-    check('TRAMOS: Caja sí funciona en el tramo 2', 'se activa' not in pg.inner_text('#app') and 'Sencillo fijo' in pg.inner_text('#app'))
+    check('TRAMOS: Caja sí funciona en el tramo 2', 'se activa' not in pg.inner_text('#app') and 'Sencillo de partida' in pg.inner_text('#app'))
     check('TRAMOS: la administradora no ve el selector de tramos', pg.locator('#tramo-sel').count()==0)
 e=run({'email':'u','role':'','db':tramo_db(2)},TR1,LS_ADM); print('ERR TR1',e)
 def TR2(pg):
@@ -784,7 +786,7 @@ def RB2(pg):
 e=run({'email':'u','role':'','db':robi_db(4)},RB2,LS_ADM); print('ERR RB2',e)
 def RB3(pg):
     nav_caja(pg); pg.fill('#dna-20000','160000'); pg.click('[data-act="tabrir"]'); pg.wait_for_timeout(700)
-    check('ROBI: con la caja abierta explica que guiará el cierre', 'Caja abierta' in pg.inner_text('#robi'))
+    check('ROBI: con la caja abierta explica que guiará el cierre', 'Turno de la' in pg.inner_text('#robi'))
     pg.fill('#dnc-20000','100000'); pg.wait_for_timeout(200)
     t=pg.inner_text('#robi')
     check('ROBI: en el cierre avisa la diferencia de efectivo', 'En efectivo' in t and pg.locator('#robi.mal').count()==1)

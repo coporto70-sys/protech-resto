@@ -10,7 +10,7 @@
 //
 // Solo LEE los datos de caja y GUARDA alertas. Nunca corrige, anula ni mueve dinero.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { ordenar, resumenPush, revisarApertura, revisarTurno, totalDen, type Alerta, type Gasto, type Turno } from "./reglas.ts";
+import { esperadoApertura, ordenar, resumenPush, revisarApertura, revisarTurno, totalDen, type Alerta, type Gasto, type Turno } from "./reglas.ts";
 
 const MODELO = "claude-haiku-5-5";
 const CORS = {
@@ -62,6 +62,16 @@ async function redactar(alertas: Alerta[]): Promise<string | null> {
   }
 }
 
+
+// Sencillo que dejó el turno anterior. Solo cuenta si ese turno cerró DESPUÉS del inicio del control (resto_locales.fondo_desde):
+// antes de esa fecha se usa el sencillo de partida del local ("desde hoy parte de cero").
+async function anteriorDeja(localId: string, turnoId: string, antesDe: string, desde: string | null): Promise<number | null> {
+  let q = db.from("resto_turnos").select("desglose_deja").eq("local_id", localId).neq("id", turnoId).not("cerrado_at", "is", null).lte("cerrado_at", antesDe);
+  if (desde) q = q.gte("cerrado_at", desde);
+  const { data: ant } = await q.order("cerrado_at", { ascending: false }).limit(1).maybeSingle();
+  return ant?.desglose_deja ? totalDen(ant.desglose_deja) : null;
+}
+
 async function revisarUno(turnoId: string, avisar: boolean) {
   const { data: t } = await db.from("resto_turnos").select("*").eq("id", turnoId).maybeSingle();
   if (!t) return { error: "turno no encontrado" };
@@ -71,12 +81,13 @@ async function revisarUno(turnoId: string, avisar: boolean) {
   const { data: ya } = await db.from("resto_control_revisiones").select("turno_id").eq("turno_id", turnoId).eq("fase", "cierre").maybeSingle();
   if (ya && avisar) return { ok: true, repetido: true };
 
-  const { data: local } = await db.from("resto_locales").select("fondo_caja").eq("id", t.local_id).maybeSingle();
+  const { data: local } = await db.from("resto_locales").select("fondo_caja,fondo_desde").eq("id", t.local_id).maybeSingle();
+  const esperado = esperadoApertura({ fondo: local?.fondo_caja ?? 0, anteriorDeja: await anteriorDeja(t.local_id, turnoId, t.abierto_at, local?.fondo_desde ?? null) }).monto;
   const { data: gastos } = await db.from("resto_gastos").select("*").eq("turno_id", turnoId);
   const desde = new Date(new Date(t.cerrado_at).getTime() - 24 * 3_600_000).toISOString();
   const { data: retiros } = await db.from("resto_gastos").select("*").eq("local_id", t.local_id).eq("tipo", "Retiro").gte("created_at", desde).lte("created_at", t.cerrado_at);
 
-  const alertas = revisarTurno(t as Turno, (gastos || []) as Gasto[], { fondo: local?.fondo_caja ?? 0, retirosRecientes: (retiros || []) as Gasto[] });
+  const alertas = revisarTurno(t as Turno, (gastos || []) as Gasto[], { fondo: esperado, retirosRecientes: (retiros || []) as Gasto[] });
   if (alertas.length) {
     await db.from("resto_control_alertas").upsert(
       alertas.map((a) => ({ local_id: t.local_id, turno_id: turnoId, fase: "cierre", regla: a.regla, gravedad: a.gravedad, titulo: a.titulo, detalle: a.detalle, revisar: a.revisar })),
@@ -100,12 +111,10 @@ async function revisarAperturaUno(turnoId: string) {
   const { data: ya } = await db.from("resto_control_revisiones").select("turno_id").eq("turno_id", turnoId).eq("fase", "apertura").maybeSingle();
   if (ya) return { ok: true, repetido: true };
 
-  const { data: local } = await db.from("resto_locales").select("fondo_caja").eq("id", t.local_id).maybeSingle();
-  // Lo que dejó el turno anterior al cerrar
-  const { data: ant } = await db.from("resto_turnos").select("desglose_deja").eq("local_id", t.local_id).neq("id", turnoId).not("cerrado_at", "is", null).lte("cerrado_at", t.abierto_at).order("cerrado_at", { ascending: false }).limit(1).maybeSingle();
-  const anteriorDeja = ant?.desglose_deja ? totalDen(ant.desglose_deja) : null;
+  const { data: local } = await db.from("resto_locales").select("fondo_caja,fondo_desde").eq("id", t.local_id).maybeSingle();
+  const anteriorDejaMonto = await anteriorDeja(t.local_id, turnoId, t.abierto_at, local?.fondo_desde ?? null);
 
-  const alertas = revisarApertura(t as Turno, { fondo: local?.fondo_caja ?? 0, anteriorDeja });
+  const alertas = revisarApertura(t as Turno, { fondo: local?.fondo_caja ?? 0, anteriorDeja: anteriorDejaMonto });
   if (alertas.length) {
     await db.from("resto_control_alertas").upsert(
       alertas.map((a) => ({ local_id: t.local_id, turno_id: turnoId, fase: "apertura", regla: a.regla, gravedad: a.gravedad, titulo: a.titulo, detalle: a.detalle, revisar: a.revisar })),

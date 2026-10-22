@@ -262,7 +262,7 @@ async function cargar(parcial) {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv, rec, prv, oco] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv, rec, prv, oco, ult] = await Promise.all([
     get('loc', () => sb.from('resto_locales').select('*').eq('id', id).single()),
     get('menu', () => sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre')),
     get('com', () => sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false)),
@@ -278,11 +278,12 @@ async function cargar(parcial) {
     get('imv', () => sb.from('resto_insumo_mov').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(150)),
     get('rec', () => sb.from('resto_recetas').select('*').eq('local_id', id)),
     get('prv', () => sb.from('resto_proveedores').select('*').eq('local_id', id).order('nombre')),
-    get('oco', () => sb.from('resto_ordenes_compra').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(40))
+    get('oco', () => sb.from('resto_ordenes_compra').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(40)),
+    get('ult', () => sb.from('resto_turnos').select('id,cerrado_at,cerrado_por,desglose_deja').eq('local_id', id).not('cerrado_at', 'is', null).order('cerrado_at', { ascending: false }).limit(1))
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false, v: r.vence || '' })), recetas: ((rec && rec.data) || []).map(r => ({ id: r.id, m: r.menu_id, i: r.insumo_id, q: +r.cantidad })), provs: ((prv && prv.data) || []).filter(r => r.activo !== false).map(r => ({ id: r.id, n: r.nombre, tel: r.telefono || '', mail: r.correo || '' })), ocs: ((oco && oco.data) || []).map(r => ({ id: r.id, pv: r.proveedor, est: r.estado, items: r.items || [], nota: r.nota || '', t: +new Date(r.created_at) })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', mOrig: r.monto_original == null ? null : +r.monto_original, edPor: r.editado_por || '', edMot: r.editado_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, tramo: Math.min(4, Math.max(1, Math.round(+loc.data.tramo) || 4)), adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false, v: r.vence || '' })), recetas: ((rec && rec.data) || []).map(r => ({ id: r.id, m: r.menu_id, i: r.insumo_id, q: +r.cantidad })), provs: ((prv && prv.data) || []).filter(r => r.activo !== false).map(r => ({ id: r.id, n: r.nombre, tel: r.telefono || '', mail: r.correo || '' })), ocs: ((oco && oco.data) || []).map(r => ({ id: r.id, pv: r.proveedor, est: r.estado, items: r.items || [], nota: r.nota || '', t: +new Date(r.created_at) })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), fondoDesde: loc.data.fondo_desde ? +new Date(loc.data.fondo_desde) : 0, ult: (ult && ult.data && ult.data[0]) || null, gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', mOrig: r.monto_original == null ? null : +r.monto_original, edPor: r.editado_por || '', edMot: r.editado_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, tramo: Math.min(4, Math.max(1, Math.round(+loc.data.tramo) || 4)), adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
@@ -336,7 +337,7 @@ setInterval(() => { if (S.user && !document.hidden) sb.auth.getSession(); }, 10 
 function suscribir() {
   if (rt || !D) return;
   const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv', resto_recetas: 'rec', resto_proveedores: 'prv', resto_ordenes_compra: 'oco' };
-  const refresca = t => { if (t && TK[t]) PEND.add(TK[t]); else PEND.add('*'); clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; const p = PEND.has('*') ? null : new Set(PEND); PEND.clear(); await cargar(p); render(); }, 300); };
+  const refresca = t => { if (t && TK[t]) PEND.add(TK[t]); if (t === 'resto_turnos') PEND.add('ult'); else PEND.add('*'); clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; const p = PEND.has('*') ? null : new Set(PEND); PEND.clear(); await cargar(p); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
   ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t)));
   rt.subscribe();
@@ -875,12 +876,20 @@ function cuadreHTML(t) {
   const banner = out.length ? `<div class="cuadre-b ${mal ? 'mal' : 'ok'}">${mal ? '⚠️ La caja tiene diferencias. Revisa lo contado o escribe una observación.' : '✅ ¡La caja cuadra!'}</div>` : '';
   return banner + (out.join('') || '<p class="mut">Escribe lo que contaste para ver si la caja cuadra.</p>') + retiroHTML();
 }
-/* Sencillo fijo: lo que siempre debe quedar en caja. Lo demás del efectivo contado es efectivo de ventas y se retira. */
+/* El sencillo ya NO es fijo: cada turno (mañana o tarde) debe recibir lo que dejó el anterior.
+   Al partir (o si el último cierre es anterior a "fondo_desde") se usa el sencillo de partida del local. */
+function sencEsp() {
+  const u = D.ult, dej = u && u.desglose_deja ? DEN.reduce((a, [v]) => a + v * (+u.desglose_deja[v] || 0), 0) : 0;
+  if (u && dej > 0 && +new Date(u.cerrado_at) >= (D.fondoDesde || 0)) return { m: dej, de: 'turno', quien: u.cerrado_por || '' };
+  return { m: D.fondo || 0, de: 'partida', quien: '' };
+}
+const turnoNom = at => new Date(at).getHours() < 15 ? 'mañana' : 'tarde';
+/* Sencillo que queda en caja: es libre y lo recibirá el turno siguiente. Lo demás del efectivo contado es efectivo de ventas y se retira. */
 function retiroHTML() {
-  const fondo = D.fondo || 0, ec = dnTotal('c'), dj = dnTotal('d'), hayD = DEN.some(([v]) => S.f[dnId('d', v)] !== undefined && S.f[dnId('d', v)] !== '');
+  const ec = dnTotal('c'), dj = dnTotal('d'), hayD = DEN.some(([v]) => S.f[dnId('d', v)] !== undefined && S.f[dnId('d', v)] !== '');
   if (!hayD && !ec) return '';
-  const ret = ec - dj, dif = dj - fondo;
-  return `<div class="row" style="margin-top:6px"><div>Sencillo que queda en caja<div class="mut">${fondo ? 'Debe quedar ' + money(fondo) + ' · dejas ' + money(dj) : 'Dejas ' + money(dj)}</div></div><b style="color:${!fondo || dif === 0 ? 'var(--ok)' : 'var(--bad)'}">${!fondo ? '' : dif === 0 ? 'Correcto' : (dif > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(dif))}</b></div>
+  const ret = ec - dj;
+  return `<div class="row" style="margin-top:6px"><div>Sencillo que queda en caja<div class="mut">Lo recibirá el turno siguiente · dejas ${money(dj)}</div></div><b style="color:${dj > 0 ? 'var(--ok)' : 'var(--bad)'}">${dj > 0 ? 'Anotado' : 'Falta anotarlo'}</b></div>
     <div class="row"><div><b>Efectivo de ventas a retirar</b><div class="mut">Efectivo contado ${money(ec)} − sencillo que queda ${money(dj)}</div></div><b style="color:${ret < 0 ? 'var(--bad)' : ''}">${ret < 0 ? 'Revisa los montos' : money(ret)}</b></div>`;
 }
 function dnActualiza() {
@@ -890,13 +899,13 @@ function dnActualiza() {
   robiRefresh();
 }
 function aperturaChk() {
-  const a = dnTotal('a'), f = D.fondo || 0; if (!a) return '';
+  const a = dnTotal('a'), e = sencEsp(), f = e.m; if (!a) return '';
   if (!f) return `<div class="cuadre-b ok">Abres con ${money(a)}</div>`;
-  const d = a - f; return d === 0 ? `<div class="cuadre-b ok">✅ Coincide con el sencillo fijo (${money(f)})</div>` : `<div class="cuadre-b mal">⚠️ ${d > 0 ? 'Sobran ' : 'Faltan '}${money(Math.abs(d))} respecto del sencillo fijo (${money(f)})</div>`;
+  const d = a - f; return d === 0 ? `<div class="cuadre-b ok">✅ Coincide con ${e.de === 'turno' ? 'lo que dejó el turno anterior' : 'el sencillo de partida'} (${money(f)})</div>` : `<div class="cuadre-b mal">⚠️ ${d > 0 ? 'Sobran ' : 'Faltan '}${money(Math.abs(d))} respecto de ${e.de === 'turno' ? 'lo que dejó el turno anterior' : 'el sencillo de partida'} (${money(f)})</div>`;
 }
 function abrirCajaHTML() {
   return `<div class="card" style="display:grid;gap:10px"><b style="font-size:1.1rem">Abrir caja</b>
-    <div class="paso"><span class="num">1</span><div><b>Cuenta el sencillo con el que recibes la caja</b><p class="mut" style="margin:2px 0 0">Escribe en pesos cuánto hay de cada tipo. Ejemplo: 4 billetes de $20.000 = 80000.${D.fondo ? ' Debes recibir <b>' + money(D.fondo) + '</b>.' : ''}</p></div></div>
+    <div class="paso"><span class="num">1</span><div><b>Cuenta el sencillo con el que recibes la caja</b><p class="mut" style="margin:2px 0 0">Escribe en pesos cuánto hay de cada tipo. Ejemplo: 4 billetes de $20.000 = 80000.${sencEsp().m ? ' Debes recibir <b>' + money(sencEsp().m) + '</b> (' + (sencEsp().de === 'turno' ? 'lo que dejó el turno anterior' : 'el sencillo de partida') + ').' : ''}</p></div></div>
     ${contadorHTML('a')}<div id="aper">${aperturaChk()}</div>
     <div class="paso"><span class="num">2</span><div><b>Abre la caja</b><p class="mut" style="margin:2px 0 0">Desde aquí se cuentan las ventas, los gastos y los retiros del turno.</p></div></div>
     <button class="btn-ok" data-act="tabrir">Abrir caja</button></div>`;
@@ -918,7 +927,7 @@ function cerrarCajaHTML(t) {
     <div class="paso"><span class="num">3</span><div><b>Tarjetas y transferencias</b><p class="mut" style="margin:2px 0 0">Anota el total del terminal de tarjetas y lo recibido por transferencia (0 si no hubo).</p></div></div>
     <label class="mut">Tarjetas: total según el terminal<input id="ctarj" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctarj')}"></label>
     <label class="mut">Transferencias recibidas<input id="ctrans" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctrans')}"></label>
-    <div class="paso"><span class="num">4</span><div><b>Sencillo que queda en caja${D.fondo ? ' (debe ser ' + money(D.fondo) + ')' : ''}</b><p class="mut" style="margin:2px 0 0">Separa el sencillo para vueltos y escribe qué billetes y monedas dejas. El resto del efectivo es de ventas y se retira.</p></div></div>
+    <div class="paso"><span class="num">4</span><div><b>Sencillo que queda en caja</b><p class="mut" style="margin:2px 0 0">Separa el sencillo para vueltos y escribe qué billetes y monedas dejas: es el que recibirá el turno siguiente (puede variar cada día). El resto del efectivo es de ventas y se retira.</p></div></div>
     ${contadorHTML('d')}
     <div class="paso"><span class="num">5</span><div><b>Cuadre con lo vendido</b></div></div>
     <div class="card" style="background:#f8fafc;padding:10px"><div id="cuadre">${cuadreHTML(t)}</div></div>
@@ -927,9 +936,9 @@ function cerrarCajaHTML(t) {
 /* ---------- Sencillo fijo y gastos pagados desde caja ---------- */
 const GTIPOS = ['Boleta', 'Factura', 'Sin documento'];
 function fondoHTML() {
-  return `<div class="card" style="margin-bottom:12px"><b>Sencillo fijo de la caja</b><p class="mut" style="margin:4px 0 8px">Es el dinero para dar vueltos que siempre debe quedar en la caja. Al cerrar, quien está en caja separa este monto, deja el detalle de billetes y monedas y retira el resto del efectivo de ventas.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="fondo-in" data-keep inputmode="numeric" autocomplete="off" placeholder="Ej.: 160000" style="flex:1;min-width:150px" value="${S.f['fondo-in'] === undefined ? (D.fondo || '') : fv('fondo-in')}"><button class="btn-ok" data-act="setfondo">Guardar sencillo fijo</button></div>
-    <div class="mut" style="margin-top:6px">Actual: <b>${D.fondo ? money(D.fondo) : 'sin definir'}</b></div></div>`;
+  return `<div class="card" style="margin-bottom:12px"><b>Sencillo de partida de la caja</b><p class="mut" style="margin:4px 0 8px">El sencillo ya no es fijo: cada turno (mañana o tarde) recibe lo que dejó el anterior. Este monto solo se usa para recibir la primera caja o al reiniciar el control; al guardarlo, el control parte de cero desde ese momento.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="fondo-in" data-keep inputmode="numeric" autocomplete="off" placeholder="Ej.: 160000" style="flex:1;min-width:150px" value="${S.f['fondo-in'] === undefined ? (D.fondo || '') : fv('fondo-in')}"><button class="btn-ok" data-act="setfondo">Guardar sencillo de partida</button></div>
+    <div class="mut" style="margin-top:6px">De partida: <b>${D.fondo ? money(D.fondo) : 'sin definir'}</b> · La próxima apertura debe recibir: <b>${money(sencEsp().m)}</b> (${sencEsp().de === 'turno' ? 'lo que dejó el turno anterior' : 'sencillo de partida'})</div></div>`;
 }
 /* Una fila de gasto. Los anulados quedan a la vista tachados (el registro nunca se borra). Solo se pueden anular los del turno abierto. */
 function gastoFila(g, editable) {
@@ -1005,7 +1014,7 @@ function turnoHTML() {
   if (!t) return `<h2>Caja</h2>${robiHTML()}${fondoHTML()}${abrirCajaHTML()}${gastosHistHTML()}
     <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
   const r = turnoRes(t);
-  return `<h2>Caja · turno abierto</h2>${robiHTML()}${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
+  return `<h2>Caja · turno de la ${turnoNom(t.abierto_at)}</h2>${robiHTML()}${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
   <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
     ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}${r.rt ? `<div class="row"><span>Retiros de la administradora</span><b>−${money(r.rt)}</b></div>` : ''}${r.pp ? `<div class="row"><span>Propinas pagadas a garzones</span><b>−${money(r.pp)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta gastos, retiros y propinas pagadas. No incluye la propina en efectivo entregada directo al garzón.</p></div>
@@ -1022,10 +1031,10 @@ function robiCtx() {
   const hayEf = DEN.some(([v]) => S.f[dnId('c', v)] !== undefined && S.f[dnId('c', v)] !== '');
   const hayD = DEN.some(([v]) => S.f[dnId('d', v)] !== undefined && S.f[dnId('d', v)] !== '');
   const hayA = DEN.some(([v]) => S.f[dnId('a', v)] !== undefined && S.f[dnId('a', v)] !== '');
-  const c = { quien: S.quien || '', fondo: D.fondo || 0, turno: null, apertura: { total: dnTotal('a'), escribio: hayA } };
+  const c = { quien: S.quien || '', esperado: sencEsp(), turno: null, apertura: { total: dnTotal('a'), escribio: hayA } };
   if (t) {
     const r = turnoRes(t);
-    c.turno = { monto_inicial: t.monto_inicial || 0, abierto_h: (Date.now() - +new Date(t.abierto_at)) / 3600000 };
+    c.turno = { monto_inicial: t.monto_inicial || 0, nombre: turnoNom(t.abierto_at), abierto_h: (Date.now() - +new Date(t.abierto_at)) / 3600000 };
     c.res = { cuentas: r.cuentas, vt: r.vt, esp: r.esp, tj: r.tj, tr: r.tr, pp: r.pp };
     c.cierre = { escribio: hayEf, ef: ec, tj: numF('ctarj'), tr: numF('ctrans'), dj: dnTotal('d'), hayD };
   }
@@ -1379,7 +1388,7 @@ function pasosHTML() {
     [1, 'Crear tu PIN de administradora en "Carta y mesas"', !!D.adminPin],
     [1, 'Agregar a los garzones y darles su PIN en "Garzones"', (D.garzones || []).some(g => g.on && g.pin)],
     [1, 'Tomar un pedido de prueba en una mesa y cobrarlo', (D.cuentas || []).length > 0],
-    [2, 'Definir el sencillo fijo en "Caja"', (D.fondo || 0) > 0],
+    [2, 'Definir el sencillo de partida en "Caja"', (D.fondo || 0) > 0],
     [2, 'Abrir la caja contando el sencillo', !!D.turno]
   ].filter(p => p[0] <= D.tramo);
   if (!pasos.some(p => !p[2])) return '';
@@ -1976,7 +1985,9 @@ document.addEventListener('click', async e => {
       else if (a === 'respaldo' && esAdm()) { try { await respaldo(); toast('Respaldo descargado', 'tk-l'); } catch (e) { alert('No se pudo hacer el respaldo: ' + e.message); } }
       else if (a === 'setfondo' && esAdm()) {
         const raw = String(S.f['fondo-in'] ?? D.fondo ?? '').replace(/\D/g, ''), v = raw ? Math.min(+raw, 100000000) : 0;
-        if (!fallo(await sb.from('resto_locales').update({ fondo_caja: v }).eq('id', D.id))) { delete S.f['fondo-in']; toast('Sencillo fijo guardado · ' + money(v), 'tk-l'); }
+        let rr = await sb.from('resto_locales').update({ fondo_caja: v, fondo_desde: new Date().toISOString() }).eq('id', D.id);
+        if (rr.error && /fondo_desde/i.test(rr.error.message || '')) rr = await sb.from('resto_locales').update({ fondo_caja: v }).eq('id', D.id);
+        if (!fallo(rr)) { delete S.f['fondo-in']; toast('Sencillo de partida guardado · ' + money(v), 'tk-l'); }
       }
       else if (a === 'gpedir' && D.turno) {
         const g = (D.gastos || []).find(x => x.id === d.id && x.turno_id === D.turno.id && !x.anul);
@@ -2039,13 +2050,12 @@ document.addEventListener('click', async e => {
       }
       else if (a === 'tcerrar' && D.turno) {
         const t = D.turno, r = turnoRes(t), open = D.comandas.filter(x => !x.cerrada).length;
-        const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim(), mal = dnBad('c').concat(dnBad('d')), dj = dnTotal('d'), fondo = D.fondo || 0, retiro = ec - dj;
+        const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim(), mal = dnBad('c').concat(dnBad('d')), dj = dnTotal('d'), retiro = ec - dj;
         const dEf = ec - r.esp, dTj = tj === null ? 0 : tj - r.tj, dTr = tr === null ? 0 : tr - r.tr;
         if (mal.length) alert('Revisa estos montos, no corresponden a billetes o monedas completos: ' + mal.map(([v, n]) => n).join(', ') + '.');
         else if (tj === null || tr === null) alert('Escribe el total de tarjetas y el de transferencias (0 si no hubo).');
         else if (dj > ec) alert('El sencillo que dejas en caja (' + money(dj) + ') es mayor que el efectivo contado (' + money(ec) + '). Revisa los montos.');
-        else if (!dj && !fondo && !confirm('No anotaste el sencillo que queda en caja. ¿Cerrar sin dejar sencillo?')) { /* cancelado */ }
-        else if (fondo && dj !== fondo && !nota) alert('El sencillo que queda en caja (' + money(dj) + ') no es el sencillo fijo (' + money(fondo) + '). Déjalo completo o escribe una observación que explique por qué.');
+        else if (!dj && !confirm('No anotaste el sencillo que queda en caja. ¿Cerrar sin dejar sencillo?')) { /* cancelado */ }
         else if ((dEf || dTj || dTr) && !nota) alert('La caja no cuadra. Escribe una observación que explique la diferencia antes de cerrar.');
         else if (r.pp && !confirm('Propinas a pagar en efectivo desde la caja: ' + money(r.pp) + '\n' + r.propGar.map(o => o.n + ': ' + money(o.m)).join('\n') + '\n\n¿Ya entregaste estas propinas a los garzones? Si no, entrégalas y vuelve a contar el efectivo antes de cerrar.')) { /* cancelado */ }
         else if (corteDe(t) && !confirm('Vas a cerrar la caja SOLO hasta el ' + diaCorte(corteDe(t)) + ' a las 23:59.\n\nSe cierra con ' + r.cuentas + ' cuenta' + (r.cuentas === 1 ? '' : 's') + ' y ventas por ' + money(r.vt) + '.\nTodo lo cobrado, gastado o retirado después pasa a un turno nuevo que parte con ' + money(dj) + ' de sencillo.\n\nEl cierre no se puede deshacer. ¿Continuar?')) { /* cancelado */ }

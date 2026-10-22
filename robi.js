@@ -7,36 +7,37 @@
   const dif = (d, que) => (d > 0 ? 'sobran ' : 'faltan ') + $(Math.abs(d)) + (que ? ' ' + que : '');
 
   /* Entrada (todo ya calculado por la app):
-     { quien, fondo, turno: null | {monto_inicial, abierto_h}, apertura: {total, escribio},
+     { quien, esperado: {m, de: 'turno'|'partida'} (sencillo que se debe recibir: lo que dejó el turno anterior), turno: null | {monto_inicial, abierto_h}, apertura: {total, escribio},
        res: {cuentas, vt, esp, tj, tr, pp}, cierre: {escribio, ef, tj, tr, dj, hayD} }
      Salida: { tono: 'ok'|'aviso'|'mal'|'hola', txt, paso } */
   function mensaje(c) {
     const nom = c.quien ? ', ' + c.quien : '';
-    const fondo = c.fondo || 0;
+    const esp = c.esperado || { m: 0, de: 'partida' }, fondo = esp.m || 0;
+    const origen = esp.de === 'turno' ? 'lo que dejó el turno anterior' : 'el sencillo de partida';
 
     // ---- Caja cerrada: guía de apertura ----
     if (!c.turno) {
       const a = c.apertura || {};
       if (!a.escribio) {
         return { tono: 'hola', paso: 'Apertura · paso 1 de 2',
-          txt: '¡Hola' + nom + '! Vamos a abrir la caja. Cuenta el sencillo billete por billete y escríbelo abajo.' + (fondo ? ' Debes recibir ' + $(fondo) + '.' : '') };
+          txt: '¡Hola' + nom + '! Vamos a abrir la caja. Cuenta el sencillo billete por billete y escríbelo abajo.' + (fondo ? ' Debes recibir ' + $(fondo) + ' (' + origen + ').' : '') };
       }
       if (fondo && a.total !== fondo) {
         return { tono: 'aviso', paso: 'Apertura · paso 1 de 2',
-          txt: 'Ojo: ' + dif(a.total - fondo, 'respecto del sencillo fijo de ' + $(fondo)) + '. Vuelve a contar con calma antes de abrir. Si el sencillo realmente cambió, avísale a la administradora.' };
+          txt: 'Ojo: ' + dif(a.total - fondo, 'respecto de ' + origen + ' (' + $(fondo) + ')') + '. Vuelve a contar con calma antes de abrir. Si el sencillo realmente cambió, avísale a la administradora.' };
       }
       return { tono: 'ok', paso: 'Apertura · paso 2 de 2',
-        txt: '¡Perfecto! ' + (fondo ? 'El sencillo coincide con ' + $(fondo) + '. ' : 'Abres con ' + $(a.total) + '. ') + 'Ahora toca el botón verde "Abrir caja".' };
+        txt: '¡Perfecto! ' + (fondo ? 'El sencillo coincide con ' + origen + ' (' + $(fondo) + '). ' : 'Abres con ' + $(a.total) + '. ') + 'Ahora toca el botón verde "Abrir caja".' };
     }
 
     // ---- Caja abierta ----
     const t = c.turno, r = c.res || {}, k = c.cierre || {};
     const avisos = [];
-    if (fondo && !(t.monto_inicial > 0)) avisos.push('Esta caja se abrió sin registrar sencillo, por eso el cierre puede mostrar una diferencia que no es real. Avísale a la administradora.');
+    if (fondo && !(t.monto_inicial > 0)) avisos.push('Esta caja se abrió sin registrar sencillo, y se esperaba recibir ' + $(fondo) + '. Por eso el cierre puede mostrar una diferencia que no es real. Avísale a la administradora.');
     if (t.abierto_h > 16) avisos.push('Este turno lleva ' + Math.round(t.abierto_h) + ' horas abierto. Conviene cerrar la caja al terminar cada día.');
 
     if (!k.escribio && k.tj == null && k.tr == null) {
-      const base = 'Caja abierta. Van ' + (r.cuentas || 0) + (r.cuentas === 1 ? ' cuenta' : ' cuentas') + ' y ' + $(r.vt || 0) + ' vendidos. Cuando termine el día, te guío para cerrar.';
+      const base = 'Turno de la ' + (t.nombre || 'jornada') + ' abierto. Van ' + (r.cuentas || 0) + (r.cuentas === 1 ? ' cuenta' : ' cuentas') + ' y ' + $(r.vt || 0) + ' vendidos. Cuando termines el turno, te guío para cerrar.';
       const pp = r.pp ? ' Antes de contar, paga ' + $(r.pp) + ' de propinas a los garzones.' : '';
       return { tono: avisos.length ? 'aviso' : 'hola', paso: 'Caja abierta', txt: [base + pp].concat(avisos).join(' ') };
     }
@@ -46,8 +47,7 @@
     if (k.escribio && r.esp != null && k.ef !== r.esp) pasos.push({ tono: 'mal', txt: 'En efectivo ' + dif(k.ef - r.esp) + '. Recuenta los billetes y las monedas. Recuerda que el sistema ya descontó gastos, retiros y propinas pagadas.' });
     if (k.tj != null && k.tj !== r.tj) pasos.push({ tono: 'mal', txt: 'Las tarjetas no cuadran: ' + dif(k.tj - r.tj) + '. Mira el comprobante de la máquina y confirma que sea solo de este turno.' });
     if (k.tr != null && k.tr !== r.tr) pasos.push({ tono: 'mal', txt: 'Las transferencias no cuadran: ' + dif(k.tr - r.tr) + '. Revisa lo recibido en el banco durante el turno.' });
-    if (k.hayD && fondo && k.dj !== fondo) pasos.push({ tono: 'aviso', txt: 'El sencillo que dejas en caja debería ser ' + $(fondo) + ' y pusiste ' + $(k.dj) + '.' });
-    if (k.escribio && !k.hayD) pasos.push({ tono: 'aviso', txt: 'Falta anotar el sencillo que queda en la caja' + (fondo ? ' (debe ser ' + $(fondo) + ')' : '') + '.' });
+    if (k.escribio && !k.hayD) pasos.push({ tono: 'aviso', txt: 'Falta anotar el sencillo que dejas en la caja: es el que recibirá el turno siguiente.' });
     if (k.escribio && k.tj == null) pasos.push({ tono: 'aviso', txt: 'Falta anotar el total de tarjetas del terminal (escribe 0 si no hubo).' });
     if (k.escribio && k.tr == null) pasos.push({ tono: 'aviso', txt: 'Falta anotar las transferencias recibidas (escribe 0 si no hubo).' });
     if (!k.escribio) pasos.push({ tono: 'aviso', txt: 'Ahora cuenta el efectivo de la caja' + (r.esp != null ? '. Debe haber ' + $(r.esp) : '') + '.' });
@@ -55,7 +55,7 @@
     const mal = pasos.find(p => p.tono === 'mal');
     if (mal) return { tono: 'mal', paso: 'Cierre de caja', txt: mal.txt + ' Cuando termines, escribe una observación para explicar la diferencia.' };
     if (pasos.length) return { tono: 'aviso', paso: 'Cierre de caja', txt: pasos[0].txt };
-    return { tono: 'ok', paso: 'Cierre de caja', txt: '¡Todo cuadra' + nom + '! Escribe una observación si quieres y toca "Cerrar caja". ¡Buen trabajo hoy!' };
+    return { tono: 'ok', paso: 'Cierre de caja', txt: '¡Todo cuadra' + nom + '! Dejas ' + $(k.dj || 0) + ' de sencillo: ese monto debe recibir el próximo turno. Escribe una observación si quieres y toca "Cerrar caja". ¡Buen trabajo!' };
   }
 
   /* El robot: cuerpo redondeado, antena con corazón, ojos grandes, sonrisa y mejillas. Diseño propio de Protech. */
