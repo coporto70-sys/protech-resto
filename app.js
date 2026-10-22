@@ -1048,21 +1048,22 @@ function robiHTML() {
   if (!robiActivo()) return '';
   if (robiLS('pr-robi-off') === '1') return `<div style="margin-bottom:8px"><button class="btn-line" data-act="robi-mostrar">🤖 Llamar a Robi</button></div>`;
   const b = robiBurbuja(), voz = window.Robi.voz.ok(); robiUlt = b.m.txt;
-  return `<div class="card robi ${b.m.tono}" id="robi"><div class="robi-cara">${window.Robi.svg(b.m.tono, false)}</div>
-    <div class="robi-cuerpo"><div class="robi-nombre">Robi <span class="mut">· tu ayudante de caja</span></div><div id="robi-b" aria-live="polite">${b.html}</div>
-    <div class="robi-btns">${voz ? '<button class="btn-line" data-act="robi-voz">🔊 Escuchar</button>' : ''}${voz ? `<label class="mut"><input type="checkbox" data-act="robi-auto" ${robiLS('pr-robi-auto') === '1' ? 'checked' : ''}> Hablar solo</label>` : ''}<button class="btn-line" data-act="robi-ocultar">Ocultar</button></div></div></div>`;
+  const min = robiLS('pr-robi-min') === '1';
+  return `<div class="robi ${b.m.tono}${min ? ' min' : ''}" id="robi"><div class="robi-globo"><div class="robi-nombre">Robi <button class="robi-x" data-act="robi-min" title="Esconder el globo" aria-label="Esconder el globo">–</button></div><div id="robi-b" aria-live="polite">${b.html}</div>
+    <div class="robi-btns">${voz ? '<button class="btn-line" data-act="robi-voz">🔊 Escuchar</button>' : ''}${voz ? `<label class="mut"><input type="checkbox" data-act="robi-auto" ${robiLS('pr-robi-auto') === '1' ? 'checked' : ''}> Hablar solo</label>` : ''}<button class="btn-line" data-act="robi-ocultar">Ocultar a Robi</button></div></div>
+    <button class="robi-cara" data-act="robi-min" title="Robi" aria-label="Robi, tu ayudante de caja">${window.Robi.svg(b.m.tono, false)}<span class="robi-sombra"></span></button></div>`;
 }
 let robiUlt = '';
 function robiRefresh() {
   const r = document.getElementById('robi'); if (!r || !D) return;
   const b = robiBurbuja(), el = document.getElementById('robi-b');
   if (el) el.innerHTML = b.html;
-  r.className = 'card robi ' + b.m.tono;
-  const cara = r.querySelector('.robi-cara'); if (cara) cara.innerHTML = window.Robi.svg(b.m.tono, window.Robi.voz.hablando());
+  r.className = 'robi ' + b.m.tono + (robiLS('pr-robi-min') === '1' ? ' min' : '');
+  const cara = r.querySelector('.robi-cara'); if (cara) cara.innerHTML = window.Robi.svg(b.m.tono, window.Robi.voz.hablando()) + '<span class="robi-sombra"></span>';
   if (b.m.txt !== robiUlt) { robiUlt = b.m.txt; if (robiLS('pr-robi-auto') === '1' && robiLS('pr-robi-ya') === '1') robiHablar(b.m.txt); }
 }
 function robiHablar(txt) {
-  const mover = h => { const c = document.querySelector('#robi .robi-cara'); if (c) c.classList.toggle('habla', h); };
+  const mover = h => { const c = document.querySelector('#robi .robi-svg'); if (c) c.classList.toggle('habla', h); };
   mover(true); if (!window.Robi.voz.decir(txt, () => mover(false))) mover(false);
 }
 /* ---------- Inventario de producción: lo que se compra para producir (mermeladas, tarros de duraznos, cremas…). Aparte de la carta. ---------- */
@@ -2156,6 +2157,7 @@ document.addEventListener('click', async e => {
         if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) { const r = await pinSet('admin', 'admin', ''); if (r.error && sinFuncion(r.error)) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id)); else fallo(r); }
       }
       else if (a === 'robi-voz') { robiLS('pr-robi-ya', '1'); const b = robiBurbuja(); if (window.Robi.voz.hablando()) { window.Robi.voz.callar(); robiRefresh(); } else robiHablar(b.m.txt); }
+      else if (a === 'robi-min') { robiLS('pr-robi-min', robiLS('pr-robi-min') === '1' ? null : '1'); const r = document.getElementById('robi'); if (r) r.classList.toggle('min', robiLS('pr-robi-min') === '1'); }
       else if (a === 'robi-ocultar') { window.Robi.voz.callar(); robiLS('pr-robi-off', '1'); render(); }
       else if (a === 'robi-mostrar') { robiLS('pr-robi-off', null); render(); }
       else if (a === 'settramo' && esIng()) { const v = Math.min(4, Math.max(1, Math.round(+$('#tramo-sel').value) || 4)); if (!fallo(await sb.from('resto_locales').update({ tramo: v }).eq('id', D.id))) toast('Tramo ' + v + ' · ' + TRAMOS[v - 1].nombre, 'tk-l'); }

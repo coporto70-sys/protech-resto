@@ -58,21 +58,20 @@
     return { tono: 'ok', paso: 'Cierre de caja', txt: '¡Todo cuadra' + nom + '! Dejas ' + $(k.dj || 0) + ' de sencillo: ese monto debe recibir el próximo turno. Escribe una observación si quieres y toca "Cerrar caja". ¡Buen trabajo!' };
   }
 
-  /* El robot: cuerpo redondeado, antena con corazón, ojos grandes, sonrisa y mejillas. Diseño propio de Protech. */
+  /* El robot: una esfera amigable que flota, con antena de corazón, ojos grandes, sonrisa y mejillas. Diseño propio de Protech. */
   function svg(tono, habla) {
-    const boca = tono === 'mal' ? 'M42 62 Q50 56 58 62' : tono === 'aviso' ? 'M42 60 L58 60' : 'M40 58 Q50 68 60 58';
-    const cejas = tono === 'mal' ? '<path d="M33 37 L43 41 M67 37 L57 41" stroke="#7c2d12" stroke-width="2.5" stroke-linecap="round"/>' : '';
-    return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="0 0 100 110" aria-hidden="true" focusable="false">' +
-      '<line x1="50" y1="14" x2="50" y2="24" stroke="#78716c" stroke-width="3" stroke-linecap="round"/>' +
+    const boca = tono === 'mal' ? 'M41 66 Q50 60 59 66' : tono === 'aviso' ? 'M42 64 L58 64' : 'M40 62 Q50 72 60 62';
+    const cejas = tono === 'mal' ? '<path d="M31 41 L43 46 M69 41 L57 46" stroke="#7c2d12" stroke-width="2.6" stroke-linecap="round"/>' : '';
+    return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="0 0 100 104" aria-hidden="true" focusable="false">' +
+      '<line x1="50" y1="14" x2="50" y2="22" stroke="#78716c" stroke-width="3" stroke-linecap="round"/>' +
       '<path class="robi-cor" d="M50 14 C44 5 34 9 38 16 C41 21 50 25 50 25 C50 25 59 21 62 16 C66 9 56 5 50 14Z" fill="#f43f5e"/>' +
-      '<rect x="22" y="24" width="56" height="52" rx="20" fill="#fff7ed" stroke="#d9480f" stroke-width="3.5"/>' +
-      '<rect x="14" y="40" width="8" height="18" rx="4" fill="#d9480f"/><rect x="78" y="40" width="8" height="18" rx="4" fill="#d9480f"/>' +
-      '<g class="robi-ojos"><ellipse cx="38" cy="46" rx="6.5" ry="7.5" fill="#1f1814"/><ellipse cx="62" cy="46" rx="6.5" ry="7.5" fill="#1f1814"/>' +
-      '<circle cx="40" cy="43.5" r="2.3" fill="#fff"/><circle cx="64" cy="43.5" r="2.3" fill="#fff"/></g>' + cejas +
-      '<circle cx="29" cy="58" r="4.5" fill="#fda4af" opacity=".75"/><circle cx="71" cy="58" r="4.5" fill="#fda4af" opacity=".75"/>' +
+      '<circle cx="9" cy="58" r="6" fill="#d9480f"/><circle cx="91" cy="58" r="6" fill="#d9480f"/>' +
+      '<circle cx="50" cy="58" r="40" fill="#fff7ed" stroke="#d9480f" stroke-width="3.5"/>' +
+      '<path d="M22 40 Q30 24 48 22" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".9"/>' +
+      '<g class="robi-ojos"><ellipse cx="37" cy="52" rx="6.5" ry="7.5" fill="#1f1814"/><ellipse cx="63" cy="52" rx="6.5" ry="7.5" fill="#1f1814"/>' +
+      '<circle cx="39" cy="49.5" r="2.3" fill="#fff"/><circle cx="65" cy="49.5" r="2.3" fill="#fff"/></g>' + cejas +
+      '<circle cx="27" cy="65" r="5" fill="#fda4af" opacity=".75"/><circle cx="73" cy="65" r="5" fill="#fda4af" opacity=".75"/>' +
       '<path class="robi-boca" d="' + boca + '" fill="none" stroke="#7c2d12" stroke-width="3" stroke-linecap="round"/>' +
-      '<rect x="30" y="78" width="40" height="26" rx="10" fill="#d9480f"/>' +
-      '<path d="M50 99 C45 93 39 96 42 91 C44 88 50 91 50 91 C50 91 56 88 58 91 C61 96 55 93 50 99Z" fill="#fff7ed"/>' +
       '</svg>';
   }
 
