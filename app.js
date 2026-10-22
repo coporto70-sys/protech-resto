@@ -30,6 +30,18 @@ const esIng = () => S.rol === 'ingeniero';
 const esAdm = () => !rolesOn() || S.rol === 'admin' || esIng();
 const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'resumen', 'inv', 'prod', 'abast', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina'] };
 TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos los paneles */
+/* Tramos: Resto se activa por etapas. La administradora ve solo las pestañas de su tramo y de los anteriores; las demás quedan con candado.
+   Solo Protech (el ingeniero) cambia el tramo del local. Sin tramo definido (migración 027) todo queda abierto. */
+const TAB_NOM = { mesas: 'Mesas', cocina: 'Cocina', cafe: 'Cafetería', carta: 'Carta y mesas', garz: 'Garzones', turno: 'Caja', caja: 'Ventas', resumen: 'Resumen', coms: 'Comandas', inv: 'Inventario', resv: 'Reservas', bit: 'Registro de cambios', prod: 'Inventario de producción', abast: 'Compras y recetas' };
+const TRAMOS = [
+  { n: 1, nombre: 'Salir a vender', tabs: ['mesas', 'cocina', 'cafe', 'carta', 'garz'] },
+  { n: 2, nombre: 'Cuadrar el día', tabs: ['turno', 'caja', 'resumen', 'coms'] },
+  { n: 3, nombre: 'Control del local', tabs: ['inv', 'resv', 'bit'] },
+  { n: 4, nombre: 'Producción y costos', tabs: ['prod', 'abast'] }
+];
+const TAB_TRAMO = {}; TRAMOS.forEach(t => t.tabs.forEach(k => { TAB_TRAMO[k] = t.n; }));
+const tabBloqueada = k => !!D && (TAB_TRAMO[k] || 1) > (D.tramo || 4);
+const veTodo = () => esIng() || !!S.admin; /* Protech ve todo, aunque el tramo del local esté bloqueado */
 /* Cobrar en caja: la administradora autoriza a cada garzón (necesita PIN). Los demás toman pedidos pero no cobran. */
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
 const puedeCobrar = () => !rolesOn() || S.rol === 'admin' || esIng() || (S.rol === 'garzon' && cajaGarzon());
@@ -41,7 +53,9 @@ const esGarzonRol = () => rolesOn() && S.rol === 'garzon';
 const mesaPropia = n => { const d = duenoMesa(n); return !esGarzonRol() || !d || d === S.quien; };
 const puedeVerMesa = n => mesaPropia(n) || cajaGarzon();
 const puedeCobrarEsta = n => puedeCobrarMesa() && puedeVerMesa(n);
-const misTabs = () => !rolesOn() ? TABS.admin : S.rol === 'garzon' && cajaGarzon() ? ['mesas', 'turno'] : (TABS[S.rol] || []);
+const misTabs0 = () => !rolesOn() ? TABS.admin : S.rol === 'garzon' && cajaGarzon() ? ['mesas', 'turno'] : (TABS[S.rol] || []);
+/* La administradora (y el ingeniero) ven las pestañas bloqueadas con candado; garzones y cocina simplemente no las ven */
+const misTabs = () => esAdm() ? misTabs0() : misTabs0().filter(k => !tabBloqueada(k));
 async function hpin(scope, pin) {
   const b = new TextEncoder().encode(D.id + ':' + scope + ':' + pin);
   const h = await crypto.subtle.digest('SHA-256', b);
@@ -268,7 +282,7 @@ async function cargar(parcial) {
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
-  D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false, v: r.vence || '' })), recetas: ((rec && rec.data) || []).map(r => ({ id: r.id, m: r.menu_id, i: r.insumo_id, q: +r.cantidad })), provs: ((prv && prv.data) || []).filter(r => r.activo !== false).map(r => ({ id: r.id, n: r.nombre, tel: r.telefono || '', mail: r.correo || '' })), ocs: ((oco && oco.data) || []).map(r => ({ id: r.id, pv: r.proveedor, est: r.estado, items: r.items || [], nota: r.nota || '', t: +new Date(r.created_at) })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', mOrig: r.monto_original == null ? null : +r.monto_original, edPor: r.editado_por || '', edMot: r.editado_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
+  D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false, v: r.vence || '' })), recetas: ((rec && rec.data) || []).map(r => ({ id: r.id, m: r.menu_id, i: r.insumo_id, q: +r.cantidad })), provs: ((prv && prv.data) || []).filter(r => r.activo !== false).map(r => ({ id: r.id, n: r.nombre, tel: r.telefono || '', mail: r.correo || '' })), ocs: ((oco && oco.data) || []).map(r => ({ id: r.id, pv: r.proveedor, est: r.estado, items: r.items || [], nota: r.nota || '', t: +new Date(r.created_at) })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', mOrig: r.monto_original == null ? null : +r.monto_original, edPor: r.editado_por || '', edMot: r.editado_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, tramo: Math.min(4, Math.max(1, Math.round(+loc.data.tramo) || 4)), adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
@@ -370,7 +384,7 @@ function loginHTML() {
 }
 function shell(inner) {
   const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['resumen', 'Resumen'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['abast', 'Compras y recetas' + (vencen().length ? ' ⚠' : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas'], ['bit', 'Registro de cambios']];
-  const tabs = todas.filter(t => misTabs().includes(t[0]));
+  const tabs = todas.filter(t => misTabs().includes(t[0])).map(([k, n]) => tabBloqueada(k) ? [k, '🔒 ' + n] : [k, n]);
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
@@ -1006,7 +1020,7 @@ const fmtQ = n => (Math.round(n * 100) / 100).toLocaleString('es-CL');
 /* ---------- Registro de cambios (quién cambió qué y cuándo) ---------- */
 const BIT_TABLA = { resto_menu: 'Carta', resto_garzones: 'Garzón', resto_cocineras: 'Cocinera', resto_locales: 'Local', resto_insumos: 'Inventario de producción', resto_turnos: 'Caja', resto_gastos: 'Gasto de caja', resto_cuentas: 'Cobro' };
 const BIT_ACC = { INSERT: 'agregó', UPDATE: 'cambió', DELETE: 'eliminó' };
-const BIT_CAMPO = { nombre: 'nombre', categoria: 'sección', precio: 'precio', activo: 'activo', estacion: 'se prepara en', codigo: 'código', stock_min: 'mínimo', mesas: 'mesas (piso 1)', mesas2: 'mesas (piso 2)', fondo_caja: 'sencillo fijo', qr_activo: 'pedido por QR', pin: 'PIN', caja: 'cobra en caja', unidad: 'unidad', costo_unit: 'costo unitario', monto: 'monto', monto_original: 'monto original', metodo: 'forma de pago', metodo_original: 'forma de pago original', metodo_editado_por: 'corregido por', metodo_editado_motivo: 'motivo de la corrección', metodo_editado_at: 'corregido', propina_tarj: 'propina extra tarjeta', editado_por: 'corregido por', editado_at: 'corregido', editado_motivo: 'motivo de la corrección', anulado: 'anulado', anulado_por: 'anulado por', anulado_motivo: 'motivo', anul_pedida_por: 'anulación pedida por', anul_pedida_motivo: 'motivo pedido', tipo: 'documento', numero: 'número', proveedor: 'proveedor', detalle: 'detalle', cerrado_at: 'cerrado', cerrado_por: 'cerrado por', abierto_por: 'abierto por', monto_inicial: 'sencillo inicial', contado_efectivo: 'efectivo contado', diferencia: 'diferencia', esperado_efectivo: 'efectivo esperado' };
+const BIT_CAMPO = { nombre: 'nombre', categoria: 'sección', precio: 'precio', activo: 'activo', estacion: 'se prepara en', codigo: 'código', stock_min: 'mínimo', mesas: 'mesas (piso 1)', mesas2: 'mesas (piso 2)', fondo_caja: 'sencillo fijo', tramo: 'tramo', qr_activo: 'pedido por QR', pin: 'PIN', caja: 'cobra en caja', unidad: 'unidad', costo_unit: 'costo unitario', monto: 'monto', monto_original: 'monto original', metodo: 'forma de pago', metodo_original: 'forma de pago original', metodo_editado_por: 'corregido por', metodo_editado_motivo: 'motivo de la corrección', metodo_editado_at: 'corregido', propina_tarj: 'propina extra tarjeta', editado_por: 'corregido por', editado_at: 'corregido', editado_motivo: 'motivo de la corrección', anulado: 'anulado', anulado_por: 'anulado por', anulado_motivo: 'motivo', anul_pedida_por: 'anulación pedida por', anul_pedida_motivo: 'motivo pedido', tipo: 'documento', numero: 'número', proveedor: 'proveedor', detalle: 'detalle', cerrado_at: 'cerrado', cerrado_por: 'cerrado por', abierto_por: 'abierto por', monto_inicial: 'sencillo inicial', contado_efectivo: 'efectivo contado', diferencia: 'diferencia', esperado_efectivo: 'efectivo esperado' };
 const bitVal = (k, v) => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v ? 'sí' : 'no') : ['precio', 'monto', 'monto_original', 'fondo_caja', 'monto_inicial', 'contado_efectivo', 'diferencia', 'esperado_efectivo', 'costo_unit'].includes(k) && typeof v === 'number' ? money(v) : String(v).length > 60 ? String(v).slice(0, 60) + '…' : String(v);
 async function cargarBit() {
   S.bitCarg = true;
@@ -1227,7 +1241,7 @@ function cartaHTML() {
   return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
     ${buscaHTML('q-carta', 'Buscar plato o producto de la carta…')}${filtra(l.menu, 'q-carta').map(i =>`<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
       <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="opcedit" data-id="${i.id}" title="Opciones rápidas para la comanda">Opciones${i.o ? ' ✓' : ''}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
-  <div><div class="card" style="display:grid;gap:8px"><b>Agregar plato</b><p class="mut" style="margin:0">Aquí solo se agregan productos para la venta. Lo que compras para producirlos (mermeladas, tarros de duraznos, cremas…) va en la pestaña Inventario de producción.</p>
+  <div>${esIng() ? tramosCardHTML() : ''}<div class="card" style="display:grid;gap:8px"><b>Agregar plato</b><p class="mut" style="margin:0">Aquí solo se agregan productos para la venta. Lo que compras para producirlos (mermeladas, tarros de duraznos, cremas…) va en la pestaña Inventario de producción.</p>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <input id="ap" type="number" inputmode="numeric" placeholder="Precio">
     <input id="acb" autocomplete="off" placeholder="Código de barras (opcional, escanéalo aquí)">
@@ -1298,7 +1312,43 @@ function renderInner(app) {
   if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
   const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, abast: abastHTML, resumen: resumenHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, bit: bitHTML, admin: adminHTML }[S.view];
-  app.innerHTML = shell(v());
+  const bloq = tabBloqueada(S.view) && !veTodo();
+  const aviso = tabBloqueada(S.view) && veTodo() ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--brand)">🔒 Esta pestaña está <b>bloqueada para la administradora</b> (el local está en el tramo ${D.tramo}). Tú la ves completa como Protech.</div>` : '';
+  const pasos = S.view === 'mesas' && esAdm() && S.mesa === null && !S.mos ? pasosHTML() : '';
+  app.innerHTML = shell(aviso + pasos + (bloq ? bloqueadoHTML(S.view) : v()));
+}
+
+/* ---------- Tramos: pestaña bloqueada, primeros pasos y selector de Protech ---------- */
+function bloqueadoHTML(k) {
+  const n = TAB_TRAMO[k] || 1, t = TRAMOS[n - 1], hoy = TRAMOS[D.tramo - 1];
+  return `<div class="card" style="text-align:center;padding:24px"><div style="font-size:2.4rem">🔒</div>
+    <h2 style="margin:6px 0">${esc(TAB_NOM[k] || '')} se activa en el tramo ${n}</h2>
+    <p class="mut">Resto se activa por tramos para que lo aprendas paso a paso. Esta pestaña es del tramo <b>${n} · ${esc(t.nombre)}</b>. Ahora estás en el tramo <b>${D.tramo} · ${esc(hoy.nombre)}</b>.</p>
+    <div style="text-align:left;max-width:440px;margin:12px auto">${TRAMOS.map(x => `<div class="row"><div>${x.n <= D.tramo ? '✅' : '🔒'} <b>Tramo ${x.n} · ${esc(x.nombre)}</b><div class="mut">${x.tabs.map(y => esc(TAB_NOM[y])).join(' · ')}</div></div></div>`).join('')}</div>
+    <p class="mut">Cuando domines el tramo actual, pídele a Protech que active el siguiente.</p>
+    <a class="btn" style="display:inline-block;text-decoration:none" href="https://wa.me/56939473588" target="_blank" rel="noopener">Pedir a Protech el tramo ${n}</a>
+    <button class="btn-line" data-act="tab" data-v="mesas">Volver a Mesas</button></div>`;
+}
+function pasosHTML() {
+  if (!D || D.tramo >= 4) return '';
+  const pasos = [
+    [1, 'Cargar la carta (platos y precios) en "Carta y mesas"', L().menu.length > 0],
+    [1, 'Crear tu PIN de administradora en "Carta y mesas"', !!D.adminPin],
+    [1, 'Agregar a los garzones y darles su PIN en "Garzones"', (D.garzones || []).some(g => g.on && g.pin)],
+    [1, 'Tomar un pedido de prueba en una mesa y cobrarlo', (D.cuentas || []).length > 0],
+    [2, 'Definir el sencillo fijo en "Caja"', (D.fondo || 0) > 0],
+    [2, 'Abrir la caja contando el sencillo', !!D.turno]
+  ].filter(p => p[0] <= D.tramo);
+  if (!pasos.some(p => !p[2])) return '';
+  return `<div class="card" style="margin-bottom:12px"><b>Primeros pasos · tramo ${D.tramo} (${esc(TRAMOS[D.tramo - 1].nombre)})</b>
+    ${pasos.map(p => `<div class="row"><div>${p[2] ? '✅' : '⬜'} ${esc(p[1])}</div></div>`).join('')}</div>`;
+}
+function tramosCardHTML() {
+  return `<div class="card" style="display:grid;gap:8px;margin-bottom:12px;border:2px solid var(--brand)"><b>Tramos de Resto (solo Protech)</b>
+    <p class="mut" style="margin:0">Define qué pestañas ve la administradora. Hoy: <b>tramo ${D.tramo}</b>.</p>
+    <select id="tramo-sel">${TRAMOS.map(t => `<option value="${t.n}" ${t.n === D.tramo ? 'selected' : ''}>Tramo ${t.n} · ${esc(t.nombre)}</option>`).join('')}</select>
+    <div class="mut">${TRAMOS.map(t => `<b>${t.n}.</b> ${t.tabs.map(k => esc(TAB_NOM[k])).join(', ')}`).join('<br>')}</div>
+    <button class="btn-ok" data-act="settramo">Guardar tramo</button></div>`;
 }
 
 /* ---------- QR de las mesas: una hoja imprimible, un QR por mesa ---------- */
@@ -2051,6 +2101,7 @@ document.addEventListener('click', async e => {
       else if (a === 'quitarpin') {
         if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) { const r = await pinSet('admin', 'admin', ''); if (r.error && sinFuncion(r.error)) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id)); else fallo(r); }
       }
+      else if (a === 'settramo' && esIng()) { const v = Math.min(4, Math.max(1, Math.round(+$('#tramo-sel').value) || 4)); if (!fallo(await sb.from('resto_locales').update({ tramo: v }).eq('id', D.id))) toast('Tramo ' + v + ' · ' + TRAMOS[v - 1].nombre, 'tk-l'); }
       else if (a === 'qrtoggle' && esAdm()) { fallo(await sb.from('resto_locales').update({ qr_activo: !L().qr }).eq('id', D.id)); }
       else if (a === 'qrimprimir' && esAdm()) { imprimirQR(); }
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }

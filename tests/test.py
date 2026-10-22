@@ -705,4 +705,60 @@ def CORTE2(pg):
     check('CORTE2: sin la migración 025 no se cierra nada y avisa', len(T)==1 and T[0]['cerrado_at'] is None)
 e=run({'email':'u','role':'','db':corte_db(),'sinCorte':True},CORTE2,LS_ADM); print('ERR CORTE2',e)
 
+# --- TRAMOS: Resto se activa por etapas (1 salir a vender · 2 cuadrar el día · 3 control del local · 4 producción y costos)
+def tramo_db(n):
+    d=db_roles()
+    if n is not None: d['resto_locales'][0]['tramo']=n
+    return d
+tabsx=lambda pg: pg.eval_on_selector_all('nav button[data-act="tab"]','b=>b.map(x=>x.innerText.trim())')
+hay=lambda t,n: any(x==n or x.startswith(n+' ⚠') for x in t)  # el nombre puede llevar una insignia ⚠
+def TR1(pg):
+    t=tabsx(pg)
+    check('TRAMOS: en el tramo 2 la administradora ve Caja sin candado', 'Caja' in t and '🔒 Caja' not in t)
+    check('TRAMOS: Inventario y Reservas aparecen con candado (tramo 3)', hay(t,'🔒 Inventario') and hay(t,'🔒 Reservas'))
+    check('TRAMOS: Inventario de producción y Compras con candado (tramo 4)', hay(t,'🔒 Inventario de producción') and hay(t,'🔒 Compras y recetas'))
+    pg.click('[data-act="tab"][data-v="prod"]'); pg.wait_for_timeout(300)
+    x=pg.inner_text('#app')
+    check('TRAMOS: la pestaña bloqueada explica el tramo y no muestra el contenido', 'se activa en el tramo 4' in x and 'Pedir a Protech' in x and 'Agregar insumo' not in x)
+    check('TRAMOS: el aviso muestra los 4 tramos con su estado', x.count('Tramo ')>=4 and '✅' in x and '🔒' in x)
+    pg.click('[data-act="tab"][data-v="inv"]'); pg.wait_for_timeout(300)
+    check('TRAMOS: Inventario dice tramo 3', 'se activa en el tramo 3' in pg.inner_text('#app'))
+    nav_caja(pg)
+    check('TRAMOS: Caja sí funciona en el tramo 2', 'se activa' not in pg.inner_text('#app') and 'Sencillo fijo' in pg.inner_text('#app'))
+    check('TRAMOS: la administradora no ve el selector de tramos', pg.locator('#tramo-sel').count()==0)
+e=run({'email':'u','role':'','db':tramo_db(2)},TR1,LS_ADM); print('ERR TR1',e)
+def TR2(pg):
+    t=tabsx(pg)
+    check('TRAMOS: el garzón con caja no ve la pestaña Caja si el tramo es 1', 'Caja' not in t and '🔒 Caja' not in t)
+    check('TRAMOS: el garzón ve solo Mesas', t==['Mesas'] or t==['Mesas', 'Admin Protech'][:1])
+e=run({'email':'u','role':'','db':tramo_db(1)},TR2,LS_ANA); print('ERR TR2',e)
+def TR3(pg):
+    pg.click('[data-act="qsel"][data-k="ing"]'); pg.wait_for_timeout(200); pg.fill('#qpin','ing'); pg.click('[data-act="qok"]'); pg.wait_for_timeout(600)
+    t=tabsx(pg)
+    check('TRAMOS: el ingeniero ve todas las pestañas aunque estén bloqueadas', hay(t,'🔒 Inventario de producción') and hay(t,'🔒 Caja'))
+    pg.click('[data-act="tab"][data-v="prod"]'); pg.wait_for_timeout(300)
+    x=pg.inner_text('#app')
+    check('TRAMOS: el ingeniero ve el contenido y el aviso de bloqueo', 'bloqueada para la administradora' in x and 'se activa en el tramo' not in x)
+    pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
+    check('TRAMOS: el ingeniero ve el selector de tramos', pg.locator('#tramo-sel').count()==1)
+    pg.select_option('#tramo-sel','4'); pg.click('[data-act="settramo"]'); pg.wait_for_timeout(500)
+    check('TRAMOS: guardar el tramo lo escribe en la base', pg.evaluate('window.__DB.resto_locales[0].tramo')==4)
+e=run({'email':'u','role':'','db':tramo_db(1)},TR3); print('ERR TR3',e)
+def TR4(pg):
+    t=tabsx(pg)
+    check('TRAMOS: un local sin tramo definido ve todo abierto, sin candados', not any('🔒' in x for x in t) and hay(t,'Inventario de producción'))
+    check('TRAMOS: sin tramo no aparece la tarjeta de primeros pasos', 'Primeros pasos' not in pg.inner_text('#app'))
+e=run({'email':'u','role':'','db':tramo_db(None)},TR4,LS_ADM); print('ERR TR4',e)
+def TR5(pg):
+    x=pg.inner_text('#app')
+    check('TRAMOS: la administradora del tramo 1 ve los primeros pasos', 'Primeros pasos · tramo 1' in x and 'Cargar la carta' in x)
+    check('TRAMOS: marca como hecho lo que ya está (carta cargada y PIN creado)', x.count('✅')>=2 and '⬜' in x)
+def tramo_nuevo():
+    d=tramo_db(1); d['resto_cuentas']=[]; d['resto_garzones'][0]['pin']=''   # local recién partiendo: carta y PIN listos, falta lo demás
+    return d
+e=run({'email':'u','role':'','db':tramo_nuevo()},TR5,LS_ADM); print('ERR TR5',e)
+def TR6(pg):
+    check('TRAMOS: con todos los pasos hechos la tarjeta desaparece', 'Primeros pasos' not in pg.inner_text('#app'))
+e=run({'email':'u','role':'','db':tramo_db(1)},TR6,LS_ADM); print('ERR TR6',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)
