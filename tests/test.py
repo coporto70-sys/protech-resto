@@ -41,31 +41,35 @@ def run(scen, fn, ls=''):
 
 # --- A: cliente
 def A(pg):
-    check('A: aparece botón Ayuda', pg.locator('#chat-fab').is_visible())
-    pg.click('#chat-fab'); pg.wait_for_timeout(200)
-    pg.fill('#chat-in','¿Cómo cobro una mesa?'); pg.click('#chat-send'); pg.wait_for_timeout(600)
-    t=pg.inner_text('#chat-msgs')
-    check('A: el asistente responde sobre cobrar', 'Cobrar' in t and 'vuelto' in t)
-    pg.fill('#chat-in','xyzzy qwerty plugh'); pg.click('#chat-send'); pg.wait_for_timeout(600)
-    t=pg.inner_text('#chat-msgs')
-    check('A: sin respuesta escala a soporte', 'avisé a soporte' in t)
-    check('A: modo humano', 'Hablando con soporte' in pg.inner_text('#chat-modo'))
-    rows=pg.evaluate('window.__DB.resto_chat')
-    check('A: mensaje marcado humano en BD', any(r['autor']=='cliente' and r.get('humano') for r in rows))
-    pg.evaluate("window.__emitSoporte({local_id:'L1',autor:'soporte',quien:'Soporte Protech',texto:'Hola, ya lo reviso'})"); pg.wait_for_timeout(300)
-    check('A: llega respuesta de soporte en vivo', 'ya lo reviso' in pg.inner_text('#chat-msgs'))
-    pg.click('#chat-chips button[data-b]'); pg.wait_for_timeout(500)
-    check('A: vuelve al asistente', 'Asistente automático' in pg.inner_text('#chat-modo'))
-    pg.fill('#chat-in','no me suena la cocina'); pg.click('#chat-send'); pg.wait_for_timeout(500)
-    check('A: responde sobre sonido', 'Sonido' in pg.inner_text('#chat-msgs'))
-    pg.fill('#chat-in','se cierra la sesión a cada rato'); pg.click('#chat-send'); pg.wait_for_timeout(500)
-    check('A: responde sobre sesión', '16 horas' in pg.inner_text('#chat-msgs'))
-    check('A: widget no aparece en admin', True)
+    check('A: ya no existe el chat de ayuda (botón naranja)', pg.locator('#chat-fab').count()==0 and pg.locator('#chat-root').count()==0)
+    check('A: Robi está en la pantalla y es la ayuda', pg.locator('#robi').is_visible() and 'Pregúntale a Robi' in pg.inner_html('#robi'))
+    check('A: fuera de Caja el globo parte cerrado para no tapar botones', pg.locator('#robi.min').count()==1)
+    pg.click('#robi .robi-cara'); pg.wait_for_timeout(200)
+    check('A: tocando a Robi se abre el globo', pg.locator('#robi.min').count()==0)
+    pg.fill('#robi-in','¿Cómo cobro una mesa?'); pg.click('[data-act="robi-preg"]'); pg.wait_for_timeout(300)
+    t=pg.inner_text('#robi-b')
+    check('A: Robi responde sobre cobrar', 'Cobrar' in t and 'vuelto' in t)
+    pg.click('[data-act="robi-volver"]'); pg.wait_for_timeout(200)
+    check('A: Volver regresa al consejo de la pestaña', 'mesas' in pg.inner_text('#robi-b').lower() and 'tu pregunta' not in pg.inner_text('#robi-b').lower())
+    pg.fill('#robi-in','xyzzy qwerty plugh'); pg.press('#robi-in','Enter'); pg.wait_for_timeout(300)
+    t=pg.inner_text('#robi-b')
+    check('A: sin respuesta manda a Protech por WhatsApp', 'No encontré' in t and '3947 3588' in t and pg.locator('#robi-b a[href*="wa.me/56939473588"]').count()==1)
+    check('A: no se crean mensajes de chat ni se avisa a soporte', len(pg.evaluate('window.__DB.resto_chat'))==0)
+    pg.fill('#robi-in','no me suena la cocina'); pg.click('[data-act="robi-preg"]'); pg.wait_for_timeout(300)
+    check('A: responde sobre sonido', 'Sonido' in pg.inner_text('#robi-b'))
+    pg.fill('#robi-in','se cierra la sesión a cada rato'); pg.click('[data-act="robi-preg"]'); pg.wait_for_timeout(300)
+    check('A: responde sobre sesión', '16 horas' in pg.inner_text('#robi-b'))
+    pg.click('[data-act="tab"][data-v="cocina"]'); pg.wait_for_timeout(300)
+    check('A: al cambiar de pestaña Robi da el consejo de esa pestaña', 'cocina' in pg.inner_text('#robi-b').lower() and 'tu pregunta' not in pg.inner_text('#robi-b').lower())
+    for v,tx in [('resumen','Resumen'),('turno','Caja'),('carta','Carta')]:
+        if pg.locator(f'[data-act="tab"][data-v="{v}"]').count():
+            pg.click(f'[data-act="tab"][data-v="{v}"]'); pg.wait_for_timeout(250)
+            check(f'A: Robi acompaña en la pestaña {v}', pg.locator('#robi').is_visible() and tx.lower() in pg.inner_text('#robi-b').lower())
 e=run({'email':'dueno@sp.cl','role':'','db':base_db()},A); print('ERR A',e)
 
 # --- B: soporte
 def B(pg):
-    check('B: botón de chat de clientes NO visible para soporte', not pg.locator('#chat-fab').is_visible())
+    check('B: Robi y el botón de ayuda NO aparecen para soporte', pg.locator('#robi').count()==0 and pg.locator('#chat-fab').count()==0)
     check('B: ve 3 pestañas del portal', pg.locator('[data-sp="sub"]').count()==3)
     pg.click('[data-sp="sub"][data-v="revisar"]'); pg.wait_for_timeout(200)
     pg.click('[data-sp="rev"][data-lid="L1"]'); pg.wait_for_timeout(700)
@@ -101,7 +105,7 @@ e=run({'email':'gerencia@protechdigital.cl','role':'protech_admin','db':db},B); 
 
 # --- C: sin migración
 def C(pg):
-    check('C: sin tabla, el chat del cliente queda oculto', not pg.locator('#chat-fab').is_visible())
+    check('C: sin tabla de chat, Robi sigue ayudando y no hay botón de chat', pg.locator('#robi').is_visible() and pg.locator('#chat-fab').count()==0)
     check('C: la app sigue funcionando', 'Mesa' in pg.inner_text('#app') or 'Mesas' in pg.inner_text('#app'))
 e=run({'email':'dueno@sp.cl','role':'','db':base_db(chat=False),'missing':['resto_chat']},C); print('ERR C',e)
 def C2(pg):
@@ -112,14 +116,13 @@ e=run({'email':'g@x.cl','role':'protech_admin','db':db,'missing':['resto_chat']}
 
 # --- D: sin IA, solo guía y soporte
 def D(pg):
-    pg.click('#chat-fab'); pg.wait_for_timeout(200)
-    pg.fill('#chat-in','¿Cómo cobro una mesa?'); pg.click('#chat-send'); pg.wait_for_timeout(600)
-    check('D: pregunta conocida responde con la guía', 'vuelto' in pg.inner_text('#chat-msgs'))
-    pg.fill('#chat-in','la impresora de boletas no imprime nada'); pg.click('#chat-send'); pg.wait_for_timeout(800)
-    check('D: duda desconocida va a soporte', 'Hablando con soporte' in pg.inner_text('#chat-modo'))
+    pg.click('#robi .robi-cara'); pg.wait_for_timeout(200)
+    pg.fill('#robi-in','¿Cómo cobro una mesa?'); pg.click('[data-act="robi-preg"]'); pg.wait_for_timeout(300)
+    check('D: pregunta conocida responde con la guía', 'vuelto' in pg.inner_text('#robi-b'))
+    pg.fill('#robi-in','la impresora de boletas no imprime nada'); pg.click('[data-act="robi-preg"]'); pg.wait_for_timeout(300)
+    check('D: duda desconocida manda a Protech por WhatsApp', 'WhatsApp' in pg.inner_text('#robi-b'))
     check('D: nunca se llama a la IA', (pg.evaluate('window.__IA_CALLS||0'))==0)
-    rows=pg.evaluate('window.__DB.resto_chat')
-    check('D: queda marcado para soporte', any(r['autor']=='cliente' and r.get('humano') for r in rows))
+    check('D: no se guarda nada en el chat', len(pg.evaluate('window.__DB.resto_chat'))==0)
 e=run({'email':'dueno@sp.cl','role':'','db':base_db(),'ia':'sim'},D); print('ERR D',e)
 
 # --- E/F/G/H: caja con billetes y monedas
@@ -782,7 +785,7 @@ def RB1(pg):
 e=run({'email':'u','role':'','db':robi_db(2)},RB1,LS_ADM); print('ERR RB1',e)
 def RB2(pg):
     nav_caja(pg)
-    check('ROBI: en un local con todo abierto (tramo 4) no aparece solo', pg.locator('#robi').count()==0)
+    check('ROBI: también ayuda en un local con todo abierto (tramo 4)', pg.locator('#robi').count()==1)
 e=run({'email':'u','role':'','db':robi_db(4)},RB2,LS_ADM); print('ERR RB2',e)
 def RB3(pg):
     nav_caja(pg); pg.fill('#dna-20000','160000'); pg.click('[data-act="tabrir"]'); pg.wait_for_timeout(700)

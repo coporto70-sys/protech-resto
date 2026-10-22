@@ -1,7 +1,7 @@
 /* =====================================================
-   PROTECH RESTO — Portal de soporte + Chat en vivo
+   PROTECH RESTO — Portal de soporte + guía de ayuda de Robi
    - Portal (solo cuentas protech_admin): revisar cualquier local en modo lectura y responder el chat.
-   - Chat (locales): asistente con la guía del sistema; si no sabe, conecta con soporte en vivo.
+   - Ayuda (locales): Robi, el robot de la app, responde con la guía del sistema (KB de abajo); si no sabe, manda a Protech por WhatsApp. El chat en vivo del local fue retirado; la bandeja de soporte conserva el historial.
    Usa las variables globales de index.html (sb, S, D, esc, money, render, toast, sonarListo...).
    ===================================================== */
 const WA_SOPORTE = 'https://wa.me/56939473588';
@@ -219,9 +219,8 @@ document.addEventListener('click', async e => {
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target && e.target.id === 'sp-reply') { e.preventDefault(); const b = document.querySelector('[data-sp="resp"]'); if (b) b.click(); } });
 
 /* =====================================================
-   CHAT EN VIVO (lado del local)
+   GUÍA DE AYUDA (la usa Robi)
    ===================================================== */
-const CH = { open: false, msgs: [], cargado: false, ok: false, modo: 'bot', unread: 0, lid: null, ch: null, busy: false, typing: false, ia: false }; /* ia: false = solo guía + soporte humano. Ponerlo en true activa la función Edge resto-ayuda (requiere ANTHROPIC_API_KEY en Supabase) */
 
 /* ---------- Guía del sistema: el asistente responde con esto ---------- */
 const normTxt = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -256,13 +255,12 @@ const KB = [
 const SALUDO = /^(hola|holi|buenas|buenos dias|buen dia|buenas tardes|buenas noches|hey|ayuda|help)\b/;
 function chatBot(texto) {
   const t = normTxt(texto);
-  if (SALUDO.test(t) && t.split(' ').length <= 3) return { ok: true, r: '¡Hola! Soy el asistente de Protech Resto. Pregúntame cómo tomar pedidos, cobrar, usar caja, inventario, reportes, PIN… Si no sé algo, te conecto con una persona de soporte.' };
+  if (SALUDO.test(t) && t.split(' ').length <= 3) return { ok: true, r: '¡Hola! Soy Robi, tu ayudante de Protech Resto. Pregúntame cómo tomar pedidos, cobrar, usar caja, inventario, reportes, PIN… Si no sé algo, te conecto con una persona de soporte.' };
   if (/(gracias|muchas gracias|ok gracias|listo gracias)/.test(t) && t.split(' ').length <= 4) return { ok: true, r: '¡De nada! Si necesitas algo más, aquí estoy.' };
   let best = null, bs = 0;
   KB.forEach(e => { let s = 0; e.k.forEach(k => { if (t.includes(normTxt(k))) s += k.includes(' ') ? 3 : 2; }); if (s > bs) { bs = s; best = e; } });
   return bs >= 2 ? { ok: true, r: best.r, s: bs } : { ok: false };
 }
-const SUGERENCIAS = ['¿Cómo cobro una mesa?', '¿Cómo cierro la caja?', '¿Cómo agrego un producto?', '¿Cómo registro propinas?', 'No me suena la cocina'];
 
 /* ---------- Interfaz del chat ---------- */
 function chatBurbuja(m) {
@@ -273,127 +271,9 @@ function chatBurbuja(m) {
   return `<div style="align-self:${der ? 'flex-end' : 'flex-start'};max-width:85%"><div style="font-size:.7rem;color:var(--mut);margin:0 6px 2px;text-align:${der ? 'right' : 'left'}">${esc(quien)} · ${fdt(m.created_at)}</div>
     <div style="padding:9px 12px;border-radius:14px;line-height:1.35;font-size:.93rem;${der ? 'background:var(--brand);color:#fff;border-bottom-right-radius:4px' : soporte ? 'background:#dcfce7;border-bottom-left-radius:4px' : 'background:#e2e8f0;border-bottom-left-radius:4px'}">${esc(m.texto).replace(/\n/g, '<br>')}</div></div>`;
 }
-function chatRoot() {
-  let r = document.getElementById('chat-root');
-  if (!r) {
-    r = document.createElement('div'); r.id = 'chat-root'; r.style.display = 'none';
-    r.innerHTML = `<button id="chat-fab" aria-label="Ayuda y soporte" style="position:fixed;right:16px;bottom:16px;z-index:40;border-radius:99px;padding:14px 18px;background:var(--brand);color:#fff;box-shadow:0 6px 20px rgba(217,72,15,.45);font-size:1rem">💬 Ayuda<span id="chat-badge" style="display:none;margin-left:8px;background:var(--bad);border-radius:99px;padding:1px 8px;font-size:.8rem"></span></button>
-      <div id="chat-panel" style="display:none;position:fixed;right:12px;bottom:12px;z-index:41;width:min(380px,calc(100vw - 24px));height:min(560px,calc(100vh - 24px));background:#fff;border-radius:16px;box-shadow:0 12px 40px rgba(15,23,42,.35);flex-direction:column;overflow:hidden">
-        <div style="background:var(--hdr);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px"><div style="flex:1"><b>Ayuda Protech Resto</b><div id="chat-modo" style="font-size:.75rem;color:var(--hdr-mut)"></div></div><button id="chat-x" aria-label="Cerrar" style="background:transparent;color:#fff;font-size:1.3rem;padding:4px 10px">✕</button></div>
-        <div id="chat-msgs" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:#f8fafc"></div>
-        <div id="chat-chips" style="padding:6px 10px 0;display:flex;gap:6px;flex-wrap:wrap"></div>
-        <div style="display:flex;gap:8px;padding:10px"><input id="chat-in" placeholder="Escribe tu duda…" autocomplete="off" maxlength="500"><button class="btn" id="chat-send">Enviar</button></div>
-      </div>`;
-    document.body.appendChild(r);
-    r.querySelector('#chat-fab').onclick = () => { CH.open = true; CH.unread = 0; chatPintar(); setTimeout(() => { const i = document.getElementById('chat-in'); if (i) i.focus(); }, 50); };
-    r.querySelector('#chat-x').onclick = () => { CH.open = false; chatPintar(); };
-    r.querySelector('#chat-send').onclick = () => { const i = document.getElementById('chat-in'); const v = i.value; i.value = ''; chatEnviar(v); };
-    r.querySelector('#chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); r.querySelector('#chat-send').click(); } });
-    r.querySelector('#chat-chips').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.h) chatHumano(); else if (b.dataset.b) chatVolverBot(); else chatEnviar(b.textContent); });
-  }
-  return r;
-}
-function chatPintar() {
-  const r = chatRoot(), panel = r.querySelector('#chat-panel'), fab = r.querySelector('#chat-fab'), badge = r.querySelector('#chat-badge');
-  fab.style.display = CH.open ? 'none' : ''; panel.style.display = CH.open ? 'flex' : 'none';
-  badge.style.display = CH.unread ? '' : 'none'; badge.textContent = CH.unread;
-  r.querySelector('#chat-modo').textContent = CH.modo === 'humano' ? 'Hablando con soporte · te responden aquí mismo' : 'Asistente automático · respondo dudas del sistema';
-  const box = r.querySelector('#chat-msgs'), cerca = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  const inicial = !CH.msgs.length ? `<div style="align-self:flex-start;max-width:85%;padding:9px 12px;border-radius:14px;background:#e2e8f0;font-size:.93rem;line-height:1.35">¡Hola! Soy el asistente de Protech Resto. Pregúntame lo que necesites del sistema. Si no tengo la respuesta, te conecto con una persona de soporte.</div>` : '';
-  box.innerHTML = inicial + CH.msgs.map(chatBurbuja).join('') + (CH.typing ? '<div style="align-self:flex-start;padding:9px 12px;border-radius:14px;background:#e2e8f0;font-size:.9rem;color:var(--mut)">Escribiendo…</div>' : '');
-  if (cerca || CH.open || CH.typing) box.scrollTop = box.scrollHeight;
-  const chips = r.querySelector('#chat-chips');
-  chips.innerHTML = (CH.modo === 'humano' ? '<button class="btn-line" style="padding:5px 10px;font-size:.8rem" data-b="1">Volver al asistente</button>' : (CH.msgs.length < 3 ? SUGERENCIAS.map(s => `<button class="btn-line" style="padding:5px 10px;font-size:.8rem">${esc(s)}</button>`).join('') : '') + '<button class="btn-line" style="padding:5px 10px;font-size:.8rem" data-h="1">👤 Hablar con una persona</button>') + `<a class="btn-line" style="padding:5px 10px;font-size:.8rem;border-radius:10px;text-decoration:none;color:var(--ink);border:1.5px solid var(--line);font-weight:600" href="${WA_SOPORTE}" target="_blank" rel="noopener">WhatsApp</a>`;
-}
-function chatModoDeriva() {
-  const m = CH.msgs[CH.msgs.length - 1]; if (!m) return 'bot';
-  const reciente = Date.now() - new Date(m.created_at).getTime() < 2 * 3600000;
-  if (m.autor === 'bot') return 'bot';
-  if (m.autor === 'soporte') return reciente ? 'humano' : 'bot';
-  return m.humano && reciente ? 'humano' : 'bot';
-}
-async function chatInsertar(autor, texto, extra) {
-  const r = await sb.from('resto_chat').insert({ local_id: D.id, autor, quien: autor === 'cliente' ? (S.quien || D.name) : null, texto, ...(extra || {}) }).select().single();
-  if (r.error) { toast('No se pudo enviar el mensaje: ' + r.error.message, 'tk-c'); return null; }
-  chatAgregar(r.data); return r.data;
-}
-function chatAgregar(m) { if (!m || CH.msgs.some(x => x.id === m.id)) return false; CH.msgs.push(m); return true; }
-/* Pregunta a la IA (función Edge resto-ayuda). Devuelve {texto, humano} o null si no está disponible. */
-async function chatIA() {
-  if (!CH.ia) return null;
-  try {
-    const hist = CH.msgs.slice(-10).map(m => ({ role: m.autor === 'cliente' ? 'user' : 'assistant', content: m.texto }));
-    const r = await sb.functions.invoke('resto-ayuda', { body: { messages: hist } });
-    if (r.error || !r.data || !r.data.texto) {
-      const cod = r.data && r.data.error;
-      if (cod === 'sin_clave' || cod === 'sin_local') CH.ia = false; /* aún no está configurada: no insistir en esta sesión */
-      return null;
-    }
-    return r.data;
-  } catch (e) { return null; }
-}
-async function chatEscalar(motivo) {
-  CH.modo = 'humano';
-  await chatInsertar('cliente', motivo || 'Necesito ayuda de una persona con mi consulta anterior.', { humano: true });
-}
-async function chatEnviar(texto) {
-  texto = (texto || '').trim(); if (!texto || CH.busy || !D) return;
-  CH.busy = true;
-  try {
-    if (CH.modo === 'humano') { await chatInsertar('cliente', texto, { humano: true }); }
-    else {
-      const resp = chatBot(texto);
-      await chatInsertar('cliente', texto); chatPintar();
-      if (resp.ok && (resp.s >= 3 || !CH.ia)) { await chatInsertar('bot', resp.r); }
-      else {
-        CH.typing = true; chatPintar();
-        const ia = await chatIA();
-        CH.typing = false;
-        if (ia) {
-          await chatInsertar('bot', ia.texto);
-          if (ia.humano) { chatPintar(); await chatEscalar(); await chatInsertar('bot', 'Ya avisé a soporte de Protech: te responden en este mismo chat.'); }
-        } else if (resp.ok) { await chatInsertar('bot', resp.r); }
-        else {
-          chatPintar(); await chatEscalar(texto);
-          await chatInsertar('bot', 'No encontré esa respuesta en mi guía. Ya avisé a soporte de Protech con tu mensaje: te responden en este mismo chat. Si es urgente, también puedes escribir por WhatsApp.');
-        }
-      }
-    }
-  } finally { CH.busy = false; CH.typing = false; chatPintar(); }
-}
-async function chatHumano() {
-  if (CH.busy || !D) return; CH.busy = true;
-  try { CH.modo = 'humano'; await chatInsertar('cliente', 'Quiero hablar con una persona de soporte.', { humano: true }); chatPintar(); await chatInsertar('bot', 'Listo, avisé a soporte de Protech. Cuéntanos tu duda o problema aquí y te responden en este chat. Si es urgente, escribe también por WhatsApp.'); }
-  finally { CH.busy = false; chatPintar(); }
-}
-async function chatVolverBot() {
-  if (CH.busy || !D) return; CH.busy = true;
-  try { CH.modo = 'bot'; await chatInsertar('bot', 'Volví al asistente automático. ¿Qué duda tienes del sistema?'); } finally { CH.busy = false; chatPintar(); }
-}
-async function chatCargar() {
-  const lid = D.id;
-  const r = await sb.from('resto_chat').select('*').eq('local_id', lid).order('created_at', { ascending: false }).limit(80);
-  if (CH.lid !== lid) return;
-  if (r.error) { CH.ok = false; chatRoot().style.display = 'none'; return; } /* aún no existe la tabla: el chat queda oculto sin molestar */
-  CH.ok = true; CH.cargado = true; CH.msgs = (r.data || []).reverse(); CH.modo = chatModoDeriva();
-  chatRoot().style.display = '';
-  if (CH.ch) { sb.removeChannel(CH.ch); CH.ch = null; }
-  CH.ch = sb.channel('chat-' + lid).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'resto_chat', filter: 'local_id=eq.' + lid }, p => {
-    if (!chatAgregar(p.new)) return;
-    if (p.new.autor === 'soporte') { CH.modo = 'humano'; if (!CH.open) { CH.unread++; toast('💬 Soporte te respondió: ' + p.new.texto.slice(0, 80), 'tk-l'); try { sonarListo(); } catch (e) {} } }
-    chatPintar();
-  }).subscribe();
-  chatPintar();
-}
-function chatLimpiar() { CH.typing = false; if (CH.ch) { sb.removeChannel(CH.ch); CH.ch = null; } CH.lid = null; CH.msgs = []; CH.cargado = false; CH.ok = false; CH.open = false; CH.unread = 0; CH.modo = 'bot'; }
-
 /* Se llama al final de cada render(): decide qué chat mostrar según quién entró */
 function chatSync() {
-  const root = chatRoot();
-  const esLocal = !!(S.user && D && !S.admin && !S.setpass);
-  if (!esLocal) { if (CH.lid) chatLimpiar(); root.style.display = 'none'; }
-  else if (CH.lid !== D.id) { CH.lid = D.id; chatCargar(); }
-  /* soporte: bandeja en vivo */
+  /* El chat de ayuda del lado del local ya no existe: la ayuda es Robi (ver app.js). Aquí queda solo la bandeja de soporte (historial). */
   if (S.admin && S.user) { if (!SP.ch) { spSuscribir(); if (!SP.chat.cargado) spChatCargar(); } }
   else if (SP.ch) { sb.removeChannel(SP.ch); SP.ch = null; SP.chat = { msgs: [], sel: null, cargado: false, err: '' }; SP.d = null; SP.lid = null; }
   const m = document.getElementById('sp-msgs'); if (m) m.scrollTop = m.scrollHeight;

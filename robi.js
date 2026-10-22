@@ -10,7 +10,33 @@
      { quien, esperado: {m, de: 'turno'|'partida'} (sencillo que se debe recibir: lo que dejó el turno anterior), turno: null | {monto_inicial, abierto_h}, apertura: {total, escribio},
        res: {cuentas, vt, esp, tj, tr, pp}, cierre: {escribio, ef, tj, tr, dj, hayD} }
      Salida: { tono: 'ok'|'aviso'|'mal'|'hola', txt, paso } */
+
+  /* Consejo de cada pestaña: qué se puede hacer ahí. Robi lo muestra cuando no hay nada más urgente que decir. */
+  const CONSEJOS = {
+    mesas: ['Mesas', 'Aquí se toman los pedidos. Toca una mesa libre, agrega los productos y envía a cocina. Para cobrar, abre la mesa y toca Cobrar. Arriba tienes Para llevar y Delivery.'],
+    cocina: ['Cocina', 'Aquí llegan las comandas. Cuando un pedido esté listo, márcalo para que el garzón lo vea y lo lleve a la mesa.'],
+    cafe: ['Cafetería', 'Aquí llegan las comandas de cafés y bebidas calientes. Marca cada una como lista cuando salga.'],
+    carta: ['Carta y mesas', 'Aquí se edita la carta: nombre, sección, precio y si se prepara en cocina o cafetería. También se define cuántas mesas hay.'],
+    garz: ['Garzones', 'Aquí se agregan los garzones y se les da su PIN. Solo la administradora ve esta pestaña.'],
+    turno: ['Caja', 'Aquí se abre y se cierra la caja. Al abrir, cuenta el sencillo que dejó el turno anterior; al cerrar, cuenta el efectivo, las tarjetas y las transferencias.'],
+    caja: ['Ventas', 'Aquí ves lo vendido en el día y puedes descargar los reportes. Solo la administradora ve esta pestaña.'],
+    resumen: ['Resumen', 'Aquí ves cómo va el día de un vistazo: ventas, productos más pedidos y propinas.'],
+    coms: ['Comandas', 'Aquí se revisan todas las comandas enviadas, por si hubo un error en un pedido.'],
+    inv: ['Inventario', 'Aquí ves el stock de cada producto, ingresas mercadería y ves lo que está por agotarse. El triángulo ⚠ avisa si algo está bajo el mínimo.'],
+    resv: ['Reservas', 'Aquí anotas las reservas con fecha, hora, nombre, personas y mesa. La mesa aparece como reservada en el plano.'],
+    bit: ['Registro de cambios', 'Aquí queda anotado quién cambió qué y cuándo: precios, montos de caja, anulaciones. Nada se borra.'],
+    prod: ['Inventario de producción', 'Aquí va lo que se compra para producir (mermeladas, tarros de duraznos, cremas…), aparte de la carta.'],
+    abast: ['Compras y recetas', 'Aquí defines las recetas de cada producto y haces las órdenes de compra a tus proveedores.'],
+  };
+  function consejo(vista, quien) {
+    const c = CONSEJOS[vista];
+    const hola = quien ? '¡Hola, ' + quien + '! ' : '¡Hola! ';
+    if (!c) return { tono: 'hola', paso: 'Ayuda', txt: hola + 'Soy Robi. Pregúntame lo que necesites del sistema.' };
+    return { tono: 'hola', paso: c[0], txt: hola + c[1] + ' Si tienes una duda, pregúntame abajo.' };
+  }
+
   function mensaje(c) {
+    if (c.vista && c.vista !== 'turno') return consejo(c.vista, c.quien);
     const nom = c.quien ? ', ' + c.quien : '';
     const esp = c.esperado || { m: 0, de: 'partida' }, fondo = esp.m || 0;
     const origen = esp.de === 'turno' ? 'lo que dejó el turno anterior' : 'el sencillo de partida';
@@ -96,6 +122,6 @@
     callar() { try { root.speechSynthesis && root.speechSynthesis.cancel(); } catch (e) {} },
   };
 
-  const api = { mensaje, svg, voz };
+  const api = { mensaje, consejo, svg, voz };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Robi = api;
 })(typeof window !== 'undefined' ? window : globalThis);
