@@ -38,7 +38,7 @@ export interface Turno {
 // Fila de resto_gastos. Los retiros de efectivo también viven ahí con tipo = 'Retiro'.
 export interface Gasto {
   id?: string;
-  tipo: string; // Boleta | Factura | Sin documento | Retiro
+  tipo: string; // Boleta | Factura | Sin documento | Retiro | Propina pagada
   numero?: string | null;
   proveedor?: string | null;
   detalle?: string | null;
@@ -102,7 +102,8 @@ export function revisarTurno(t: Turno, gastos: Gasto[], ctx: Contexto, u = UMBRA
   const fondo = ctx.fondo || 0;
   const vigentes = gastos.filter((g) => !g.anulado);
   const retiros = vigentes.filter((g) => g.tipo === "Retiro");
-  const compras = vigentes.filter((g) => g.tipo !== "Retiro");
+  // "Propina pagada" es un adelanto de propina a un garzón durante el turno: no es una compra ni necesita documento.
+  const compras = vigentes.filter((g) => g.tipo !== "Retiro" && g.tipo !== "Propina pagada");
 
   // 1) Tarjetas: lo anotado vs lo que el sistema calculó con los cobros
   const tj = dc.tarjeta ?? null;

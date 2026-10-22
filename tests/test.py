@@ -378,6 +378,28 @@ def L_(pg):
 e=run({'email':'u','role':'','db':db_prop()},L_,LS_ANA); print('ERR L',e)
 
 
+def L2_(pg):
+    d=[]; pg.on('dialog',lambda x:(d.append(x.message),x.accept('1500')))
+    nav_caja(pg)
+    pg.click('[data-act="proppag"][data-n="Ana"]'); pg.wait_for_timeout(700)
+    pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(400)
+    g=pg.evaluate('window.__DB.resto_gastos')
+    t=pg.inner_text('#app')
+    check('L2: el pago de propina queda registrado con el garzón y el monto', len(g)==1 and g[0]['tipo']=='Propina pagada' and g[0]['proveedor']=='Ana' and g[0]['monto']==1500)
+    check('L2: se ve lo ya pagado y lo que falta', 'Ya pagado durante el turno' in t and 'falta $1.000' in t and 'Falta pagar al cerrar' in t)
+    check('L2: no cuenta como gasto de caja', 'Aún no hay gastos en este turno' in t)
+    pg.fill('#dnc-20000','100000'); pg.fill('#dnc-5000','5000'); pg.fill('#dnc-2000','2000'); pg.fill('#dnc-500','500'); pg.fill('#ctarj','31300'); pg.fill('#ctrans','0')
+    pg.fill('#dnd-20000','100000'); pg.wait_for_timeout(300)
+    c=pg.inner_text('#cuadre')
+    check('L2: el efectivo esperado sigue siendo el mismo (no se descuenta dos veces)', 'Sistema $107.500' in c and c.count('Cuadra')>=1)
+    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
+    tu=pg.evaluate('window.__DB.resto_turnos')[0]
+    check('L2: al cerrar solo se pide pagar lo que falta', any('Propinas a pagar en efectivo desde la caja: $2.000' in m and 'Ana: $1.000 (ya recibió $1.500 antes)' in m and 'Luis: $1.000' in m for m in d))
+    pp={x['n']:x for x in (tu.get('pago_propinas') or [])}
+    check('L2: el cierre guarda el total y lo adelantado', tu.get('propinas_pagadas')==3500 and pp['Ana']['m']==2500 and pp['Ana'].get('ad')==1500 and pp['Luis']['m']==1000)
+e=run({'email':'u','role':'','db':db_prop()},L2_,LS_ANA); print('ERR L2',e)
+
+
 def db_ins(turno=False):
     d=db_roles(); d['resto_insumos']=[]; d['resto_insumo_mov']=[]; d['resto_gastos']=[]
     if turno:

@@ -93,6 +93,11 @@ test("los gastos anulados no generan alertas", () => {
   assert.deepEqual(reglas(base({ monto_inicial: FONDO, desglose_apertura: { "5000": 1 } }), g), []);
 });
 
+test("el pago de propina durante el turno no cuenta como compra ni pide documento", () => {
+  const g: Gasto[] = [{ tipo: "Propina pagada", numero: null, proveedor: "Ana", detalle: "Propina pagada durante el turno", monto: 450_000, created_at: "2026-10-19T21:06:00Z" }];
+  assert.deepEqual(reglas(base({ monto_inicial: FONDO, desglose_apertura: { "5000": 1 } }), g), []);
+});
+
 test("turno de 50 horas avisa como baja", () => {
   const t = base({ abierto_at: "2026-10-19T21:30:00Z", cerrado_at: "2026-10-21T15:00:00Z", monto_inicial: FONDO, desglose_apertura: { "5000": 1 } });
   const a = revisarTurno(t, [], { fondo: FONDO, retirosRecientes: [] });
