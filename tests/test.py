@@ -761,4 +761,35 @@ def TR6(pg):
     check('TRAMOS: con todos los pasos hechos la tarjeta desaparece', 'Primeros pasos' not in pg.inner_text('#app'))
 e=run({'email':'u','role':'','db':tramo_db(1)},TR6,LS_ADM); print('ERR TR6',e)
 
+# ---- Robi, el robot guía de caja ----
+def robi_db(tr):
+    d=tramo_db(tr); d['resto_locales'][0]['fondo_caja']=160000; d['resto_turnos']=[]; return d
+def RB1(pg):
+    nav_caja(pg)
+    check('ROBI: aparece en la Caja del tramo 2 y saluda con el sencillo a recibir', pg.locator('#robi').count()==1 and 'Debes recibir $160.000' in pg.inner_text('#robi'))
+    check('ROBI: dibuja al robot (SVG) y ofrece Escuchar', pg.locator('#robi svg.robi-svg').count()==1)
+    pg.fill('#dna-20000','100000'); pg.wait_for_timeout(200)
+    t=pg.inner_text('#robi')
+    check('ROBI: si el sencillo no coincide avisa cuánto falta', 'faltan $60.000' in t and pg.locator('#robi.aviso').count()==1)
+    pg.fill('#dna-20000','160000'); pg.wait_for_timeout(200)
+    check('ROBI: si coincide celebra y manda a abrir la caja', 'Perfecto' in pg.inner_text('#robi') and pg.locator('#robi.ok').count()==1)
+    pg.click('[data-act="robi-ocultar"]'); pg.wait_for_timeout(200)
+    check('ROBI: se puede ocultar y llamar de nuevo', pg.locator('#robi').count()==0 and 'Llamar a Robi' in pg.inner_text('#app'))
+    pg.click('[data-act="robi-mostrar"]'); pg.wait_for_timeout(200)
+    check('ROBI: vuelve al llamarlo', pg.locator('#robi').count()==1)
+e=run({'email':'u','role':'','db':robi_db(2)},RB1,LS_ADM); print('ERR RB1',e)
+def RB2(pg):
+    nav_caja(pg)
+    check('ROBI: en un local con todo abierto (tramo 4) no aparece solo', pg.locator('#robi').count()==0)
+e=run({'email':'u','role':'','db':robi_db(4)},RB2,LS_ADM); print('ERR RB2',e)
+def RB3(pg):
+    nav_caja(pg); pg.fill('#dna-20000','160000'); pg.click('[data-act="tabrir"]'); pg.wait_for_timeout(700)
+    check('ROBI: con la caja abierta explica que guiará el cierre', 'Caja abierta' in pg.inner_text('#robi'))
+    pg.fill('#dnc-20000','100000'); pg.wait_for_timeout(200)
+    t=pg.inner_text('#robi')
+    check('ROBI: en el cierre avisa la diferencia de efectivo', 'En efectivo' in t and pg.locator('#robi.mal').count()==1)
+    pg.fill('#dnc-20000','160000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); pg.fill('#dnd-20000','160000'); pg.wait_for_timeout(250)
+    check('ROBI: cuando todo cuadra dice que puede cerrar', 'Todo cuadra' in pg.inner_text('#robi') and pg.locator('#robi.ok').count()==1)
+e=run({'email':'u','role':'','db':robi_db(2)},RB3,LS_ADM); print('ERR RB3',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

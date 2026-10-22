@@ -3,7 +3,7 @@
    - Librerías externas (CDN): se guardan y se refrescan en segundo plano.
    - La base de datos (Supabase) nunca pasa por aquí. */
 const V = 'resto-v7';
-const BASE = ['./', 'index.html', 'app.js', 'app.css', 'soporte.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
+const BASE = ['./', 'index.html', 'app.js', 'robi.js', 'app.css', 'soporte.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 const CDN = ['cdn.jsdelivr.net', 'cdnjs.cloudflare.com'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(BASE).catch(() => {})).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

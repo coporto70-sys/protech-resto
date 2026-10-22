@@ -59,3 +59,16 @@ table{border-collapse:collapse}
 .cuadre-b{padding:10px 12px;border-radius:10px;font-weight:700;margin-bottom:6px}
 .cuadre-b.ok{background:#dcfce7;color:var(--ok)}
 .cuadre-b.mal{background:#fee2e2;color:var(--bad)}
+
+/* Robi, el robot guía de caja */
+.robi{display:flex;gap:14px;align-items:flex-start;margin-bottom:12px;border-color:var(--soft-line);background:linear-gradient(180deg,#fff,var(--soft))}
+.robi.ok{border-color:#86efac;background:linear-gradient(180deg,#fff,#f0fdf4)}.robi.aviso{border-color:#fcd34d;background:linear-gradient(180deg,#fff,#fffbeb)}.robi.mal{border-color:#fca5a5;background:linear-gradient(180deg,#fff,#fef2f2)}
+.robi-cara{flex:0 0 84px}.robi-svg{width:84px;height:auto;display:block;animation:robi-flota 3.2s ease-in-out infinite}
+.robi-svg .robi-ojos{transform-origin:50px 46px;animation:robi-parpadea 4.5s infinite}.robi-cara.habla .robi-boca{animation:robi-habla .28s ease-in-out infinite alternate;transform-origin:50px 60px}
+.robi-cor{transform-origin:50px 16px;animation:robi-late 1.6s ease-in-out infinite}
+.robi-cuerpo{flex:1;min-width:0}.robi-nombre{font-weight:700;margin-bottom:4px}.robi-paso{font-size:.8rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.robi-txt{font-size:1.08rem;line-height:1.4;margin:4px 0 10px}.robi-btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+@keyframes robi-flota{50%{transform:translateY(-3px)}}@keyframes robi-parpadea{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
+@keyframes robi-late{50%{transform:scale(1.18)}}@keyframes robi-habla{to{transform:scaleY(1.6)}}
+@media (prefers-reduced-motion:reduce){.robi-svg,.robi-svg *{animation:none!important}}
+@media (max-width:480px){.robi-cara{flex-basis:64px}.robi-svg{width:64px}}

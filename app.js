@@ -887,6 +887,7 @@ function dnActualiza() {
   ['a', 'c', 'd'].forEach(p => { DEN.forEach(([v]) => { const el = document.getElementById(dnId(p, v) + '-s'); if (el) { const x = dnSub(p, v); el.textContent = x.t; el.style.color = x.bad ? 'var(--bad)' : ''; } }); const t = document.getElementById('dnt-' + p); if (t) t.textContent = money(dnTotal(p)); });
   const c = document.getElementById('cuadre'); if (c && D && D.turno) c.innerHTML = cuadreHTML(D.turno);
   const ap = document.getElementById('aper'); if (ap) ap.innerHTML = aperturaChk();
+  robiRefresh();
 }
 function aperturaChk() {
   const a = dnTotal('a'), f = D.fondo || 0; if (!a) return '';
@@ -990,9 +991,9 @@ function gastosHistHTML() {
 /* Vista de Caja para un garzón autorizado: cobra mesas y mostrador, abre y cierra la caja, y ve solo sus propios cobros */
 function turnoCajeroHTML() {
   const t = D.turno;
-  if (!t) return `<h2>Caja</h2>${abrirCajaHTML()}`;
+  if (!t) return `<h2>Caja</h2>${robiHTML()}${abrirCajaHTML()}`;
   const mis = D.cuentas.filter(c => c.turno_id === t.id && (c.cobrado_por || '') === S.quien);
-  return `<h2>Caja · ${esc(S.quien)}</h2>
+  return `<h2>Caja · ${esc(S.quien)}</h2>${robiHTML()}
   <div class="card"><b>Mis cobros de este turno</b>${mis.map(c => `<div class="row"><div>${nm(c.mesa)}<div class="mut">${hora(c.t)} · ${esc(c.metodo)}</div></div><b>${money(c.total + c.propina + c.pt)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no has cobrado en este turno.</p>'}
   ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${gastosHTML(t)}${retirosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}`;
 }
@@ -1001,10 +1002,10 @@ function turnoHTML() {
   const t = D.turno;
   if (S.th === null) { turnoCargar().then(render); }
   const hist = (S.th || []).map(h => { const dc = h.desglose_cierre || {}; return `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${dc.tarjeta != null ? ' · tarjetas ' + money(dc.tarjeta) + ' · transf. ' + money(dc.transferencia || 0) : ''}${h.desglose_apertura && dnTxt(h.desglose_apertura) ? '<br>Sencillo inicial: ' + dnTxt(h.desglose_apertura) : ''}${dnTxt(dc.efectivo) ? '<br>Efectivo contado: ' + dnTxt(dc.efectivo) : ''}${h.retiro_efectivo != null ? '<br>Efectivo de ventas retirado ' + money(h.retiro_efectivo) + (dnTxt(h.desglose_deja) ? ' · quedó en caja: ' + dnTxt(h.desglose_deja) : '') : ''}${h.gastos_total ? '<br>Gastos pagados desde caja ' + money(h.gastos_total) : ''}${(h.pago_propinas || []).length ? '<br>Propinas pagadas: ' + h.pago_propinas.map(x => esc(x.n) + ' ' + money(x.m)).join(' · ') + ' (total ' + money(h.propinas_pagadas || 0) + ')' : ''}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
-  if (!t) return `<h2>Caja</h2>${fondoHTML()}${abrirCajaHTML()}${gastosHistHTML()}
+  if (!t) return `<h2>Caja</h2>${robiHTML()}${fondoHTML()}${abrirCajaHTML()}${gastosHistHTML()}
     <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
   const r = turnoRes(t);
-  return `<h2>Caja · turno abierto</h2>${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
+  return `<h2>Caja · turno abierto</h2>${robiHTML()}${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
   <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
     ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}${r.rt ? `<div class="row"><span>Retiros de la administradora</span><b>−${money(r.rt)}</b></div>` : ''}${r.pp ? `<div class="row"><span>Propinas pagadas a garzones</span><b>−${money(r.pp)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta gastos, retiros y propinas pagadas. No incluye la propina en efectivo entregada directo al garzón.</p></div>
@@ -1012,6 +1013,48 @@ function turnoHTML() {
   <div class="card" style="margin-top:12px"><b>Quién estuvo en caja</b>${cajerosHTML(t)}</div>
   ${gastosHTML(t)}${retirosHTML(t)}${descuentosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}${gastosHistHTML()}
   <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
+}
+/* ---------- Robi, el robot guía de caja (textos y cifras de reglas fijas; ver robi.js) ---------- */
+const robiLS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} return null; };
+const robiActivo = () => !!window.Robi && ((D && D.tramo < 4) || esIng());
+function robiCtx() {
+  const t = D.turno, ec = dnTotal('c');
+  const hayEf = DEN.some(([v]) => S.f[dnId('c', v)] !== undefined && S.f[dnId('c', v)] !== '');
+  const hayD = DEN.some(([v]) => S.f[dnId('d', v)] !== undefined && S.f[dnId('d', v)] !== '');
+  const hayA = DEN.some(([v]) => S.f[dnId('a', v)] !== undefined && S.f[dnId('a', v)] !== '');
+  const c = { quien: S.quien || '', fondo: D.fondo || 0, turno: null, apertura: { total: dnTotal('a'), escribio: hayA } };
+  if (t) {
+    const r = turnoRes(t);
+    c.turno = { monto_inicial: t.monto_inicial || 0, abierto_h: (Date.now() - +new Date(t.abierto_at)) / 3600000 };
+    c.res = { cuentas: r.cuentas, vt: r.vt, esp: r.esp, tj: r.tj, tr: r.tr, pp: r.pp };
+    c.cierre = { escribio: hayEf, ef: ec, tj: numF('ctarj'), tr: numF('ctrans'), dj: dnTotal('d'), hayD };
+  }
+  return c;
+}
+function robiBurbuja() {
+  const m = window.Robi.mensaje(robiCtx());
+  return { m, html: `<div class="robi-paso">${esc(m.paso || '')}</div><div class="robi-txt">${esc(m.txt)}</div>` };
+}
+function robiHTML() {
+  if (!robiActivo()) return '';
+  if (robiLS('pr-robi-off') === '1') return `<div style="margin-bottom:8px"><button class="btn-line" data-act="robi-mostrar">🤖 Llamar a Robi</button></div>`;
+  const b = robiBurbuja(), voz = window.Robi.voz.ok(); robiUlt = b.m.txt;
+  return `<div class="card robi ${b.m.tono}" id="robi"><div class="robi-cara">${window.Robi.svg(b.m.tono, false)}</div>
+    <div class="robi-cuerpo"><div class="robi-nombre">Robi <span class="mut">· tu ayudante de caja</span></div><div id="robi-b" aria-live="polite">${b.html}</div>
+    <div class="robi-btns">${voz ? '<button class="btn-line" data-act="robi-voz">🔊 Escuchar</button>' : ''}${voz ? `<label class="mut"><input type="checkbox" data-act="robi-auto" ${robiLS('pr-robi-auto') === '1' ? 'checked' : ''}> Hablar solo</label>` : ''}<button class="btn-line" data-act="robi-ocultar">Ocultar</button></div></div></div>`;
+}
+let robiUlt = '';
+function robiRefresh() {
+  const r = document.getElementById('robi'); if (!r || !D) return;
+  const b = robiBurbuja(), el = document.getElementById('robi-b');
+  if (el) el.innerHTML = b.html;
+  r.className = 'card robi ' + b.m.tono;
+  const cara = r.querySelector('.robi-cara'); if (cara) cara.innerHTML = window.Robi.svg(b.m.tono, window.Robi.voz.hablando());
+  if (b.m.txt !== robiUlt) { robiUlt = b.m.txt; if (robiLS('pr-robi-auto') === '1' && robiLS('pr-robi-ya') === '1') robiHablar(b.m.txt); }
+}
+function robiHablar(txt) {
+  const mover = h => { const c = document.querySelector('#robi .robi-cara'); if (c) c.classList.toggle('habla', h); };
+  mover(true); if (!window.Robi.voz.decir(txt, () => mover(false))) mover(false);
 }
 /* ---------- Inventario de producción: lo que se compra para producir (mermeladas, tarros de duraznos, cremas…). Aparte de la carta. ---------- */
 const UNIDADES = [['un', 'unidades'], ['kg', 'kilos'], ['g', 'gramos'], ['lt', 'litros'], ['ml', 'mililitros'], ['tarro', 'tarros'], ['caja', 'cajas'], ['bolsa', 'bolsas'], ['paquete', 'paquetes']];
@@ -1391,6 +1434,7 @@ document.addEventListener('input', e => {
   if (e.target.id === 'a-email') S.af.email = e.target.value;
 });
 document.addEventListener('change', e => {
+  if (e.target.dataset && e.target.dataset.act === 'robi-auto') { robiLS('pr-robi-auto', e.target.checked ? '1' : null); if (e.target.checked) { robiLS('pr-robi-ya', '1'); robiHablar(robiBurbuja().m.txt); } else window.Robi.voz.callar(); return; }
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
   if (e.target.id === 'pedonde') { S.peDonde = e.target.value; render(); }
@@ -2101,6 +2145,9 @@ document.addEventListener('click', async e => {
       else if (a === 'quitarpin') {
         if (esAdm() && confirm('¿Desactivar los accesos por PIN? Todos volverán a ver todo.')) { const r = await pinSet('admin', 'admin', ''); if (r.error && sinFuncion(r.error)) fallo(await sb.from('resto_locales').update({ admin_pin: null }).eq('id', D.id)); else fallo(r); }
       }
+      else if (a === 'robi-voz') { robiLS('pr-robi-ya', '1'); const b = robiBurbuja(); if (window.Robi.voz.hablando()) { window.Robi.voz.callar(); robiRefresh(); } else robiHablar(b.m.txt); }
+      else if (a === 'robi-ocultar') { window.Robi.voz.callar(); robiLS('pr-robi-off', '1'); render(); }
+      else if (a === 'robi-mostrar') { robiLS('pr-robi-off', null); render(); }
       else if (a === 'settramo' && esIng()) { const v = Math.min(4, Math.max(1, Math.round(+$('#tramo-sel').value) || 4)); if (!fallo(await sb.from('resto_locales').update({ tramo: v }).eq('id', D.id))) toast('Tramo ' + v + ' · ' + TRAMOS[v - 1].nombre, 'tk-l'); }
       else if (a === 'qrtoggle' && esAdm()) { fallo(await sb.from('resto_locales').update({ qr_activo: !L().qr }).eq('id', D.id)); }
       else if (a === 'qrimprimir' && esAdm()) { imprimirQR(); }
