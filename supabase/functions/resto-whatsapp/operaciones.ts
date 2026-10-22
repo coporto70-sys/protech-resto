@@ -171,7 +171,7 @@ export async function eventoTurno(accion: string, turnoId: string) {
   if (accion !== "apertura" && accion !== "cierre") return { error: "acción desconocida" };
   const { data: t } = await db.from("resto_turnos").select("*").eq("id", turnoId).maybeSingle();
   if (!t) return { error: "turno no encontrado" };
-  const { data: local } = await db.from("resto_locales").select("id,name,control_caja").eq("id", t.local_id).maybeSingle();
+  const { data: local } = await db.from("resto_locales").select("id,nombre,control_caja").eq("id", t.local_id).maybeSingle();
   if (!local?.control_caja) return { ok: true, omitido: "local sin control de caja" };
 
   // Un solo aviso por apertura y por cierre aunque la base lo pida dos veces
@@ -181,7 +181,7 @@ export async function eventoTurno(accion: string, turnoId: string) {
 
   const control = await esperarControl(turnoId, accion);
   const hora = horaChile(new Date(accion === "apertura" ? t.abierto_at : t.cerrado_at || new Date()));
-  const txt = accion === "apertura" ? textoApertura(local.name, t, hora, control) : textoCierre(local.name, t, hora, control);
+  const txt = accion === "apertura" ? textoApertura(local.nombre, t, hora, control) : textoCierre(local.nombre, t, hora, control);
   const hayAltas = control.alertas.some((a) => a.gravedad === "alta");
   await avisarPush(t.local_id, txt.titulo, txt.cuerpo, `turno-${accion}-${turnoId}`);
   const wa = await notificarEquipo({ localId: t.local_id, para: ["ingeniero", "admin"], texto: `${accion === "apertura" ? "🟢" : "🔴"} ${txt.titulo}\n${txt.cuerpo}`, nivel: hayAltas ? "importante" : "todo" });
@@ -194,7 +194,7 @@ async function tomarFoto(): Promise<Foto> {
   const ahora = new Date();
   const hace24 = new Date(ahora.getTime() - 86400000).toISOString();
   const [loc, abiertos, rec, anu, pin, ctrl, subs] = await Promise.all([
-    db.from("resto_locales").select("id,name,control_caja"),
+    db.from("resto_locales").select("id,nombre,control_caja"),
     db.from("resto_turnos").select("id,local_id,abierto_por,abierto_at,cerrado_at").is("cerrado_at", null),
     db.from("resto_turnos").select("id,local_id,abierto_por,abierto_at,cerrado_at").or(`abierto_at.gte.${hace24},cerrado_at.gte.${hace24}`).limit(200),
     db.from("resto_anulaciones").select("id,local_id,item_n,cantidad,mesa,pedida_por,created_at").eq("estado", "pendiente").limit(200),
@@ -208,7 +208,7 @@ async function tomarFoto(): Promise<Foto> {
   for (const s of subs.data || []) pushPorLocal[(s as any).local_id] = (pushPorLocal[(s as any).local_id] || 0) + 1;
   return {
     ahora,
-    locales: (loc.data || []).map((l: any) => ({ id: l.id, nombre: l.name, control_caja: !!l.control_caja })),
+    locales: (loc.data || []).map((l: any) => ({ id: l.id, nombre: l.nombre, control_caja: !!l.control_caja })),
     turnosAbiertos: (abiertos.data || []) as any, turnosRecientes: (rec.data || []) as any, revisiones: (rev.data || []) as any,
     anulacionesPendientes: (anu.data || []) as any, pines: (pin.data || []) as any, alertasControl: (ctrl.data || []) as any, pushPorLocal,
   };

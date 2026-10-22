@@ -5,7 +5,7 @@ import { db } from "./wa.ts";
 import { duracion, fechaChile, fechaHoraCorta, horaChile, pesos, rangoDiaChile, sumarDias } from "./tiempo.ts";
 
 export interface Miembro { id: string; local_id: string | null; telefono: string; nombre: string; rol: "ingeniero" | "admin"; avisos: string }
-interface Local { id: string; name: string; control_caja: boolean; tramo?: number }
+interface Local { id: string; nombre: string; control_caja: boolean; tramo?: number }
 
 const MAX_DIAS = 31;
 const sinTildes = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -27,23 +27,23 @@ async function todas<T>(armar: (desde: number, hasta: number) => PromiseLike<{ d
 }
 
 async function resolverLocal(m: Miembro, input: any): Promise<{ local: Local } | { error: string }> {
-  const cols = "id,name,control_caja,tramo";
+  const cols = "id,nombre,control_caja,tramo";
   if (m.rol === "admin") {
     if (!m.local_id) return { error: "Tu número no tiene un local asignado." };
     const { data } = await db.from("resto_locales").select(cols).eq("id", m.local_id).maybeSingle();
     return data ? { local: data as Local } : { error: "No encontré tu local." };
   }
-  const { data } = await db.from("resto_locales").select(cols).order("name");
+  const { data } = await db.from("resto_locales").select(cols).order("nombre");
   const lista = (data || []) as Local[];
   if (!lista.length) return { error: "No hay locales registrados." };
   const q = sinTildes(String(input?.local || "")).trim();
   if (q) {
-    const hit = lista.filter((l) => l.id === input.local || sinTildes(l.name).includes(q));
+    const hit = lista.filter((l) => l.id === input.local || sinTildes(l.nombre).includes(q));
     if (hit.length === 1) return { local: hit[0] };
-    return { error: hit.length ? `Hay varios locales que coinciden: ${hit.map((l) => l.name).join(", ")}. Pide el nombre exacto.` : `No encontré un local llamado "${input.local}". Locales: ${lista.map((l) => l.name).join(", ")}.` };
+    return { error: hit.length ? `Hay varios locales que coinciden: ${hit.map((l) => l.nombre).join(", ")}. Pide el nombre exacto.` : `No encontré un local llamado "${input.local}". Locales: ${lista.map((l) => l.nombre).join(", ")}.` };
   }
   if (lista.length === 1) return { local: lista[0] };
-  return { error: `Hay varios locales: ${lista.map((l) => l.name).join(", ")}. Pregunta de cuál quiere saber.` };
+  return { error: `Hay varios locales: ${lista.map((l) => l.nombre).join(", ")}. Pregunta de cuál quiere saber.` };
 }
 
 const metodoDe = (x: any) => { const s = sinTildes(String(x || "")); return s.startsWith("tarj") ? "tarjeta" : s.startsWith("transf") ? "transferencia" : "efectivo"; };
@@ -81,8 +81,8 @@ export async function ejecutar(nombre: string, input: any, m: Miembro): Promise<
   try {
     if (nombre === "locales") {
       if (m.rol !== "ingeniero") return { error: "Solo el ingeniero puede ver todos los locales." };
-      const { data } = await db.from("resto_locales").select("id,name,control_caja,tramo").order("name");
-      return { locales: (data || []).map((l: any) => ({ nombre: l.name, control_caja: !!l.control_caja, tramo: l.tramo })) };
+      const { data } = await db.from("resto_locales").select("id,nombre,control_caja,tramo").order("nombre");
+      return { locales: (data || []).map((l: any) => ({ nombre: l.nombre, control_caja: !!l.control_caja, tramo: l.tramo })) };
     }
     if (nombre === "resolver_propuesta") {
       if (m.rol !== "ingeniero") return { error: "Solo el ingeniero puede resolver propuestas." };
@@ -94,7 +94,7 @@ export async function ejecutar(nombre: string, input: any, m: Miembro): Promise<
     // Las propuestas del ingeniero no dependen de un local en particular.
     const sinLocalOk = m.rol === "ingeniero" && (nombre === "ver_propuestas" || nombre === "proponer_mejora");
     if ("error" in r && !sinLocalOk) return r;
-    const L: Local = "local" in r ? r.local : { id: "", name: "(general)", control_caja: false };
+    const L: Local = "local" in r ? r.local : { id: "", nombre: "(general)", control_caja: false };
     switch (nombre) {
       case "estado_caja": return await estadoCaja(L);
       case "ventas": return await ventas(L, input);
@@ -130,7 +130,7 @@ async function estadoCaja(L: Local) {
   const { data: t } = await db.from("resto_turnos").select("*").eq("local_id", L.id).is("cerrado_at", null).order("abierto_at", { ascending: false }).limit(1).maybeSingle();
   if (!t) {
     const { data: u } = await db.from("resto_turnos").select("*").eq("local_id", L.id).not("cerrado_at", "is", null).order("cerrado_at", { ascending: false }).limit(1).maybeSingle();
-    return { local: L.name, caja_abierta: false, ultimo_cierre: u ? resumenTurno(u) : null };
+    return { local: L.nombre, caja_abierta: false, ultimo_cierre: u ? resumenTurno(u) : null };
   }
   const [cuentas, gastos, sesiones] = await Promise.all([
     todas<any>((a, b) => db.from("resto_cuentas").select("total,metodo,propina,descuento,cobrado_por,created_at,mesa").eq("turno_id", t.id).range(a, b)),
@@ -145,7 +145,7 @@ async function estadoCaja(L: Local) {
   const porPersona: Record<string, { cobros: number; total: number }> = {};
   for (const c of cuentas) { const k = c.cobrado_por || "(sin nombre)"; (porPersona[k] ||= { cobros: 0, total: 0 }); porPersona[k].cobros++; porPersona[k].total += num(c.total); }
   return {
-    local: L.name, caja_abierta: true,
+    local: L.nombre, caja_abierta: true,
     abierta_por: t.abierto_por, desde: fechaHoraCorta(new Date(t.abierto_at)), lleva: duracion((Date.now() - new Date(t.abierto_at).getTime()) / 60000),
     sencillo_inicial: pesos(t.monto_inicial),
     cuentas_cobradas: cuentas.length,
@@ -189,7 +189,7 @@ async function ventas(L: Local, input: any) {
   const metodo = porMetodo(cuentas);
   const total = suma(cuentas.map((c) => c.total));
   const out: Record<string, unknown> = {
-    local: L.name, desde: desdeF, hasta: hastaF, cuentas: cuentas.length,
+    local: L.nombre, desde: desdeF, hasta: hastaF, cuentas: cuentas.length,
     cobrado_total_incluye_propinas: pesos(total),
     ticket_promedio: pesos(cuentas.length ? total / cuentas.length : 0),
     por_forma_de_pago: { efectivo: pesos(metodo.efectivo), tarjeta: pesos(metodo.tarjeta), transferencia: pesos(metodo.transferencia) },
@@ -207,7 +207,7 @@ async function cierres(L: Local, input: any) {
   const dias = Math.min(14, Math.max(1, num(input?.dias) || 3));
   const desde = new Date(Date.now() - dias * 86400000).toISOString();
   const { data } = await db.from("resto_turnos").select("*").eq("local_id", L.id).not("cerrado_at", "is", null).gte("cerrado_at", desde).order("cerrado_at", { ascending: false }).limit(20);
-  return { local: L.name, dias, cierres: (data || []).map(resumenTurno) };
+  return { local: L.nombre, dias, cierres: (data || []).map(resumenTurno) };
 }
 
 async function alertasControl(L: Local, input: any) {
@@ -216,7 +216,7 @@ async function alertasControl(L: Local, input: any) {
     .gte("created_at", new Date(Date.now() - dias * 86400000).toISOString()).order("created_at", { ascending: false }).limit(25);
   if (input?.solo_sin_ver) q = q.is("visto_at", null);
   const { data } = await q;
-  return { local: L.name, alertas: (data || []).map((a: any) => ({ cuando: fechaHoraCorta(new Date(a.created_at)), fase: a.fase, gravedad: a.gravedad, titulo: a.titulo, detalle: String(a.detalle).slice(0, 300), que_revisar: String(a.revisar).slice(0, 200), visto: a.visto_at ? `sí, ${a.visto_por || ""}` : "no" })) };
+  return { local: L.nombre, alertas: (data || []).map((a: any) => ({ cuando: fechaHoraCorta(new Date(a.created_at)), fase: a.fase, gravedad: a.gravedad, titulo: a.titulo, detalle: String(a.detalle).slice(0, 300), que_revisar: String(a.revisar).slice(0, 200), visto: a.visto_at ? `sí, ${a.visto_por || ""}` : "no" })) };
 }
 
 async function pendientes(L: Local) {
@@ -225,7 +225,7 @@ async function pendientes(L: Local) {
     db.from("resto_gastos").select("tipo,numero,monto,anul_pedida_por,anul_pedida_motivo,created_at").eq("local_id", L.id).eq("anulado", false).not("anul_pedida_motivo", "is", null).order("created_at").limit(20).then((x) => x.data || []),
   ]);
   return {
-    local: L.name,
+    local: L.nombre,
     anulaciones_de_productos: an.map((a: any) => `${a.pedida_por || "?"} pide anular ${a.cantidad}× ${a.item_n} · ${mesaTxt(a.mesa)} · hace ${duracion((Date.now() - new Date(a.created_at).getTime()) / 60000)}${a.motivo ? " · " + a.motivo : ""}`),
     anulaciones_de_gastos: ga.map((g: any) => `${g.anul_pedida_por || "?"} pide anular ${g.tipo}${g.numero ? " N° " + g.numero : ""} por ${pesos(g.monto)} · ${g.anul_pedida_motivo}`),
   };
@@ -238,7 +238,7 @@ async function actividad(L: Local, input: any) {
   if (input?.quien) q = q.ilike("quien", `%${String(input.quien).replace(/[%_]/g, "")}%`);
   if (input?.tabla) q = q.eq("tabla", String(input.tabla));
   const { data } = await q;
-  return { local: L.name, horas, registros: (data || []).map((b: any) => ({ cuando: fechaHoraCorta(new Date(b.at)), quien: b.quien, rol: b.rol, que: `${b.accion} en ${b.tabla}`, fila: b.fila, detalle: JSON.stringify(b.detalle || {}).slice(0, 220) })) };
+  return { local: L.nombre, horas, registros: (data || []).map((b: any) => ({ cuando: fechaHoraCorta(new Date(b.at)), quien: b.quien, rol: b.rol, que: `${b.accion} en ${b.tabla}`, fila: b.fila, detalle: JSON.stringify(b.detalle || {}).slice(0, 220) })) };
 }
 
 async function mesas(L: Local) {
@@ -249,7 +249,7 @@ async function mesas(L: Local) {
     e.comandas++; e.estados.add(c.estado);
   }
   return {
-    local: L.name, mesas_con_pedido: Object.entries(por).map(([m, e]) => ({ mesa: mesaTxt(Number(m)), garzon: e.garzon || "(sin garzón)", comandas: e.comandas, estados: [...e.estados], desde: horaChile(new Date(e.desde)) })),
+    local: L.nombre, mesas_con_pedido: Object.entries(por).map(([m, e]) => ({ mesa: mesaTxt(Number(m)), garzon: e.garzon || "(sin garzón)", comandas: e.comandas, estados: [...e.estados], desde: horaChile(new Date(e.desde)) })),
   };
 }
 
@@ -262,7 +262,7 @@ async function saludSistema(L: Local, m: Miembro) {
     m.rol === "ingeniero" ? db.from("resto_migraciones").select("nombre,aplicada_at").order("nombre", { ascending: false }).limit(3).then((x) => x.data || []) : Promise.resolve([]),
   ]);
   const out: Record<string, unknown> = {
-    local: L.name, control_de_caja_activo: !!L.control_caja, tramo: L.tramo ?? null, celulares_con_avisos_push: push,
+    local: L.nombre, control_de_caja_activo: !!L.control_caja, tramo: L.tramo ?? null, celulares_con_avisos_push: push,
     ultima_revision_control: rev ? `${rev.fase} · ${fechaHoraCorta(new Date(rev.revisado_at))} · ${rev.n_alertas} alertas` : "ninguna todavía",
     avisos_del_vigia_24h: avisos.map((a: any) => `${fechaHoraCorta(new Date(a.created_at))} · ${a.gravedad} · ${a.titulo}`),
   };

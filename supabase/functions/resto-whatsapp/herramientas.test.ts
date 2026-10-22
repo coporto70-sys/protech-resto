@@ -31,8 +31,8 @@ beforeEach(() => {
   for (const k of Object.keys(T)) delete T[k];
   llamadas = []; colaClaude = [];
   T.resto_locales = [
-    { id: L1, name: "Super Pastel", control_caja: true, tramo: 2 },
-    { id: L2, name: "Café Otro", control_caja: false, tramo: 4 },
+    { id: L1, nombre: "Super Pastel", control_caja: true, tramo: 2 },
+    { id: L2, nombre: "Café Otro", control_caja: false, tramo: 4 },
   ];
   T.resto_wa_config = [{ local_id: L1, phone_number_id: "pn1", token: "tok", activo: true, plantilla_aviso: null }];
   T.resto_wa_equipo = [{ ...ingeniero, activo: true }, { ...admin, activo: true }];

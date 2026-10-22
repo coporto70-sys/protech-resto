@@ -25,7 +25,7 @@ async function contexto(cfg: any) {
     if (m.categoria !== cat) { cat = m.categoria; lineas.push(`\n${cat || "Otros"}:`); }
     lineas.push(`- ${m.nombre}: $${Number(m.precio).toLocaleString("es-CL")}${agotado ? " (agotado hoy)" : ""}`);
   }
-  const nombre = loc?.name || "el local";
+  const nombre = loc?.nombre || "el local";
   const sistema = `Eres el asistente de WhatsApp de "${nombre}". Atiendes a clientes del local por WhatsApp, en español de Chile, con un tono cálido, breve y claro (mensajes cortos, sin formato complicado).${cfg.tono ? "\nTono pedido por el local: " + cfg.tono : ""}
 
 Reglas:
