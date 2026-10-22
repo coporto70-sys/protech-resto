@@ -4,46 +4,15 @@
 // Flujo: Meta -> esta función -> Claude (con la carta y la info del local) -> respuesta por WhatsApp.
 // Si Claude decide que hace falta una persona (herramienta pasar_a_persona), la conversación queda en modo 'humano',
 // el agente deja de responder y se avisa a la administradora por notificación push (y por WhatsApp si hay aviso_a).
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { avisarPush, db, enviarWA, firmaOk, igualSeguro } from "./wa.ts";
+import { atenderEquipo, buscarMiembro, eventoTurno, vigiar } from "./operaciones.ts";
 
+// Un mismo número de WhatsApp atiende a dos públicos:
+//   · Equipo (ingeniero y administradoras, tabla resto_wa_equipo): lo atiende el agente de operaciones (operaciones.ts).
+//   · Cualquier otra persona (clientes): lo atiende el agente de clientes de este archivo.
+// Además, la base y el cron llaman a esta función con la clave interna para las acciones "vigia" y "evento_turno".
 const MODELO = "claude-haiku-5-5";
 const LIMITE_POR_HORA = 20; // respuestas del agente por cliente y hora (evita gastos si alguien abusa)
-const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-const GRAPH = "https://graph.facebook.com/v21.0";
-
-const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
-async function firmaOk(secret: string, cuerpo: string, cab: string | null): Promise<boolean> {
-  if (!cab || !cab.startsWith("sha256=")) return false;
-  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const esperada = hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(cuerpo)));
-  const a = cab.slice(7);
-  if (a.length !== esperada.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ esperada.charCodeAt(i);
-  return d === 0;
-}
-
-async function enviarWA(cfg: any, a: string, texto: string) {
-  const r = await fetch(`${GRAPH}/${cfg.phone_number_id}/messages`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to: a, type: "text", text: { body: texto.slice(0, 3800) } }),
-  });
-  return r.ok;
-}
-
-async function avisarPush(localId: string, titulo: string, cuerpo: string) {
-  try {
-    const { data: u } = await db.from("resto_push_config").select("valor").eq("clave", "url").maybeSingle();
-    const { data: s } = await db.from("resto_push_config").select("valor").eq("clave", "secreto").maybeSingle();
-    if (!u || !s) return;
-    await fetch(u.valor, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-push-secret": s.valor },
-      body: JSON.stringify({ accion: "enviar", local_id: localId, titulo, cuerpo, tag: "wa-humano" }),
-    });
-  } catch { /* el aviso es secundario */ }
-}
 
 async function contexto(cfg: any) {
   const { data: loc } = await db.from("resto_locales").select("*").eq("id", cfg.local_id).maybeSingle();
@@ -155,6 +124,20 @@ Deno.serve(async (req) => {
   let b: any;
   try { b = JSON.parse(cuerpo); } catch { return new Response("ok"); }
 
+  // Acciones internas (las llama la base de datos o el cron, no Meta): exigen la clave interna del sistema
+  if (typeof b?.accion === "string") {
+    const { data: s } = await db.from("resto_push_config").select("valor").eq("clave", "secreto").maybeSingle();
+    const dado = req.headers.get("x-push-secret") || "";
+    if (!s || !dado || !igualSeguro(dado, s.valor)) return json({ error: "no autorizado" }, 401);
+    try {
+      if (b.accion === "vigia") return json(await vigiar());
+      if (b.accion === "evento_turno" && b.turno_id && b.fase) return json(await eventoTurno(String(b.fase), String(b.turno_id)));
+    } catch (e) {
+      return json({ error: String((e as Error)?.message || e).slice(0, 300) }, 500);
+    }
+    return json({ error: "acción desconocida" }, 400);
+  }
+
   const tareas: Promise<void>[] = [];
   for (const ent of b.entry || []) for (const ch of ent.changes || []) {
     const v = ch.value || {};
@@ -168,6 +151,15 @@ Deno.serve(async (req) => {
       const nombre = (v.contacts || []).find((c: any) => c.wa_id === tel)?.profile?.name || "";
       const texto = m.type === "text" ? m.text?.body : (m.type === "button" ? m.button?.text : "");
       if (!tel) continue;
+      // ¿Es del equipo? Entonces lo atiende el agente de operaciones, que muestra datos del local:
+      // solo se acepta si el mensaje viene firmado por Meta (app_secret cargado), para que nadie pueda suplantar un número.
+      const miembro = await buscarMiembro(tel);
+      if (miembro) {
+        if (!cfg.app_secret) continue;
+        if (!texto) { tareas.push(enviarWA(cfg, tel, "Por ahora solo leo mensajes de texto 🙂").then(() => {})); continue; }
+        tareas.push(atenderEquipo(cfg, miembro, String(texto), String(m.id)).catch(() => {}));
+        continue;
+      }
       if (!texto) { // audio, imagen, etc.: se pide que escriba
         tareas.push(enviarWA(cfg, tel, "Por ahora solo puedo leer mensajes de texto 🙂 ¿Me escribes tu consulta?").then(() => {}));
         continue;
@@ -175,6 +167,13 @@ Deno.serve(async (req) => {
       tareas.push(responder(cfg, tel, nombre, String(texto), String(m.id)).catch(() => {}));
     }
   }
-  await Promise.all(tareas);
-  return new Response("ok"); // Meta exige 200 rápido; si falla algo, igual se responde 200 para que no reintente en bucle
+  // Meta exige un 200 rápido (si tarda, reintenta). Las respuestas siguen en segundo plano; si el entorno no lo permite, se espera.
+  const todo = Promise.all(tareas);
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(todo); else await todo;
+  return new Response("ok"); // si algo falla, igual se responde 200 para que Meta no reintente en bucle
 });
+
+function json(o: unknown, status = 200) {
+  return new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json" } });
+}

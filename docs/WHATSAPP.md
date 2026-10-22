@@ -2,6 +2,8 @@
 
 El agente responde a los clientes con Claude usando la carta y los datos del local. Si no sabe, o el cliente quiere reservar, pedir o reclamar, pasa la conversación a una persona: deja de responder, avisa por notificación push (y, si quieres, por WhatsApp) y deja el motivo.
 
+> Para tu equipo (ingeniero y administradoras) el mismo número tiene además un agente de operaciones que consulta datos del local y avisa aperturas, cierres y alertas. Ver `AGENTE.md`.
+
 ## 1. Meta (lo haces tú, una vez)
 1. https://developers.facebook.com → Mis apps → Crear app → tipo **Negocio** → agrega el producto **WhatsApp**.
 2. En WhatsApp → Configuración de la API: registra el número del local (no puede estar en la app normal de WhatsApp) o usa el de prueba.
