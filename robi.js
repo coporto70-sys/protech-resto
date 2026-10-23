@@ -23,6 +23,7 @@
     resumen: ['Resumen', 'Aquí ves cómo va el día de un vistazo: ventas, productos más pedidos y propinas.'],
     coms: ['Comandas', 'Aquí se revisan todas las comandas enviadas, por si hubo un error en un pedido.'],
     inv: ['Inventario', 'Aquí ves el stock de cada producto, ingresas mercadería y ves lo que está por agotarse. El triángulo ⚠ avisa si algo está bajo el mínimo.'],
+    tortas: ['Ventas de tortas', 'Aquí anotas los encargos de tortas con el nombre y teléfono del cliente, la fecha y hora de entrega y el precio. Los abonos quedan en la caja del turno en que los recibes. Al retirar la torta, toca «Retirar y cobrar saldo». El calendario muestra los días con entregas.'],
     resv: ['Reservas', 'Aquí anotas las reservas con fecha, hora, nombre, personas y mesa. La mesa aparece como reservada en el plano.'],
     bit: ['Registro de cambios', 'Aquí queda anotado quién cambió qué y cuándo: precios, montos de caja, anulaciones. Nada se borra.'],
     prod: ['Inventario de producción', 'Aquí va lo que se compra para producir (mermeladas, tarros de duraznos, cremas…), aparte de la carta.'],

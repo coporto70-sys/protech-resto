@@ -860,4 +860,37 @@ def MX1(pg):
     check('MX: el cobro del turno muestra el detalle', 'Mixto ($2.000 efectivo + $3.000 tarjeta)' in t)
 e=run({'email':'u','role':'','db':mx_db()},MX1,LS_ADM); print('ERR MX1',e)
 
+# --- TT: ventas de tortas (encargos con abonos y calendario)
+def tt_db():
+    d=base_db(); d['resto_cuentas']=[]
+    d['resto_turnos']=[{'id':'T1','local_id':'L1','abierto_por':'Administradora','abierto_at':iso(120),'monto_inicial':50000,'cerrado_at':None}]
+    return d
+def TT1(pg):
+    t=tabsx(pg)
+    check('TT: existe la pestaña Ventas de tortas', hay(t,'Ventas de tortas'))
+    pg.click('[data-act="tab"][data-v="tortas"]'); pg.wait_for_timeout(300)
+    check('TT: muestra calendario y formulario del encargo', pg.locator('.cal-d').count()>=28 and pg.locator('#tn').count()==1 and pg.locator('#tt').count()==1)
+    manana=pg.evaluate("fechaIso(new Date(Date.now()+864e5))")
+    pg.fill('#tn','María Soto'); pg.fill('#tt','912345678'); pg.fill('#td','Torta de mil hojas 20 personas'); pg.fill('#tf',manana); pg.fill('#th','15:30'); pg.fill('#tp','40000'); pg.fill('#ta','10000')
+    pg.click('[data-act="tqcrear"]'); pg.wait_for_timeout(800)
+    tr=pg.evaluate('window.__DB.resto_tortas'); ab=pg.evaluate('window.__DB.resto_tortas_abonos')
+    check('TT: guarda el encargo con los datos del cliente', len(tr)==1 and tr[0]['cliente']=='María Soto' and tr[0]['telefono']=='912345678' and tr[0]['precio']==40000)
+    check('TT: el abono inicial queda en el turno abierto', len(ab)==1 and ab[0]['monto']==10000 and ab[0]['metodo']=='Efectivo' and ab[0]['turno_id']=='T1' and ab[0]['torta_id']==tr[0]['id'])
+    x=pg.inner_text('#app')
+    check('TT: la lista muestra el saldo y el teléfono', 'Saldo $30.000' in x and 'Abonado $10.000' in x and '912345678' in x and 'María Soto' in x)
+    check('TT: el calendario marca el día de entrega', pg.locator('.cal-d.con').count()==1)
+    pg.click('[data-act="tqabrir"]'); pg.fill('#tab-m','5000'); pg.select_option('#tab-mt','Tarjeta'); pg.click('[data-act="tqabok"]'); pg.wait_for_timeout(800)
+    check('TT: segundo abono con tarjeta', len(pg.evaluate('window.__DB.resto_tortas_abonos'))==2 and 'Saldo $25.000' in pg.inner_text('#app'))
+    pg.click('[data-act="tqretabrir"]'); pg.wait_for_timeout(200)
+    pg.fill('#tr-rc','30000'); pg.wait_for_timeout(200)
+    check('TT: al retirar calcula el vuelto del saldo', pg.inner_text('#tr-vuelto')=='$5.000')
+    pg.click('[data-act="tqretok"]'); pg.wait_for_timeout(900)
+    cu=pg.evaluate('window.__DB.resto_cuentas'); tr=pg.evaluate('window.__DB.resto_tortas')[0]
+    check('TT: el saldo se cobra como venta en efectivo', len(cu)==1 and cu[0]['total']==25000 and cu[0]['metodo']=='Efectivo' and cu[0]['turno_id']=='T1')
+    check('TT: la torta queda retirada', tr['estado']=='retirada' and tr['cuenta_id']==cu[0]['id'])
+    nav_caja(pg); pg.wait_for_timeout(400)
+    x=pg.inner_text('#app')
+    check('TT: la caja suma abonos y saldo (efectivo $50.000+$10.000+$25.000)', '$85.000' in x and 'Incluye $15.000 en abonos de tortas' in x)
+e=run({'email':'u','role':'','db':tt_db()},TT1,LS_ADM); print('ERR TT1',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

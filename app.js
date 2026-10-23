@@ -31,14 +31,14 @@ const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S
 const rolesOn = () => !!(D && D.adminPin);
 const esIng = () => S.rol === 'ingeniero';
 const esAdm = () => !rolesOn() || S.rol === 'admin' || esIng();
-const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'resumen', 'inv', 'prod', 'abast', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina'] };
+const TABS = { admin: ['mesas', 'cocina', 'cafe', 'resv', 'turno', 'caja', 'tortas', 'resumen', 'inv', 'prod', 'abast', 'garz', 'coms', 'carta', 'bit'], garzon: ['mesas'], cocina: ['cocina'] };
 TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos los paneles */
 /* Tramos: Resto se activa por etapas. La administradora ve solo las pestañas de su tramo y de los anteriores; las demás quedan con candado.
    Solo Protech (el ingeniero) cambia el tramo del local. Sin tramo definido (migración 027) todo queda abierto. */
-const TAB_NOM = { mesas: 'Mesas', cocina: 'Cocina', cafe: 'Cafetería', carta: 'Carta y mesas', garz: 'Garzones', turno: 'Caja', caja: 'Ventas', resumen: 'Resumen', coms: 'Comandas', inv: 'Inventario', resv: 'Reservas', bit: 'Registro de cambios', prod: 'Inventario de producción', abast: 'Compras y recetas' };
+const TAB_NOM = { mesas: 'Mesas', cocina: 'Cocina', cafe: 'Cafetería', carta: 'Carta y mesas', garz: 'Garzones', turno: 'Caja', caja: 'Ventas', tortas: 'Ventas de tortas', resumen: 'Resumen', coms: 'Comandas', inv: 'Inventario', resv: 'Reservas', bit: 'Registro de cambios', prod: 'Inventario de producción', abast: 'Compras y recetas' };
 const TRAMOS = [
   { n: 1, nombre: 'Salir a vender', tabs: ['mesas', 'cocina', 'cafe', 'carta', 'garz'] },
-  { n: 2, nombre: 'Cuadrar el día', tabs: ['turno', 'caja', 'resumen', 'coms', 'inv'] },
+  { n: 2, nombre: 'Cuadrar el día', tabs: ['turno', 'caja', 'tortas', 'resumen', 'coms', 'inv'] },
   { n: 3, nombre: 'Control del local', tabs: ['resv', 'bit'] },
   { n: 4, nombre: 'Producción y costos', tabs: ['prod', 'abast'] }
 ];
@@ -56,7 +56,7 @@ const esGarzonRol = () => rolesOn() && S.rol === 'garzon';
 const mesaPropia = n => { const d = duenoMesa(n); return !esGarzonRol() || !d || d === S.quien; };
 const puedeVerMesa = n => mesaPropia(n) || cajaGarzon();
 const puedeCobrarEsta = n => puedeCobrarMesa() && puedeVerMesa(n);
-const misTabs0 = () => !rolesOn() ? TABS.admin : S.rol === 'garzon' && cajaGarzon() ? ['mesas', 'turno'] : (TABS[S.rol] || []);
+const misTabs0 = () => !rolesOn() ? TABS.admin : S.rol === 'garzon' && cajaGarzon() ? ['mesas', 'turno', 'tortas'] : (TABS[S.rol] || []);
 /* La administradora (y el ingeniero) ven las pestañas bloqueadas con candado; garzones y cocina simplemente no las ven */
 const misTabs = () => esAdm() ? misTabs0() : misTabs0().filter(k => !tabBloqueada(k));
 async function hpin(scope, pin) {
@@ -265,7 +265,7 @@ async function cargar(parcial) {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv, rec, prv, oco, ult] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv, rec, prv, oco, tor, tab, ult] = await Promise.all([
     get('loc', () => sb.from('resto_locales').select('*').eq('id', id).single()),
     get('menu', () => sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre')),
     get('com', () => sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false)),
@@ -282,6 +282,8 @@ async function cargar(parcial) {
     get('rec', () => sb.from('resto_recetas').select('*').eq('local_id', id)),
     get('prv', () => sb.from('resto_proveedores').select('*').eq('local_id', id).order('nombre')),
     get('oco', () => sb.from('resto_ordenes_compra').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(40)),
+    get('tor', () => sb.from('resto_tortas').select('*').eq('local_id', id).gte('entrega_at', new Date(Date.now() - 30 * 864e5).toISOString()).order('entrega_at')),
+    get('tab', () => sb.from('resto_tortas_abonos').select('*').eq('local_id', id).gte('created_at', new Date(Date.now() - 120 * 864e5).toISOString()).order('created_at')),
     get('ult', () => sb.from('resto_turnos').select('id,cerrado_at,cerrado_por,desglose_deja').eq('local_id', id).not('cerrado_at', 'is', null).order('cerrado_at', { ascending: false }).limit(1))
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
@@ -292,6 +294,10 @@ async function cargar(parcial) {
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, pef: r.pago_efec || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
+  /* Ventas de tortas: encargos con abonos (migración 030) */
+  D.tortaOk = !!(tor && !tor.error && tab && !tab.error);
+  D.abonosT = D.tortaOk ? (tab.data || []).map(a => ({ id: a.id, tid: a.torta_id, m: +a.monto, met: a.metodo, turno: a.turno_id || null, por: a.recibido_por || '', anul: !!a.anulado, t: +new Date(a.created_at) })) : [];
+  D.tortas = D.tortaOk ? (tor.data || []).map(r => ({ id: r.id, cli: r.cliente, tel: r.telefono || '', desc: r.descripcion, precio: +r.precio, ent: r.entrega_at, nota: r.nota || '', est: r.estado || 'pendiente', por: r.creado_por || '', ret: r.retirado_at, abonos: D.abonosT.filter(a => a.tid === r.id) })) : [];
   D.insumos.sort(porNombre); D.provs.sort(porNombre); /* inventario de producción y proveedores siempre de la A a la Z */
   outLoad(); outAplicar();
   D.anuOk =!!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
@@ -339,10 +345,10 @@ window.addEventListener('online', () => { if (S.user) reconectar(); });
 setInterval(() => { if (S.user && !document.hidden) sb.auth.getSession(); }, 10 * 60 * 1000);
 function suscribir() {
   if (rt || !D) return;
-  const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv', resto_recetas: 'rec', resto_proveedores: 'prv', resto_ordenes_compra: 'oco' };
+  const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv', resto_recetas: 'rec', resto_proveedores: 'prv', resto_ordenes_compra: 'oco', resto_tortas: 'tor', resto_tortas_abonos: 'tab' };
   const refresca = t => { if (t && TK[t]) PEND.add(TK[t]); if (t === 'resto_turnos') PEND.add('ult'); else PEND.add('*'); clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; const p = PEND.has('*') ? null : new Set(PEND); PEND.clear(); await cargar(p); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
-  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t)));
+  ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra', 'resto_tortas', 'resto_tortas_abonos'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t)));
   rt.subscribe();
 }
 const _h = location.hash || '';
@@ -387,7 +393,7 @@ function loginHTML() {
   </div></div>`;
 }
 function shell(inner) {
-  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['resumen', 'Resumen'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['abast', 'Compras y recetas' + (vencen().length ? ' ⚠' : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas'], ['bit', 'Registro de cambios']];
+  const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['tortas', 'Ventas de tortas'], ['resumen', 'Resumen'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['abast', 'Compras y recetas' + (vencen().length ? ' ⚠' : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas'], ['bit', 'Registro de cambios']];
   const tabs = todas.filter(t => misTabs().includes(t[0])).map(([k, n]) => tabBloqueada(k) ? [k, '🔒 ' + n] : [k, n]);
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
   return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
@@ -857,6 +863,8 @@ const PTIPO = 'Propina pagada';
 function turnoRes(t) {
   const hasta = corteDe(t), cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at) && enCorte(t, c.t, hasta)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
   cu.forEach(c => { vt += c.total; const pp0 = partesPago(c); ef += pp0.ef; tj += pp0.tj; tr += pp0.tr; if (c.pq) ef += c.pe; pr += c.propina + c.pe + c.pt; });
+  /* Abonos de tortas recibidos durante el turno: entran a la caja según cómo se pagaron (el saldo se cobra al retirar como una venta normal) */
+  let abT = 0; (D.abonosT || []).filter(a => !a.anul && a.t >= +new Date(t.abierto_at) && enCorte(t, a.t, hasta)).forEach(a => { abT += a.m; vt += a.m; if (a.met === 'Efectivo') ef += a.m; else if (a.met === 'Tarjeta') tj += a.m; else tr += a.m; });
   const gsT = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul && enCorte(t, g.t, hasta)), gs = gsT.filter(g => g.tipo !== 'Retiro' && g.tipo !== PTIPO), rts = gsT.filter(g => g.tipo === 'Retiro'), adv = gsT.filter(g => g.tipo === PTIPO), gt = gs.reduce((a, g) => a + g.m, 0), rt = rts.reduce((a, g) => a + g.m, 0);
   /* Propinas por garzón del turno. Se pagan en efectivo desde la caja: la propina de las cuentas (10%) y la propina extra con tarjeta.
      La propina en efectivo que quedó en la caja (del vuelto) también se le paga al cerrar; la que le dieron directo en la mano (pe) ya la recibió: solo se muestra. Cada turno nuevo parte en cero. */
@@ -867,7 +875,7 @@ function turnoRes(t) {
   const propGar = Object.values(pg).filter(o => o.n && (o.m > 0 || o.ad > 0)).sort((a, b) => a.n.localeCompare(b.n)), sinGar = (pg[''] || { m: 0 }).m;
   const pp = propGar.reduce((a, o) => a + o.tot, 0), pend = propGar.reduce((a, o) => a + o.pen, 0), adT = propGar.reduce((a, o) => a + o.ad, 0);
   const dsc = cu.filter(c => c.desc > 0), dt = dsc.reduce((a, c) => a + c.desc, 0);
-  return { cuentas: cu.length, vt, ef, tj, tr, pr, gt, gs: gs.length, pp, pend, adT, adv, propGar, sinGar, dsc, dt, rt, rts: rts.length, esp: (t.monto_inicial || 0) + ef - gt - rt - pp };
+  return { cuentas: cu.length, abT, vt, ef, tj, tr, pr, gt, gs: gs.length, pp, pend, adT, adv, propGar, sinGar, dsc, dt, rt, rts: rts.length, esp: (t.monto_inicial || 0) + ef - gt - rt - pp };
 }
 const hora = t => new Date(t).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 function cajerosHTML(t) {
@@ -1049,7 +1057,7 @@ function turnoHTML() {
   const r = turnoRes(t);
   return `<h2>Caja · turno de la ${turnoNom(t.abierto_at)}</h2>${fondoHTML()}<div class="mut" style="margin-bottom:8px">Abrió ${esc(t.abierto_por || '')} el ${hora(t.abierto_at)} con ${money(t.monto_inicial)}${dnTxt(t.desglose_apertura) ? ' (' + dnTxt(t.desglose_apertura) + ')' : ''}</div>
   <div class="stats"><div class="card stat"><span class="mut">Ventas del turno</span><b>${money(r.vt)}</b></div><div class="card stat"><span class="mut">Cuentas</span><b>${r.cuentas}</b></div><div class="card stat"><span class="mut">Propinas</span><b>${money(r.pr)}</b></div></div>
-  <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>
+  <div class="card"><b>Cobrado por forma de pago</b><div class="row"><span>Efectivo</span><b>${money(r.ef)}</b></div><div class="row"><span>Tarjeta</span><b>${money(r.tj)}</b></div><div class="row"><span>Transferencia</span><b>${money(r.tr)}</b></div>${r.abT ? `<p class="mut" style="margin:4px 0 0">Incluye ${money(r.abT)} en abonos de tortas.</p>` : ''}
     ${r.gt ? `<div class="row"><span>Gastos pagados desde caja</span><b>−${money(r.gt)}</b></div>` : ''}${r.rt ? `<div class="row"><span>Retiros de la administradora</span><b>−${money(r.rt)}</b></div>` : ''}${r.pp ? `<div class="row"><span>Propinas pagadas a garzones</span><b>−${money(r.pp)}</b></div>` : ''}<div class="total"><span>Efectivo que debe haber en caja</span><span>${money(r.esp)}</span></div><p class="mut">Incluye el efectivo inicial y descuenta gastos, retiros y propinas pagadas. No incluye la propina en efectivo entregada directo al garzón.</p></div>
   ${cobrosHTML(t)}
   <div class="card" style="margin-top:12px"><b>Quién estuvo en caja</b>${cajerosHTML(t)}</div>
@@ -1283,7 +1291,7 @@ function rsExcel() {
 }
 function bajar(txt, tipo, nombre) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: tipo })); a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); }
 async function respaldo() {
-  const tablas = ['resto_locales', 'resto_menu', 'resto_garzones', 'resto_cocineras', 'resto_insumos', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra', 'resto_cuentas', 'resto_gastos', 'resto_insumo_mov', 'resto_turnos'];
+  const tablas = ['resto_locales', 'resto_menu', 'resto_garzones', 'resto_cocineras', 'resto_insumos', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra', 'resto_cuentas', 'resto_gastos', 'resto_insumo_mov', 'resto_turnos', 'resto_tortas', 'resto_tortas_abonos'];
   const out = { local: D.name, fecha: new Date().toISOString(), version: 1, tablas: {} };
   for (const t of tablas) {
     const r = await sb.from(t).select('*').eq(t === 'resto_locales' ? 'id' : 'local_id', D.id).limit(50000);
@@ -1330,6 +1338,74 @@ function invHTML() {
     <input id="sq-${i.id}" data-keep type="number" inputmode="numeric" placeholder="Cant." style="width:80px" value="${fv('sq-' + i.id)}">
     ${i.s == null ? `<button class="btn" data-act="sk_set" data-id="${i.id}">Controlar</button>` : `<button class="btn-ok" data-act="sk_add" data-id="${i.id}">+ Entrada</button><button class="btn-line" data-act="sk_set" data-id="${i.id}">Contar</button><button class="btn-line" data-act="sk_min" data-id="${i.id}">Mín.</button><button class="btn-bad" data-act="sk_off" data-id="${i.id}">Quitar</button>`}</div></div>`).join('') || '<p class="mut">Sin productos.</p>'}</div>`;
 }
+/* ---------- Ventas de tortas: encargos con abonos, datos del cliente y calendario de entregas ---------- */
+const TMET = ['Efectivo', 'Tarjeta', 'Transferencia'];
+const tAbonado = t => t.abonos.filter(a => !a.anul).reduce((s, a) => s + a.m, 0);
+const tSaldo = t => Math.max(0, t.precio - tAbonado(t));
+const diaTorta = t => fechaIso(new Date(t.ent));
+const horaTorta = t => new Date(t.ent).toTimeString().slice(0, 5);
+const fonoWa = f => { const d = String(f || '').replace(/\D/g, ''); return d.length === 9 ? '56' + d : d.length >= 11 ? d : ''; };
+const lblDia = d => { const m = fechaIso(new Date(Date.now() + 864e5)); return (d === hoyIso() ? 'Hoy · ' : d === m ? 'Mañana · ' : '') + new Date(d + 'T12:00:00').toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' }); };
+const tMetSel = (id, cur) => `<select id="${id}" data-keep>${TMET.map(m => `<option ${cur === m ? 'selected' : ''}>${m}</option>`).join('')}</select>`;
+function tortaFormHTML(l) {
+  const ed = S.ted ? l.tortas.find(x => x.id === S.ted) : null, hoyS = hoyIso();
+  return `<div class="card" style="display:grid;gap:8px;align-self:start"><b>${ed ? 'Editar encargo' : 'Nuevo encargo de torta'}</b>
+    <input id="tn" data-keep placeholder="Nombre del cliente" value="${fv('tn')}">
+    <input id="tt" data-keep type="tel" inputmode="tel" placeholder="Teléfono (ej. 9 1234 5678)" value="${fv('tt')}">
+    <input id="td" data-keep placeholder="Torta (sabor, tamaño, dedicatoria…)" value="${fv('td')}">
+    <label class="mut">Fecha de entrega<input id="tf" data-keep type="date" value="${esc(S.f.tf || hoyS)}"></label>
+    <label class="mut">Hora de entrega<input id="th" data-keep type="time" value="${fv('th')}"></label>
+    <label class="mut">Precio total de la torta<input id="tp" data-keep type="number" inputmode="numeric" min="1" placeholder="$" value="${fv('tp')}"></label>
+    ${ed ? '' : `<label class="mut">Abono inicial (opcional)<input id="ta" data-keep type="number" inputmode="numeric" min="0" placeholder="$ 0" value="${fv('ta')}"></label>
+    <label class="mut">Forma de pago del abono${tMetSel('tam', S.f.tam)}</label>`}
+    <input id="tnota" data-keep placeholder="Nota (sin gluten, retira otra persona…)" value="${fv('tnota')}">
+    <button class="btn" data-act="tqcrear">${ed ? 'Guardar cambios' : 'Guardar encargo'}</button>${ed ? '<button class="btn-line" data-act="tqedno">Cancelar edición</button>' : ''}</div>`;
+}
+function tortaCardHTML(t) {
+  const ab = tAbonado(t), sal = tSaldo(t), w = fonoWa(t.tel), vivos = t.abonos.filter(a => !a.anul), caja = cajaAbierta();
+  let acc;
+  if (S.tabo === t.id) acc = `<div class="card" style="margin-top:10px;background:#f0fdf4;display:grid;gap:8px"><b>Nuevo abono</b>
+      <label class="mut">Monto (saldo actual ${money(sal)})<input id="tab-m" data-keep type="number" inputmode="numeric" min="1" max="${sal}" value="${fv('tab-m')}"></label>
+      <label class="mut">Forma de pago${tMetSel('tab-mt', S.f['tab-mt'])}</label>
+      ${caja ? '' : '<p class="mut" style="color:var(--bad);margin:0">La caja está cerrada: hay que abrirla para recibir un abono.</p>'}
+      <div style="display:flex;gap:8px"><button class="btn-ok" style="flex:1" data-act="tqabok" data-id="${t.id}" ${caja ? '' : 'disabled'}>Guardar abono</button><button class="btn-line" data-act="tqabno">Cancelar</button></div></div>`;
+  else if (S.tret === t.id) { const met = S.f['tr-mt'] || 'Efectivo';
+    acc = `<div class="card" style="margin-top:10px;background:#fefce8;display:grid;gap:8px"><b>${sal ? 'Cobrar el saldo y entregar' : 'Entregar torta (ya pagada)'}</b>
+      ${sal ? `<div class="total" style="margin:0"><span>Saldo a pagar</span><span>${money(sal)}</span></div>
+      <label class="mut">Forma de pago${tMetSel('tr-mt', met)}</label>
+      ${met === 'Efectivo' ? `<label class="mut">Efectivo recibido<input id="tr-rc" data-keep type="number" inputmode="numeric" min="0" placeholder="¿Con cuánto paga?" value="${fv('tr-rc')}"></label>
+      <div class="total" style="margin:0"><span>Vuelto a entregar</span><span id="tr-vuelto" data-saldo="${sal}">—</span></div>` : `<div class="mut">Cobra ${money(sal)} ${met === 'Tarjeta' ? 'en el terminal de tarjeta' : 'y confirma que la transferencia llegó'} antes de entregar.</div>`}` : ''}
+      ${sal && !caja ? '<p class="mut" style="color:var(--bad);margin:0">La caja está cerrada: hay que abrirla para cobrar el saldo.</p>' : ''}
+      <div style="display:flex;gap:8px"><button class="btn-ok" style="flex:1" data-act="tqretok" data-id="${t.id}" ${!sal || caja ? '' : 'disabled'}>Confirmar entrega</button><button class="btn-line" data-act="tqretno">Volver</button></div></div>`; }
+  else acc = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${sal ? `<button class="btn-line" data-act="tqabrir" data-id="${t.id}">+ Abono</button>` : ''}<button class="btn-ok" data-act="tqretabrir" data-id="${t.id}">${sal ? 'Retirar y cobrar saldo' : 'Entregar torta'}</button><button class="btn-line" data-act="tqedit" data-id="${t.id}">Editar</button>${esAdm() ? `<button class="btn-bad" data-act="tqcancel" data-id="${t.id}">Cancelar encargo</button>` : ''}</div>`;
+  return `<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div style="min-width:0"><b>${esc(horaTorta(t))} · ${esc(t.cli)}</b><div>${esc(t.desc)}</div>
+      <div class="mut">${t.tel ? `<a href="tel:${esc(t.tel)}">${esc(t.tel)}</a>${w ? ` · <a href="https://wa.me/${w}" target="_blank" rel="noopener">WhatsApp</a>` : ''}` : 'Sin teléfono'}${t.nota ? ' · ' + esc(t.nota) : ''}</div></div>
+    <div style="text-align:right"><div class="mut">Total ${money(t.precio)}</div><div class="mut">Abonado ${money(ab)}</div><b style="color:${sal ? 'var(--bad)' : 'var(--ok)'}">${sal ? 'Saldo ' + money(sal) : 'Pagada'}</b></div></div>
+    ${vivos.map(a => `<div class="mut" style="margin-top:4px;display:flex;justify-content:space-between;gap:8px;align-items:center"><span>Abono ${money(a.m)} · ${esc(a.met)} · ${hora(a.t)}${a.por ? ' · ' + esc(a.por) : ''}</span>${esAdm() ? `<button class="btn-line" style="padding:2px 8px;font-size:.8rem" data-act="tqabanul" data-id="${a.id}">Anular</button>` : ''}</div>`).join('')}${acc}</div>`;
+}
+function tortasHTML() {
+  const l = L();
+  if (!l.tortaOk) return `<h2>Ventas de tortas</h2><div class="card"><b>Falta activar esta pestaña</b><p class="mut" style="margin:6px 0 0">Protech debe ejecutar la migración 030 en Supabase para poder guardar los encargos de tortas.</p></div>`;
+  const hoyS = hoyIso(), mes = S.tcm || hoyS.slice(0, 7), sel = S.tcd || '';
+  const pend = l.tortas.filter(t => t.est === 'pendiente'), porDia = {};
+  pend.forEach(t => { const d = diaTorta(t); porDia[d] = (porDia[d] || 0) + 1; });
+  const [Y, M] = mes.split('-').map(Number), prim = new Date(Y, M - 1, 1), nd = new Date(Y, M, 0).getDate(), off = (prim.getDay() + 6) % 7, celdas = [];
+  for (let i = 0; i < off; i++) celdas.push('<span></span>');
+  for (let d = 1; d <= nd; d++) { const iso = mes + '-' + String(d).padStart(2, '0'), n = porDia[iso] || 0; celdas.push(`<button class="cal-d${iso === hoyS ? ' hoy' : ''}${iso === sel ? ' sel' : ''}${n ? ' con' : ''}" data-act="tqdia" data-d="${iso}" title="${n} entrega${n === 1 ? '' : 's'}">${d}${n ? `<i>${n}</i>` : ''}</button>`); }
+  const cal = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px"><button class="btn-line" data-act="tqmes" data-v="-1">←</button><b style="text-transform:capitalize">${prim.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' })}</b><button class="btn-line" data-act="tqmes" data-v="1">→</button></div>
+    <div class="cal-h">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(x => `<span>${x}</span>`).join('')}</div><div class="cal">${celdas.join('')}</div>
+    <p class="mut" style="margin:8px 0 0">Los días con número tienen tortas por entregar. Toca un día para ver solo esas entregas.</p>${sel ? '<button class="btn-line" style="margin-top:8px;width:100%" data-act="tqdia" data-d="">Ver todas las entregas</button>' : ''}</div>`;
+  const vis = (sel ? pend.filter(t => diaTorta(t) === sel) : pend).slice().sort((a, b) => +new Date(a.ent) - +new Date(b.ent)), dias = [...new Set(vis.map(diaTorta))];
+  const lista = dias.map(d => `<div class="piso">${lblDia(d)}${d < hoyS ? ' · <span style="color:var(--bad)">atrasada</span>' : ''}</div>` + vis.filter(t => diaTorta(t) === d).map(tortaCardHTML).join('')).join('') || `<div class="card"><p class="mut">${sel ? 'No hay entregas ese día.' : 'No hay tortas encargadas pendientes.'}</p></div>`;
+  const ret = l.tortas.filter(t => t.est === 'retirada').sort((a, b) => +new Date(b.ret || b.ent) - +new Date(a.ret || a.ent)).slice(0, 8);
+  const hist = ret.length ? `<div class="piso">Retiradas recientes</div><div class="card">${ret.map(t => `<div class="row"><div>${esc(t.cli)} · ${esc(t.desc)}<div class="mut">${t.tel ? esc(t.tel) + ' · ' : ''}entregada ${hora(+new Date(t.ret || t.ent))}</div></div><b>${money(t.precio)}</b></div>`).join('')}</div>` : '';
+  return `<h2>Ventas de tortas</h2><div class="cols"><div>${cal}${lista}${hist}</div>${tortaFormHTML(l)}</div>`;
+}
+function actualizaVueltoT() {
+  const v = $('#tr-vuelto'); if (!v) return; const rc = S.f['tr-rc'];
+  if (rc === '' || rc === undefined) { v.textContent = '—'; v.style.color = ''; return; }
+  const d = Math.round(+rc) - (+v.dataset.saldo); v.textContent = d >= 0 ? money(d) : 'Faltan ' + money(-d); v.style.color = d >= 0 ? 'var(--ok)' : 'var(--bad)';
+}
 function resvHTML() {
   const l = L(), hoyS = hoyIso();
   const mesasOpt = ['<option value="">Sin asignar</option>'];
@@ -1348,7 +1424,8 @@ function resvHTML() {
 }
 function cajaHTML() {
   const cu = L().cuentas.filter(c => hoy(c.t)); const sum = k => cu.reduce((a, c) => a + c[k], 0);
-  const por = {}; cu.forEach(c => { const q = partesPago(c); [['Efectivo', q.ef], ['Tarjeta', q.tj], ['Transferencia', q.tr]].forEach(([k, v]) => { if (v) por[k] = (por[k] || 0) + v; }); });
+  const por = {}; (L().abonosT || []).filter(a => !a.anul && hoy(a.t)).forEach(a => { por[a.met] = (por[a.met] || 0) + a.m; });
+  cu.forEach(c => { const q = partesPago(c); [['Efectivo', q.ef], ['Tarjeta', q.tj], ['Transferencia', q.tr]].forEach(([k, v]) => { if (v) por[k] = (por[k] || 0) + v; }); });
   const pop = {}; cu.forEach(c => c.items.forEach(i => pop[i.n] = (pop[i.n] || 0) + i.q));
   const top = Object.entries(pop).sort((a, b) => b[1] - a[1]).slice(0, 5);
   return `<h2>Ventas de hoy</h2><div class="stats">
@@ -1421,7 +1498,7 @@ function adminLocalesHTML() {
 function render() {
   const app = $('#app');
   const ae = document.activeElement, aid = ae && ae.id, ss = ae && ae.selectionStart;
-  try { renderInner(app); actualizaVuelto(); } finally {
+  try { renderInner(app); actualizaVuelto(); actualizaVueltoT(); } finally {
     if (aid) { const el = document.getElementById(aid); if (el && el !== document.activeElement) { el.focus(); try { el.setSelectionRange(ss, ss); } catch (x) {} } }
     /* en PC, en la venta mostrador el cursor vuelve solo al campo del lector */
     else if ((S.mos && S.view === 'mesas') && matchMedia('(pointer:fine)').matches) { const sc = document.getElementById('scan-mos'); if (sc) sc.focus(); }
@@ -1435,7 +1512,7 @@ function renderInner(app) {
   restaurarRol();
   if (rolesOn() && !S.rol) { app.innerHTML = quienHTML(); return; }
   if (!S.admin || S.view !== 'admin') { if (!misTabs().includes(S.view)) S.view = misTabs()[0]; }
-  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, abast: abastHTML, resumen: resumenHTML, caja: cajaHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, bit: bitHTML, admin: adminHTML }[S.view];
+  const v = { mesas: mesasHTML, cocina: cocinaHTML, cafe: cafeHTML, resv: resvHTML, turno: turnoHTML, inv: invHTML, prod: insumosHTML, abast: abastHTML, resumen: resumenHTML, caja: cajaHTML, tortas: tortasHTML, garz: garzHTML, coms: comsHTML, carta: cartaHTML, bit: bitHTML, admin: adminHTML }[S.view];
   const bloq = tabBloqueada(S.view) && !veTodo();
   const aviso = tabBloqueada(S.view) && veTodo() ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--brand)">🔒 Esta pestaña está <b>bloqueada para la administradora</b> (el local está en el tramo ${D.tramo}). Tú la ves completa como Protech.</div>` : '';
   const pasos = S.view === 'mesas' && esAdm() && S.mesa === null && !S.mos ? pasosHTML() : '';
@@ -1504,6 +1581,7 @@ document.addEventListener('input', e => {
     if (t) { const b = +t.dataset.base, tot = calcPago(b).total; t.textContent = money(tot); const v = $('#vuelto'); if (v) { v.dataset.total = S.metodo === 'Mixto' ? calcPago(b).mxe : tot; actualizaVuelto(); } actualizaMixto(); const j = document.querySelector('[data-act="rec"]'); if (j) j.dataset.v = tot; }
   }
   if (e.target.id === 'recib') { S.rc = e.target.value; actualizaVuelto(); }
+  if (e.target.id === 'tr-rc') actualizaVueltoT();
   if (e.target.id === 'ptarj') {
     S.pt = e.target.value;
     /* actualiza el total en pantalla sin redibujar (así no se pierde el cursor al escribir) */
@@ -1519,6 +1597,7 @@ document.addEventListener('change', e => {
   if (e.target.dataset && e.target.dataset.act === 'robi-auto') { robiLS('pr-robi-auto', e.target.checked ? '1' : null); if (e.target.checked) { robiLS('pr-robi-ya', '1'); robiHablar(robiBurbuja().m.txt); } else window.Robi.voz.callar(); return; }
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
+  if (e.target.id === 'tr-mt') render();
   if (e.target.id === 'pedonde') { S.peDonde = e.target.value; render(); }
   if (e.target.id === 'garz') { S.garzon = e.target.value; render(); }
   if (e.target.id === 'cmg') render();
@@ -2209,6 +2288,72 @@ document.addEventListener('click', async e => {
           if (!choca || confirm(nm(mesa) + ' ya tiene otra reserva cerca de esa hora. ¿Guardar igual?'))
             if (!fallo(await sb.from('resto_reservas').insert({ local_id: D.id, fecha, hora: h, personas: Math.max(1, Math.round(+f.rp || 2)), nombre: nom, telefono: (f.rt || '').trim() || null, mesa, nota: (f.rnota || '').trim() || null }))) S.f = {};
         }
+      }
+      else if (a === 'tqdia') { S.tcd = d.d || ''; if (d.d) S.tcm = d.d.slice(0, 7); }
+      else if (a === 'tqmes') { const [y, m] = (S.tcm || hoyIso().slice(0, 7)).split('-').map(Number); S.tcm = fechaIso(new Date(y, m - 1 + (+d.v || 0), 1)).slice(0, 7); }
+      else if (a === 'tqcrear') {
+        const f = S.f, cli = (f.tn || '').trim(), desc = (f.td || '').trim(), precio = Math.round(+f.tp || 0), fecha = f.tf || hoyIso(), h = f.th || '';
+        const ab = S.ted ? 0 : Math.max(0, Math.round(+f.ta || 0)), met = f.tam || 'Efectivo', ed = S.ted ? L().tortas.find(x => x.id === S.ted) : null;
+        if (!cli || !desc || !h) alert('Escribe el nombre del cliente, la torta y la hora de entrega.');
+        else if (!(precio > 0)) alert('Escribe el precio total de la torta.');
+        else if (ab > precio) alert('El abono no puede ser mayor al precio total.');
+        else if (ab > 0 && !cajaAbierta()) alert('La caja está cerrada: hay que abrirla para recibir un abono.');
+        else if (ed && precio < tAbonado(ed)) alert('El precio no puede ser menor a lo ya abonado (' + money(tAbonado(ed)) + ').');
+        else {
+          const ent = new Date(fecha + 'T' + h).toISOString(), tel = (f.tt || '').trim() || null, nota = (f.tnota || '').trim() || null;
+          if (ed) { if (!fallo(await sb.from('resto_tortas').update({ cliente: cli, telefono: tel, descripcion: desc, precio, entrega_at: ent, nota, editado_por: S.quien || 'Administradora' }).eq('id', ed.id))) { S.ted = null; S.f = {}; S.tcm = fecha.slice(0, 7); toast('Encargo actualizado', 'tk-l'); } }
+          else {
+            const id = uid();
+            if (!fallo(await sb.from('resto_tortas').insert({ id, local_id: D.id, cliente: cli, telefono: tel, descripcion: desc, precio, entrega_at: ent, nota, creado_por: S.quien || 'Administradora' }))) {
+              if (ab > 0) await ensureSes();
+              if (ab > 0 && fallo(await sb.from('resto_tortas_abonos').insert({ local_id: D.id, torta_id: id, monto: ab, metodo: met, turno_id: D.turno ? D.turno.id : null, recibido_por: S.quien || 'Administradora' }))) alert('El encargo se guardó, pero el abono no. Regístralo con "+ Abono".');
+              S.f = {}; S.tcm = fecha.slice(0, 7); toast('Encargo guardado para el ' + new Date(fecha + 'T12:00:00').toLocaleDateString('es-CL', { day: 'numeric', month: 'long' }), 'tk-l');
+            }
+          }
+        }
+      }
+      else if (a === 'tqedit') { const t = L().tortas.find(x => x.id === d.id); if (t) { S.ted = t.id; S.tabo = null; S.tret = null; S.f = { tn: t.cli, tt: t.tel, td: t.desc, tf: diaTorta(t), th: horaTorta(t), tp: String(t.precio), tnota: t.nota }; window.scrollTo(0, 0); } }
+      else if (a === 'tqedno') { S.ted = null; S.f = {}; }
+      else if (a === 'tqabrir') { S.tabo = d.id; S.tret = null; delete S.f['tab-m']; delete S.f['tab-mt']; }
+      else if (a === 'tqabno') { S.tabo = null; }
+      else if (a === 'tqabok') {
+        const t = L().tortas.find(x => x.id === d.id), m = Math.round(+(($('#tab-m') || {}).value) || 0), met = ($('#tab-mt') || {}).value || 'Efectivo';
+        if (!t) {} else if (!(m > 0)) alert('Escribe el monto del abono.');
+        else if (m > tSaldo(t)) alert('El abono no puede ser mayor al saldo (' + money(tSaldo(t)) + '). Si el cliente paga todo, usa "Retirar y cobrar saldo".');
+        else if (!cajaAbierta()) alert('La caja está cerrada: hay que abrirla para recibir un abono.');
+        else { await ensureSes(); if (!fallo(await sb.from('resto_tortas_abonos').insert({ local_id: D.id, torta_id: t.id, monto: m, metodo: met, turno_id: D.turno ? D.turno.id : null, recibido_por: S.quien || 'Administradora' }))) { S.tabo = null; delete S.f['tab-m']; toast('Abono de ' + money(m) + ' guardado · saldo ' + money(tSaldo(t) - m), 'tk-l'); } }
+      }
+      else if (a === 'tqabanul' && esAdm()) {
+        const t = L().tortas.find(x => x.abonos.some(y => y.id === d.id)), ab = t && t.abonos.find(y => y.id === d.id);
+        if (ab) {
+          if (D.turno && ab.t < +new Date(D.turno.abierto_at)) alert('Ese abono se recibió en un turno anterior, que ya está cerrado. No se puede anular: si hay que devolver dinero, regístralo como gasto en Caja.');
+          else { const mot = (prompt('Motivo para anular el abono de ' + money(ab.m) + ' (queda registrado):', 'Abono mal ingresado') || '').trim();
+            if (mot && !fallo(await sb.from('resto_tortas_abonos').update({ anulado: true, anulado_por: S.quien || 'Administradora', anulado_motivo: mot }).eq('id', ab.id))) toast('Abono anulado', 'tk-l'); }
+        }
+      }
+      else if (a === 'tqretabrir') { S.tret = d.id; S.tabo = null; delete S.f['tr-rc']; delete S.f['tr-mt']; }
+      else if (a === 'tqretno') { S.tret = null; }
+      else if (a === 'tqretok') {
+        const t = L().tortas.find(x => x.id === d.id);
+        if (t && t.est === 'pendiente') {
+          const sal = tSaldo(t), met = S.f['tr-mt'] || 'Efectivo', rcT = S.f['tr-rc'] !== undefined && S.f['tr-rc'] !== '' ? Math.round(+S.f['tr-rc']) : null;
+          if (sal > 0 && !cajaAbierta()) alert('La caja está cerrada: hay que abrirla para cobrar el saldo.');
+          else if (sal > 0 && met === 'Efectivo' && rcT !== null && rcT < sal) alert('El efectivo recibido es menor al saldo. Revisa el monto.');
+          else {
+            await ensureSes();
+            let cid = null, ok = true;
+            if (sal > 0) { cid = uid(); ok = !fallo(await insertarCuenta({ id: cid, local_id: D.id, mesa: 0, total: sal, propina: 0, metodo: met, garzon: null, items: [{ n: 'Venta de tortas (saldo al retirar)', q: 1, p: sal, e: 'cafeteria' }], ...extraCuenta() })); }
+            if (ok && !fallo(await sb.from('resto_tortas').update({ estado: 'retirada', retirado_at: new Date().toISOString(), retirado_por: S.quien || 'Administradora', cuenta_id: cid }).eq('id', t.id))) {
+              S.tret = null; delete S.f['tr-rc']; delete S.f['tr-mt'];
+              toast(sal > 0 ? 'Torta entregada · cobrado ' + money(sal) + ' (' + met.toLowerCase() + ')' + (met === 'Efectivo' && rcT !== null ? ' · VUELTO ' + money(rcT - sal) : '') : 'Torta entregada', 'tk-l');
+            }
+          }
+        }
+      }
+      else if (a === 'tqcancel' && esAdm()) {
+        const t = L().tortas.find(x => x.id === d.id), ab = t ? tAbonado(t) : 0;
+        if (t && confirm('¿Cancelar el encargo de ' + t.cli + '?' + (ab ? '\n\nTiene ' + money(ab) + ' abonados. Si le devuelves ese dinero al cliente, regístralo como gasto en Caja.' : '')))
+          if (!fallo(await sb.from('resto_tortas').update({ estado: 'cancelada', editado_por: S.quien || 'Administradora' }).eq('id', t.id))) toast('Encargo cancelado', 'tk-l');
       }
       else if (a === 'rllego' || a === 'rcancel') fallo(await sb.from('resto_reservas').update({ estado: a === 'rllego' ? 'llego' : 'cancelada' }).eq('id', d.id));
       else if (a === 'setadminpin' && esAdm()) {

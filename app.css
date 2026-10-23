@@ -84,3 +84,8 @@ table{border-collapse:collapse}
 .robi-ask{display:flex;gap:6px;margin:0 0 8px}.robi-ask input{flex:1;min-width:0;font-size:.78rem;padding:6px 8px}.robi-ask .btn-line{font-size:.74rem;padding:4px 9px}
 .robi-llamar{position:fixed;right:16px;bottom:100px;z-index:50;border:0;border-radius:99px;padding:8px 14px;background:var(--brand);color:#fff;font-size:.8rem;box-shadow:0 4px 14px rgba(28,25,23,.25);cursor:pointer}
 @media (max-width:480px){.robi-llamar{right:8px;bottom:90px}}
+
+.cal-h,.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.cal-h span{text-align:center;font-size:.75rem;color:var(--mut);font-weight:700}
+.cal-d{position:relative;background:#fff;border:1.5px solid var(--line);padding:10px 0;border-radius:8px;color:var(--ink);font-weight:600}
+.cal-d.hoy{border-color:var(--brand)}.cal-d.con{background:var(--soft);border-color:var(--soft-line)}.cal-d.sel{background:var(--brand);color:#fff;border-color:var(--brand)}
+.cal-d i{position:absolute;top:2px;right:5px;font-size:.65rem;font-style:normal;color:var(--brand-d);font-weight:800}.cal-d.sel i{color:#fff}
