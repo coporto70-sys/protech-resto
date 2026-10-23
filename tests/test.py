@@ -832,4 +832,32 @@ def RB4(pg):
     check('ROBI: recuerda dónde lo dejaron', abs(b2[0]-b1[0])<3 and abs(b2[1]-b1[1])<3)
 e=run({'email':'u','role':'','db':robi_db(2)},RB4,LS_ADM); print('ERR RB4',e)
 
+# --- MX: pago mixto (efectivo + tarjeta) en la venta por mostrador
+def mx_db():
+    d=base_db(); d['resto_cuentas']=[]
+    d['resto_turnos']=[{'id':'T1','local_id':'L1','abierto_por':'Administradora','abierto_at':iso(120),'monto_inicial':50000,'cerrado_at':None}]
+    return d
+def MX1(pg):
+    pg.click('[data-act="mostrador"]'); pg.wait_for_timeout(300)
+    pg.click('[data-act="inc"][data-id="m1"]'); pg.click('[data-act="inc"][data-id="m1"]'); pg.wait_for_timeout(200)
+    check('MX: la forma de pago ofrece Mixto', pg.locator('#metodo option[value="Mixto"]').count()==1)
+    pg.select_option('#metodo','Mixto'); pg.wait_for_timeout(200)
+    check('MX: Mixto pide cuánto paga en efectivo', pg.locator('#mxe').count()==1 and pg.locator('#recib').count()==1)
+    pg.fill('#mxe','2000'); pg.fill('#recib','5000'); pg.wait_for_timeout(200)
+    check('MX: el resto va con tarjeta ($3.000) y el vuelto es sobre el efectivo ($3.000)', pg.inner_text('#mxtj')=='$3.000' and pg.inner_text('#vuelto')=='$3.000')
+    pg.fill('#mxe','5000'); pg.wait_for_timeout(200)
+    pg.once('dialog',lambda d: (setattr(pg,'_dlg',d.message), d.accept()))
+    pg.click('[data-act="mospagar"]'); pg.wait_for_timeout(500)
+    check('MX: no deja cobrar mixto si el efectivo cubre todo el total', 'pago mixto' in (getattr(pg,'_dlg','') or '').lower() and len(pg.evaluate('window.__DB.resto_cuentas'))==0)
+    pg.fill('#mxe','2000'); pg.fill('#recib','5000'); pg.wait_for_timeout(200)
+    pg.click('[data-act="mospagar"]'); pg.wait_for_timeout(900)
+    c=pg.evaluate('window.__DB.resto_cuentas')
+    check('MX: se guarda como Mixto con la parte en efectivo', len(c)==1 and c[0]['metodo']=='Mixto' and c[0]['pago_efec']==2000 and c[0]['total']==5000)
+    nav_caja(pg); pg.wait_for_timeout(400)
+    t=pg.inner_text('#app')
+    check('MX: la caja reparte el cobro entre efectivo y tarjeta', 'Efectivo\n$2.000' in t.replace(' ','\n').replace('\n\n','\n') or ('$2.000' in t and '$3.000' in t))
+    check('MX: el efectivo esperado suma solo la parte en efectivo', '$52.000' in t)
+    check('MX: el cobro del turno muestra el detalle', 'Mixto ($2.000 efectivo + $3.000 tarjeta)' in t)
+e=run({'email':'u','role':'','db':mx_db()},MX1,LS_ADM); print('ERR MX1',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

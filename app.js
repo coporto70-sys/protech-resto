@@ -19,7 +19,10 @@ const L = () => D;
 /* Si la base todavía no tiene la columna propina_efec_caja (falta la migración 023), el cobro se guarda igual sin ella */
 const sinColPq = c => { const { propina_efec_caja, ...resto } = c; return resto; };
 const errPq = r => r && r.error && /propina_efec_caja/i.test(r.error.message || '');
-const insertarCuenta = async c => { let r = await sb.from('resto_cuentas').insert(c); if (errPq(r)) r = await sb.from('resto_cuentas').insert(sinColPq(c)); return r; };
+const insertarCuenta = async c => { let r = await sb.from('resto_cuentas').insert(c); if (errPq(r)) r = await sb.from('resto_cuentas').insert(sinColPq(c));
+  /* El pago mixto necesita la migración 029: sin ella no se guarda (no se puede perder cuánto fue en efectivo) */
+  if (r && r.error && /pago_efec/i.test(r.error.message || '')) r = { ...r, error: { ...r.error, message: 'Falta activar el pago mixto en la base de datos (migración 029). Avisa a Protech; mientras tanto cobra en efectivo o tarjeta.' } };
+  return r; };
 const extraCuenta = () => ({ ...(D.turno ? { turno_id: D.turno.id } : {}), ...(S.quien ? { cobrado_por: S.quien } : {}) });
 /* ---------- Roles y PIN ----------
    Si el local tiene PIN de administradora, cada persona elige quién es y entra con su PIN.
@@ -288,7 +291,7 @@ async function cargar(parcial) {
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada })),
-    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
+    cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, pef: r.pago_efec || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
   D.insumos.sort(porNombre); D.provs.sort(porNombre); /* inventario de producción y proveedores siempre de la A a la Z */
   outLoad(); outAplicar();
   D.anuOk =!!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
@@ -472,11 +475,17 @@ const pctEfect = () => S.propPct != null ? S.propPct : pctProp();
 const descMonto = base => { const d = S.desc; if (!d) return 0; const v = d.t === 'cortesia' ? base : d.t === 'pct' ? Math.round(base * Math.min(100, Math.max(0, d.v)) / 100) : Math.round(d.v); return Math.max(0, Math.min(base, v)); };
 /* Propina en efectivo: por defecto queda en la caja (el cliente deja el vuelto) y se le paga al garzón al cerrar. Si se la dieron directo en la mano, se marca aparte. */
 const peEnCaja = () => S.peDonde !== 'mano';
+/* Pago mixto: una parte en efectivo y el resto con tarjeta. Se guarda metodo 'Mixto' y pago_efec (migración 029); lo demás sale de la resta. */
+const conTarjeta = () => S.metodo === 'Tarjeta' || S.metodo === 'Mixto';
+const mixCampos = cp => S.metodo === 'Mixto' ? { pago_efec: cp.mxe } : {};
+const mixtoMal = base => { if (S.metodo !== 'Mixto') return false; const cp = calcPago(base); return !(cp.mxe > 0 && cp.mxe < cp.neto + cp.prop); };
+/* Cuánto entra a cada forma de pago en una cuenta (para cuadrar la caja y las propinas) */
+const partesPago = c => { const cobro = c.total + c.propina; if (c.metodo === 'Mixto') { const e = Math.min(cobro, c.pef || 0); return { ef: e, tj: cobro - e + c.pt, tr: 0 }; } if (c.metodo === 'Efectivo') return { ef: cobro, tj: 0, tr: 0 }; if (c.metodo === 'Tarjeta') return { ef: 0, tj: cobro + c.pt, tr: 0 }; return { ef: 0, tj: 0, tr: cobro }; };
 const peMonto = () => Math.max(0, Math.round(+S.pe || 0));
 const peCampos = pe => pe ? { propina_efec: pe, ...(peEnCaja() ? { propina_efec_caja: true } : {}) } : {};
-const calcPago = base => { const desc = descMonto(base), neto = base - desc, prop = S.propina ? Math.round(neto * pctEfect() / 100) : 0, ptj = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0; const pcj = S.metodo === 'Efectivo' && peEnCaja() ? peMonto() : 0; return { desc, neto, prop, ptj, pcj, total: neto + prop + ptj + pcj }; };
+const calcPago = base => { const desc = descMonto(base), neto = base - desc, prop = S.propina ? Math.round(neto * pctEfect() / 100) : 0, ptj = conTarjeta() ? Math.max(0, Math.round(+S.pt || 0)) : 0; const pcj = S.metodo === 'Efectivo' && peEnCaja() ? peMonto() : 0, mxe = S.metodo === 'Mixto' ? Math.max(0, Math.round(+S.mxe || 0)) : 0; return { desc, neto, prop, ptj, pcj, mxe, mxt: S.metodo === 'Mixto' ? neto + prop + ptj - mxe : 0, total: neto + prop + ptj + pcj }; };
 const descCampos = base => { const x = descMonto(base); return x > 0 ? { descuento: x, desc_motivo: S.desc.motivo || '', desc_aut: S.desc.aut || '' } : {}; };
-const resetCobro = () => { S.pe = ''; S.peDonde = null; S.pt = ''; S.rc = ''; S.desc = null; S.aut = null; S.propPct = null; S.autForm = null; S.autPend = null; S.autErr = ''; delete S.f['aut-pin']; delete S.f['d-val']; delete S.f['d-mot']; };
+const resetCobro = () => { S.pe = ''; S.peDonde = null; S.pt = ''; S.mxe = ''; S.rc = ''; S.desc = null; S.aut = null; S.propPct = null; S.autForm = null; S.autPend = null; S.autErr = ''; delete S.f['aut-pin']; delete S.f['d-val']; delete S.f['d-mot']; };
 const conAut = async f => { const keep = RTOK; if (S.aut && S.aut.tok) RTOK = S.aut.tok; try { return await f(); } finally { RTOK = keep; } };
 const DESC_MOTIVOS = ['Cortesía de la casa', 'Cliente frecuente', 'Error o demora en el servicio', 'Reclamo del cliente', 'Cumpleaños', 'Otro'];
 function autFormHTML() {
@@ -497,15 +506,24 @@ function camposPago(base) {
   return `${dl}${autFormHTML()}
     <label class="row" style="cursor:pointer"><span>Propina sugerida ${pct}%</span><input type="checkbox" style="width:auto" data-act="propina" ${S.propina ? 'checked' : ''}></label>
     ${S.propina ? `<label class="mut" style="display:block;margin-top:4px">Porcentaje de propina<select id="proppct">${[0, 5, 10, 15, 20, 25].concat([pctProp()]).filter((v, i, a) => a.indexOf(v) === i).sort((x, y) => x - y).map(v => `<option value="${v}" ${v === pct ? 'selected' : ''}>${v}%${v === pctProp() ? ' (sugerida)' : ''}</option>`).join('')}</select></label>` : ''}
-    <label class="mut" style="display:block;margin-top:8px">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option></select></label>
-    ${S.metodo === 'Tarjeta' ? `<label class="mut" style="display:block;margin-top:8px">Propina o recargo adicional en la tarjeta (se suma al total)<input id="ptarj" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pt)}"></label>` : ''}
+    <label class="mut" style="display:block;margin-top:8px">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option><option value="Mixto" ${S.metodo === 'Mixto' ? 'selected' : ''}>Mixto (efectivo + tarjeta)</option></select></label>
+    ${conTarjeta() ? `<label class="mut" style="display:block;margin-top:8px">Propina o recargo adicional en la tarjeta (se suma al total)<input id="ptarj" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pt)}"></label>` : ''}
     <label class="mut" style="display:block;margin-top:8px">Propina en efectivo (no se suma a la cuenta)<input id="pefec" type="number" inputmode="numeric" min="0" placeholder="0" value="${esc(S.pe)}"></label>
     <label class="mut" style="display:block;margin-top:8px">¿Dónde quedó la propina en efectivo?<select id="pedonde"><option value="caja" ${peEnCaja() ? 'selected' : ''}>Quedó en la caja (del vuelto): se le paga al cerrar</option><option value="mano" ${peEnCaja() ? '' : 'selected'}>Se la dieron directo al garzón</option></select></label>
     <div class="total"><span>Total a pagar</span><span id="totpagar" data-base="${base}">${money(cp.total)}</span></div>
-    ${pagoDetalleHTML(cp.total)}`;
+    ${pagoDetalleHTML(cp.total, base)}`;
 }
 /* Detalle del pago según la forma elegida: efectivo (con cuánto paga y vuelto), tarjeta o transferencia */
-function pagoDetalleHTML(total) {
+function pagoDetalleHTML(total, base) {
+  if (S.metodo === 'Mixto') {
+    const cp = calcPago(base), e = cp.mxe, valido = e > 0 && e < cp.neto + cp.prop, tj = cp.mxt;
+    return `<div class="card" style="margin-top:10px;background:#fefce8;display:grid;gap:8px"><b>Pago mixto · efectivo + tarjeta</b>
+      <label class="mut">¿Cuánto paga en efectivo?<input id="mxe" type="number" inputmode="numeric" min="1" placeholder="Parte en efectivo" value="${esc(S.mxe)}"></label>
+      <div class="total" style="margin:0"><span>El resto va con tarjeta</span><span id="mxtj" style="${valido ? '' : 'color:var(--bad)'}">${valido ? money(tj) : '—'}</span></div>
+      <div class="mut" id="mxmsg">${valido ? 'Cobra ' + money(tj) + ' en el terminal de tarjeta y recibe ' + money(e) + ' en efectivo.' : 'Escribe cuánto paga en efectivo: debe ser menor al total (el resto se cobra con tarjeta).'}</div>
+      <label class="mut">Efectivo recibido del cliente<input id="recib" type="number" inputmode="numeric" min="0" placeholder="¿Con cuánto paga en efectivo?" value="${esc(S.rc)}"></label>
+      <div class="total" style="margin:0"><span>Vuelto a entregar</span><span id="vuelto" data-total="${e}">—</span></div></div>`;
+  }
   if (S.metodo === 'Efectivo') {
     const billetes = [2000, 5000, 10000, 20000].filter(b => b >= total || b === 20000);
     return `<div class="card" style="margin-top:10px;background:#f0fdf4;display:grid;gap:8px"><b>Pago en efectivo</b>
@@ -517,7 +535,14 @@ function pagoDetalleHTML(total) {
   return `<div class="card" style="margin-top:10px;background:#faf5ff"><b>Pago por transferencia</b><div class="mut" style="margin-top:4px">Confirma que la transferencia de <b>${money(total)}</b> ya llegó a la cuenta antes de cobrar.</div></div>`;
 }
 const totalPago = base => calcPago(base).total;
-const recibidoMal = base => S.metodo === 'Efectivo' && S.rc !== '' && S.rc !== undefined && Math.round(+S.rc) < totalPago(base);
+const recibidoMal = base => (S.metodo === 'Efectivo' || S.metodo === 'Mixto') && S.rc !== '' && S.rc !== undefined && Math.round(+S.rc) < (S.metodo === 'Mixto' ? calcPago(base).mxe : totalPago(base));
+/* Pago mixto: al escribir, recalcula la parte con tarjeta sin redibujar */
+function actualizaMixto() {
+  const t = $('#totpagar'), x = $('#mxtj'); if (!t || !x || S.metodo !== 'Mixto') return;
+  const cp = calcPago(+t.dataset.base), ok = cp.mxe > 0 && cp.mxe < cp.neto + cp.prop;
+  x.textContent = ok ? money(cp.mxt) : '—'; x.style.color = ok ? '' : 'var(--bad)';
+  const m = $('#mxmsg'); if (m) m.textContent = ok ? 'Cobra ' + money(cp.mxt) + ' en el terminal de tarjeta y recibe ' + money(cp.mxe) + ' en efectivo.' : 'Escribe cuánto paga en efectivo: debe ser menor al total (el resto se cobra con tarjeta).';
+}
 function actualizaVuelto() {
   const v = $('#vuelto'); if (!v) return;
   if (S.rc === '' || S.rc === undefined) { v.textContent = '—'; v.style.color = ''; return; }
@@ -712,7 +737,7 @@ function fechaIso(d) { const z = n => String(n).padStart(2, '0'); return d.getFu
    · mano: la propina en efectivo que el cliente le dio directo al garzón (ya la recibió) */
 function resumenGarz(rows) {
   const m = {}; rows.forEach(c => { const k = c.garzon || '(sin garzón)'; const o = m[k] || (m[k] = { n: k, cuentas: 0, venta: 0, tarj: 0, caja: 0, mano: 0 }); o.cuentas++; o.venta += c.total;
-    if (c.metodo === 'Efectivo') o.caja += c.propina || 0; else o.tarj += c.propina || 0;
+    if (c.metodo === 'Efectivo') o.caja += c.propina || 0; else if (c.metodo === 'Mixto') { const f = Math.round((c.propina || 0) * Math.min(1, (c.pef || 0) / Math.max(1, c.total + c.propina))); o.caja += f; o.tarj += (c.propina || 0) - f; } else o.tarj += c.propina || 0;
     o.tarj += c.pt || 0;
     if (c.pq) o.caja += c.pe || 0; else o.mano += c.pe || 0; });
   Object.values(m).forEach(o => { o.pagar = o.tarj + o.caja; o.prop = o.pagar + o.mano; });
@@ -722,7 +747,7 @@ async function garzCargar() {
   if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
   const d = new Date(S.rpd + 'T00:00:00'), h = new Date(S.rph + 'T00:00:00'); h.setDate(h.getDate() + 1);
   const { data, error } = await sb.from('resto_cuentas').select('*').eq('local_id', D.id).gte('created_at', d.toISOString()).lt('created_at', h.toISOString()).order('created_at');
-  S.rp = error ? [] : data.map(r => ({ mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, metodo: r.metodo, garzon: r.garzon || '', t: +new Date(r.created_at) }));
+  S.rp = error ? [] : data.map(r => ({ mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, pef: r.pago_efec || 0, metodo: r.metodo, garzon: r.garzon || '', t: +new Date(r.created_at) }));
 }
 function garzHTML() {
   if (!S.rpd) S.rpd = fechaIso(new Date()); if (!S.rph) S.rph = S.rpd;
@@ -831,7 +856,7 @@ const enCorte = (t, ms, hasta) => !hasta || ms <= hasta;
 const PTIPO = 'Propina pagada';
 function turnoRes(t) {
   const hasta = corteDe(t), cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at) && enCorte(t, c.t, hasta)); let ef = 0, tj = 0, tr = 0, pr = 0, vt = 0;
-  cu.forEach(c => { vt += c.total; const cobro = c.total + c.propina; if (c.metodo === 'Efectivo') ef += cobro; else if (c.metodo === 'Tarjeta') tj += cobro + c.pt; else tr += cobro; if (c.pq) ef += c.pe; pr += c.propina + c.pe + c.pt; });
+  cu.forEach(c => { vt += c.total; const pp0 = partesPago(c); ef += pp0.ef; tj += pp0.tj; tr += pp0.tr; if (c.pq) ef += c.pe; pr += c.propina + c.pe + c.pt; });
   const gsT = (D.gastos || []).filter(g => g.turno_id === t.id && !g.anul && enCorte(t, g.t, hasta)), gs = gsT.filter(g => g.tipo !== 'Retiro' && g.tipo !== PTIPO), rts = gsT.filter(g => g.tipo === 'Retiro'), adv = gsT.filter(g => g.tipo === PTIPO), gt = gs.reduce((a, g) => a + g.m, 0), rt = rts.reduce((a, g) => a + g.m, 0);
   /* Propinas por garzón del turno. Se pagan en efectivo desde la caja: la propina de las cuentas (10%) y la propina extra con tarjeta.
      La propina en efectivo que quedó en la caja (del vuelto) también se le paga al cerrar; la que le dieron directo en la mano (pe) ya la recibió: solo se muestra. Cada turno nuevo parte en cero. */
@@ -963,7 +988,7 @@ function cobrosHTML(t) {
   if (!esAdm()) return '';
   const hasta = corteDe(t), cu = D.cuentas.filter(c => c.t >= +new Date(t.abierto_at) && enCorte(t, c.t, hasta)).sort((a, b) => b.t - a.t);
   return `<div class="card" style="margin-top:12px"><b>Cobros del turno</b><p class="mut" style="margin:4px 0 8px">Si se cobró con una forma de pago equivocada (por ejemplo, se anotó tarjeta y fue efectivo), corrígela aquí. El cuadre de caja se recalcula y el cambio queda registrado.</p>
-    ${cu.map(c => `<div class="row"><div><b>${esc(c.mesa > 0 ? nm(c.mesa) : 'Mostrador')}</b> · ${esc(c.metodo)}<div class="mut">${hora(c.t)} · ${esc(c.cobrado_por || c.garzon || '')}${c.pt ? ' · incluye propina extra con tarjeta ' + money(c.pt) : ''}</div>${c.mOrig && c.mOrig !== c.metodo ? `<div class="mut" style="color:var(--warn)">Corregido por ${esc(c.mPor || 'la administradora')}: era ${esc(c.mOrig)} · ${esc(c.mMot)}</div>` : ''}</div><div style="text-align:right"><b>${money(c.total + c.propina + c.pt)}</b><div style="margin-top:4px"><button class="btn-line" data-act="cmetodo" data-id="${c.id}">Corregir forma de pago</button></div></div></div>`).join('') || '<p class="mut" style="margin:0">Aún no hay cobros en este turno.</p>'}</div>`;
+    ${cu.map(c => `<div class="row"><div><b>${esc(c.mesa > 0 ? nm(c.mesa) : 'Mostrador')}</b> · ${esc(c.metodo)}${c.metodo === 'Mixto' ? ' (' + money(c.pef) + ' efectivo + ' + money(c.total + c.propina - c.pef + c.pt) + ' tarjeta)' : ''}<div class="mut">${hora(c.t)} · ${esc(c.cobrado_por || c.garzon || '')}${c.pt ? ' · incluye propina extra con tarjeta ' + money(c.pt) : ''}</div>${c.mOrig && c.mOrig !== c.metodo ? `<div class="mut" style="color:var(--warn)">Corregido por ${esc(c.mPor || 'la administradora')}: era ${esc(c.mOrig)} · ${esc(c.mMot)}</div>` : ''}</div><div style="text-align:right"><b>${money(c.total + c.propina + c.pt)}</b><div style="margin-top:4px"><button class="btn-line" data-act="cmetodo" data-id="${c.id}">Corregir forma de pago</button></div></div></div>`).join('') || '<p class="mut" style="margin:0">Aún no hay cobros en este turno.</p>'}</div>`;
 }
 function descuentosHTML(t) {
   const r = turnoRes(t); if (!r.dsc.length) return '';
@@ -1011,7 +1036,7 @@ function turnoCajeroHTML() {
   if (!t) return `<h2>Caja</h2>${abrirCajaHTML()}`;
   const mis = D.cuentas.filter(c => c.turno_id === t.id && (c.cobrado_por || '') === S.quien);
   return `<h2>Caja · ${esc(S.quien)}</h2>
-  <div class="card"><b>Mis cobros de este turno</b>${mis.map(c => `<div class="row"><div>${nm(c.mesa)}<div class="mut">${hora(c.t)} · ${esc(c.metodo)}</div></div><b>${money(c.total + c.propina + c.pt)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no has cobrado en este turno.</p>'}
+  <div class="card"><b>Mis cobros de este turno</b>${mis.map(c => `<div class="row"><div>${nm(c.mesa)}<div class="mut">${hora(c.t)} · ${esc(c.metodo)}${c.metodo === 'Mixto' ? ' (' + money(c.pef) + ' efectivo + ' + money(c.total + c.propina - c.pef + c.pt) + ' tarjeta)' : ''}</div></div><b>${money(c.total + c.propina + c.pt)}</b></div>`).join('') || '<p class="mut" style="margin-top:8px">Aún no has cobrado en este turno.</p>'}
   ${mis.length ? `<div class="total"><span>Total cobrado por ti</span><span>${money(mis.reduce((a, c) => a + c.total + c.propina + c.pt, 0))}</span></div>` : ''}</div>${gastosHTML(t)}${retirosHTML(t)}${propinasHTML(t)}${cerrarCajaHTML(t)}`;
 }
 function turnoHTML() {
@@ -1323,7 +1348,7 @@ function resvHTML() {
 }
 function cajaHTML() {
   const cu = L().cuentas.filter(c => hoy(c.t)); const sum = k => cu.reduce((a, c) => a + c[k], 0);
-  const por = {}; cu.forEach(c => por[c.metodo] = (por[c.metodo] || 0) + c.total + c.propina + c.pt);
+  const por = {}; cu.forEach(c => { const q = partesPago(c); [['Efectivo', q.ef], ['Tarjeta', q.tj], ['Transferencia', q.tr]].forEach(([k, v]) => { if (v) por[k] = (por[k] || 0) + v; }); });
   const pop = {}; cu.forEach(c => c.items.forEach(i => pop[i.n] = (pop[i.n] || 0) + i.q));
   const top = Object.entries(pop).sort((a, b) => b[1] - a[1]).slice(0, 5);
   return `<h2>Ventas de hoy</h2><div class="stats">
@@ -1476,15 +1501,16 @@ document.addEventListener('input', e => {
   if (e.target.id === 'pefec') {
     S.pe = e.target.value;
     const t = $('#totpagar');
-    if (t) { const b = +t.dataset.base, tot = calcPago(b).total; t.textContent = money(tot); const v = $('#vuelto'); if (v) { v.dataset.total = tot; actualizaVuelto(); } const j = document.querySelector('[data-act="rec"]'); if (j) j.dataset.v = tot; }
+    if (t) { const b = +t.dataset.base, tot = calcPago(b).total; t.textContent = money(tot); const v = $('#vuelto'); if (v) { v.dataset.total = S.metodo === 'Mixto' ? calcPago(b).mxe : tot; actualizaVuelto(); } actualizaMixto(); const j = document.querySelector('[data-act="rec"]'); if (j) j.dataset.v = tot; }
   }
   if (e.target.id === 'recib') { S.rc = e.target.value; actualizaVuelto(); }
   if (e.target.id === 'ptarj') {
     S.pt = e.target.value;
     /* actualiza el total en pantalla sin redibujar (así no se pierde el cursor al escribir) */
     const t = $('#totpagar');
-    if (t) { const b = +t.dataset.base; t.textContent = money(calcPago(b).total); }
+    if (t) { const b = +t.dataset.base; t.textContent = money(calcPago(b).total); actualizaMixto(); }
   }
+  if (e.target.id === 'mxe') { S.mxe = e.target.value; actualizaMixto(); const v = $('#vuelto'); if (v) { v.dataset.total = calcPago(+$('#totpagar').dataset.base).mxe; actualizaVuelto(); } }
   if (e.target.id === 'a-nombre') S.af.nombre = e.target.value;
   if (e.target.id === 'a-mesas') S.af.mesas = e.target.value;
   if (e.target.id === 'a-email') S.af.email = e.target.value;
@@ -1578,7 +1604,7 @@ function outAplicar() {
       if (!o.insOk) (o.stock || []).forEach(([mid, q]) => { const m = D.menu.find(x => x.id === mid); if (m && m.s != null) m.s -= q; });
     } else if (o.k === 'pagar') {
       D.comandas = D.comandas.filter(c => !o.cids.includes(c.id));
-      if (!D.cuentas.some(c => c.id === o.cuenta.id)) D.cuentas.push({ id: o.cuenta.id, mesa: o.cuenta.mesa, total: o.cuenta.total, propina: o.cuenta.propina || 0, pe: o.cuenta.propina_efec || 0, pq: !!o.cuenta.propina_efec_caja, pt: o.cuenta.propina_tarj || 0, metodo: o.cuenta.metodo, garzon: o.cuenta.garzon || '', items: o.cuenta.items, turno_id: o.cuenta.turno_id || null, cobrado_por: o.cuenta.cobrado_por || '', t: o.t });
+      if (!D.cuentas.some(c => c.id === o.cuenta.id)) D.cuentas.push({ id: o.cuenta.id, mesa: o.cuenta.mesa, total: o.cuenta.total, propina: o.cuenta.propina || 0, pe: o.cuenta.propina_efec || 0, pq: !!o.cuenta.propina_efec_caja, pt: o.cuenta.propina_tarj || 0, pef: o.cuenta.pago_efec || 0, metodo: o.cuenta.metodo, garzon: o.cuenta.garzon || '', items: o.cuenta.items, turno_id: o.cuenta.turno_id || null, cobrado_por: o.cuenta.cobrado_por || '', t: o.t });
     } else if (o.k === 'avanzar') {
       const c = D.comandas.find(x => x.id === o.id); if (c) { c.estado = o.to; if (o.cierra) D.comandas = D.comandas.filter(x => x.id !== o.id); }
     }
@@ -1631,9 +1657,10 @@ document.addEventListener('click', async e => {
   let pagoInfo = null;
   if (['pagar', 'pagarparte', 'mospagar'].includes(a)) {
     const b = baseCobro(a);
-    if (b > 0 && recibidoMal(b)) { alert('El efectivo recibido es menor al total a pagar. Revisa el monto.'); return; }
+    if (b > 0 && mixtoMal(b)) { alert('Pago mixto: escribe cuánto paga en efectivo. Debe ser mayor a 0 y menor al total; el resto se cobra con tarjeta.'); return; }
+    if (b > 0 && recibidoMal(b)) { alert(S.metodo === 'Mixto' ? 'El efectivo recibido es menor a la parte que paga en efectivo. Revisa el monto.' : 'El efectivo recibido es menor al total a pagar. Revisa el monto.'); return; }
     const tp = totalPago(b), rc = S.rc !== '' && S.rc !== undefined ? Math.round(+S.rc) : null;
-    pagoInfo = a === 'mospagar' && !cajaAbierta() ? null : { m: S.metodo, tp, rc }; S.lastErr = false;
+    pagoInfo = a === 'mospagar' && !cajaAbierta() ? null : { m: S.metodo, tp, rc, me: calcPago(b).mxe }; S.lastErr = false;
   }
   try {
     if (a === 'login') {
@@ -1835,9 +1862,9 @@ document.addEventListener('click', async e => {
         if (pick.length) {
           await ensureSes();
           const sub = pick.reduce((s, x) => s + x.q * x.i.p, 0);
-          const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
+          const pe = Math.max(0, Math.round(+S.pe || 0)), pt = conTarjeta() ? Math.max(0, Math.round(+S.pt || 0)) : 0;
           const cpp = calcPago(sub);
-          const r = await conAut(() => insertarCuenta({ local_id: D.id, mesa: S.mesa, total: cpp.neto, propina: cpp.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: pick.map(x => ({ n: x.i.n, q: x.q, p: x.i.p, e: x.i.e })), ...extraCuenta(), ...descCampos(sub), ...peCampos(pe), ...(pt ? { propina_tarj: pt } : {}) }));
+          const r = await conAut(() => insertarCuenta({ local_id: D.id, mesa: S.mesa, total: cpp.neto, propina: cpp.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: pick.map(x => ({ n: x.i.n, q: x.q, p: x.i.p, e: x.i.e })), ...extraCuenta(), ...descCampos(sub), ...peCampos(pe), ...mixCampos(cpp), ...(pt ? { propina_tarj: pt } : {}) }));
           if (!fallo(r)) {
             for (const c of new Set(pick.map(x => x.c))) {
               const items = c.items.map((it, ix) => { const x = pick.find(y => y.c === c && y.ix === ix); return x ? { ...it, pg: (it.pg || 0) + x.q } : it; });
@@ -1850,10 +1877,10 @@ document.addEventListener('click', async e => {
       } else if (a === 'pagar') {
         await ensureSes();
         const ab = abiertas(S.mesa), tot = totalMesa(S.mesa);
-        const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
+        const pe = Math.max(0, Math.round(+S.pe || 0)), pt = conTarjeta() ? Math.max(0, Math.round(+S.pt || 0)) : 0;
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
         const cpg = calcPago(tot);
-        const cuenta = { id: uid(), local_id: D.id, mesa: S.mesa, total: cpg.neto, propina: cpg.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...descCampos(tot), ...peCampos(pe), ...(pt ? { propina_tarj: pt } : {}) };
+        const cuenta = { id: uid(), local_id: D.id, mesa: S.mesa, total: cpg.neto, propina: cpg.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...descCampos(tot), ...peCampos(pe), ...mixCampos(cpg), ...(pt ? { propina_tarj: pt } : {}) };
         const r = tot > 0 ? await conAut(() => insertarCuenta(cuenta)) : {};
         const fin = () => { S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } resetCobro(); };
         if (r && r.error && esRed(r) && !S.desc && !S.aut) {
@@ -1902,10 +1929,10 @@ document.addEventListener('click', async e => {
       else if (a === 'mospagar') {
         const sel = L().menu.filter(i => S.cart[i.id]), sub = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
         if (sub > 0 && cajaAbierta()) {
-          const pe = Math.max(0, Math.round(+S.pe || 0)), pt = S.metodo === 'Tarjeta' ? Math.max(0, Math.round(+S.pt || 0)) : 0;
+          const pe = Math.max(0, Math.round(+S.pe || 0)), pt = conTarjeta() ? Math.max(0, Math.round(+S.pt || 0)) : 0;
           await ensureSes();
           const cpm = calcPago(sub);
-          const r = await conAut(() => insertarCuenta({ local_id: D.id, mesa: 0, total: cpm.neto, propina: cpm.prop, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...descCampos(sub), ...peCampos(pe), ...(pt ? { propina_tarj: pt } : {}) }));
+          const r = await conAut(() => insertarCuenta({ local_id: D.id, mesa: 0, total: cpm.neto, propina: cpm.prop, metodo: S.metodo, garzon: S.rol === 'garzon' ? S.quien : null, items: sel.map(i => ({ n: i.n, q: S.cart[i.id], p: i.p, e: i.e })), ...extraCuenta(), ...descCampos(sub), ...peCampos(pe), ...mixCampos(cpm), ...(pt ? { propina_tarj: pt } : {}) }));
           if (!fallo(r)) {
             for (const i of sel) if (i.s != null) await sb.rpc('resto_stock_mover', { p_menu: i.id, p_delta: -S.cart[i.id], p_motivo: 'venta', p_por: S.quien || '', p_log: false });
             consumirRecetas(sel.map(i => [i.id, S.cart[i.id]]));
@@ -2246,7 +2273,7 @@ document.addEventListener('click', async e => {
       await cargar(); S.busy = false;
       if (pagoInfo && pagoInfo.tp > 0 && !S.lastErr) {
         const x = pagoInfo;
-        toast(x.m === 'Efectivo' ? 'Cobrado ' + money(x.tp) + ' en efectivo' + (x.rc != null ? ' · recibido ' + money(x.rc) + ' · VUELTO ' + money(x.rc - x.tp) : '') : 'Cobrado ' + money(x.tp) + (x.m === 'Tarjeta' ? ' con tarjeta' : ' por transferencia'), 'tk-l');
+        toast(x.m === 'Mixto' ? 'Cobrado ' + money(x.tp) + ': ' + money(x.me) + ' en efectivo' + (x.rc != null ? ' (recibido ' + money(x.rc) + ' · VUELTO ' + money(x.rc - x.me) + ')' : '') + ' + ' + money(x.tp - x.me) + ' con tarjeta' : x.m === 'Efectivo' ? 'Cobrado ' + money(x.tp) + ' en efectivo' + (x.rc != null ? ' · recibido ' + money(x.rc) + ' · VUELTO ' + money(x.rc - x.tp) : '') : 'Cobrado ' + money(x.tp) + (x.m === 'Tarjeta' ? ' con tarjeta' : ' por transferencia'), 'tk-l');
       }
       if (a === 'pagarparte' && S.mesa && !abiertas(S.mesa).length) S.mesa = null;
     }
