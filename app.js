@@ -35,8 +35,8 @@ TABS.ingeniero = TABS.admin; /* Carlos Oporto (Ingeniero de Software): ve todos 
 const TAB_NOM = { mesas: 'Mesas', cocina: 'Cocina', cafe: 'Cafetería', carta: 'Carta y mesas', garz: 'Garzones', turno: 'Caja', caja: 'Ventas', resumen: 'Resumen', coms: 'Comandas', inv: 'Inventario', resv: 'Reservas', bit: 'Registro de cambios', prod: 'Inventario de producción', abast: 'Compras y recetas' };
 const TRAMOS = [
   { n: 1, nombre: 'Salir a vender', tabs: ['mesas', 'cocina', 'cafe', 'carta', 'garz'] },
-  { n: 2, nombre: 'Cuadrar el día', tabs: ['turno', 'caja', 'resumen', 'coms'] },
-  { n: 3, nombre: 'Control del local', tabs: ['inv', 'resv', 'bit'] },
+  { n: 2, nombre: 'Cuadrar el día', tabs: ['turno', 'caja', 'resumen', 'coms', 'inv'] },
+  { n: 3, nombre: 'Control del local', tabs: ['resv', 'bit'] },
   { n: 4, nombre: 'Producción y costos', tabs: ['prod', 'abast'] }
 ];
 const TAB_TRAMO = {}; TRAMOS.forEach(t => t.tabs.forEach(k => { TAB_TRAMO[k] = t.n; }));
