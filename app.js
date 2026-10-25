@@ -1672,6 +1672,13 @@ document.addEventListener('keydown', e => {
    Tomar un pedido, marcarlo entregado y cobrar una mesa siguen funcionando sin internet: se guardan en este equipo,
    se ven en pantalla y se envían solos al volver la conexión. Cada fila lleva su propio id, así un reintento nunca duplica. */
 const esRed = r => !!(r && r.error && (/fetch|network|load failed|timeout|conexi|offline/i.test(r.error.message || '') || (typeof navigator !== 'undefined' && navigator.onLine === false)));
+/* Evita cobrar dos veces lo mismo: una venta por mostrador idéntica a una mesa cobrada hace poco pide confirmación */
+const firmaItems = its => (its || []).map(i => i.n + '×' + i.q).sort().join('|');
+const DUP_MIN = 30;
+function mesaYaCobrada(items) {
+  const f = firmaItems(items); if (!f) return null;
+  return (D.cuentas || []).filter(c => c.mesa > 0 && Date.now() - c.t < DUP_MIN * 60000 && firmaItems(c.items) === f).sort((a, b) => b.t - a.t)[0] || null;
+}
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
 let OUT = [], outBusy = false, OUTLID = null;
 const outKey = () => 'resto_out_' + (D ? D.id : '');
@@ -1972,12 +1979,16 @@ document.addEventListener('click', async e => {
         const restantes = ab.flatMap(c => c.items.map(i => ({ n: i.n, q: i.q - (i.pg || 0), p: i.p, e: i.e })).filter(i => i.q > 0));
         const cpg = calcPago(tot);
         const cuenta = { id: uid(), local_id: D.id, mesa: S.mesa, total: cpg.neto, propina: cpg.prop, metodo: S.metodo, garzon: garzonDe(S.mesa) || null, items: restantes, ...extraCuenta(), ...descCampos(tot), ...peCampos(pe), ...mixCampos(cpg), ...(pt ? { propina_tarj: pt } : {}) };
-        const r = tot > 0 ? await conAut(() => insertarCuenta(cuenta)) : {};
+        /* si otra persona u otro equipo ya cobró esta mesa, no se cobra de nuevo */
+        let yaCobrada = false;
+        if (tot > 0 && ab.length) { const chk = await sb.from('resto_comandas').select('id,cerrada').in('id', ab.map(c => c.id)); yaCobrada = !chk.error && Array.isArray(chk.data) && (chk.data.length < ab.length || chk.data.some(x => x.cerrada)); }
+        const r = yaCobrada ? { yaCobrada: true } : tot > 0 ? await conAut(() => insertarCuenta(cuenta)) : {};
         const fin = () => { S.cerrando = false; S.mesa = null; if (S.back) { S.view = S.back; S.back = null; } resetCobro(); };
         if (r && r.error && esRed(r) && !S.desc && !S.aut) {
           OUT.push({ k: 'pagar', cuenta, cids: ab.map(c => c.id), pedido: S.mesa >= 1000 ? S.mesa : 0, t: Date.now() }); S.sinRed = true; outSave(); outAplicar();
           toast('Sin conexión: cobro guardado, se enviará solo', 'tk-l'); fin();
-        } else if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); fin(); }
+        } else if (r && r.yaCobrada) { S.lastErr = true; alert('Esta mesa ya fue cobrada (por otra persona o en otro equipo). No se cobró de nuevo.'); fin(); }
+        else if (!fallo(r)) { fallo(await sb.from('resto_comandas').update({ cerrada: true }).in('id', ab.map(c => c.id))); if (S.mesa >= 1000) await sb.from('resto_pedidos').update({ cerrado: true }).eq('local_id', D.id).eq('num', S.mesa); fin(); }
       } else if (a === 'avanzar') {
         const c = L().comandas.find(x => x.id === d.id);
         const cierra = !!(d.to === 'entregado' && c && pagada(c));
@@ -2019,7 +2030,9 @@ document.addEventListener('click', async e => {
       }
       else if (a === 'mospagar') {
         const sel = L().menu.filter(i => S.cart[i.id]), sub = sel.reduce((a, i) => a + i.p * S.cart[i.id], 0);
-        if (sub > 0 && cajaAbierta()) {
+        const yaMesa = sub > 0 ? mesaYaCobrada(sel.map(i => ({ n: i.n, q: S.cart[i.id] }))) : null;
+        if (yaMesa && !confirm('¡Atención! Estos mismos productos ya se cobraron en la Mesa ' + yaMesa.mesa + ' (' + money(yaMesa.total) + ', hace ' + Math.max(1, Math.round((Date.now() - yaMesa.t) / 60000)) + ' min).\n\nSi es el mismo cliente, NO lo cobres de nuevo.\n\n¿Es otra venta distinta y quieres cobrarla igual?')) { S.lastErr = true; }
+        else if (sub > 0 && cajaAbierta()) {
           const pe = Math.max(0, Math.round(+S.pe || 0)), pt = conTarjeta() ? Math.max(0, Math.round(+S.pt || 0)) : 0;
           await ensureSes();
           const cpm = calcPago(sub);

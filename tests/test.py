@@ -920,4 +920,51 @@ def TT2(pg):
     check('TT2: la caja reparte abono y saldo (efectivo $64.000 esperado)', '$64.000' in x and 'Incluye $10.000 en abonos de tortas' in x)
 e=run({'email':'u','role':'','db':tt_db()},TT2,LS_ADM); print('ERR TT2',e)
 
+# --- DUP: no cobrar dos veces lo mismo (mesa cobrada y luego repetida por mostrador / cobro desde otro equipo)
+def dup_db():
+    d=mx_db()
+    d['resto_comandas']=[{'id':'c1','local_id':'L1','mesa':3,'items':[{'n':'Café','q':2,'p':2500,'e':'cafeteria'}],'nota':'','estado':'entregado','garzon':'Ana','created_at':iso(20),'cerrada':False}]
+    return d
+def cobra_mesa3(pg):
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    pg.click('[data-act="cerrar"]'); pg.wait_for_timeout(200); pg.click('[data-act="pagar"]'); pg.wait_for_timeout(900)
+def DUP1(pg):
+    msgs=[]; resp={'ok':False}
+    pg.on('dialog',lambda d:(msgs.append(d.message), d.accept() if resp['ok'] else d.dismiss()))
+    cobra_mesa3(pg)
+    cu=pg.evaluate('window.__DB.resto_cuentas')
+    check('DUP: la mesa 3 queda cobrada una vez', len(cu)==1 and cu[0]['mesa']==3 and cu[0]['total']==5000)
+    pg.click('[data-act="mostrador"]'); pg.wait_for_timeout(300)
+    pg.click('[data-act="inc"][data-id="m1"]'); pg.click('[data-act="inc"][data-id="m1"]'); pg.wait_for_timeout(200)
+    n0=pg.inner_text('body').count('Cobrado')
+    pg.click('[data-act="mospagar"]'); pg.wait_for_timeout(700)
+    check('DUP: al repetir lo mismo por mostrador avisa que ya se cobró en la Mesa 3', any('Mesa 3' in m and 'ya se cobraron' in m for m in msgs))
+    check('DUP: si la cajera cancela, no se cobra de nuevo', len(pg.evaluate('window.__DB.resto_cuentas'))==1)
+    check('DUP: tampoco muestra un nuevo aviso "Cobrado" cuando se canceló', pg.inner_text('body').count('Cobrado')==n0)
+    resp['ok']=True
+    pg.click('[data-act="mospagar"]'); pg.wait_for_timeout(900)
+    check('DUP: si confirma que es otra venta, sí la cobra', len(pg.evaluate('window.__DB.resto_cuentas'))==2)
+e=run({'email':'u','role':'','db':dup_db()},DUP1,LS_ADM); print('ERR DUP1',e)
+
+def DUP2(pg):
+    msgs=[]; pg.on('dialog',lambda d:(msgs.append(d.message), d.accept()))
+    cobra_mesa3(pg)
+    pg.click('[data-act="mostrador"]'); pg.wait_for_timeout(300)
+    pg.click('[data-act="inc"][data-id="m1"]'); pg.wait_for_timeout(200)
+    pg.click('[data-act="mospagar"]'); pg.wait_for_timeout(900)
+    check('DUP2: una venta distinta por mostrador (1 café) no molesta con avisos', not any('ya se cobraron' in m for m in msgs) and len(pg.evaluate('window.__DB.resto_cuentas'))==2)
+e=run({'email':'u','role':'','db':dup_db()},DUP2,LS_ADM); print('ERR DUP2',e)
+
+def DUP3(pg):
+    msgs=[]; pg.on('dialog',lambda d:(msgs.append(d.message), d.accept()))
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    pg.click('[data-act="cerrar"]'); pg.wait_for_timeout(200)
+    # otro equipo cobra la misma mesa justo antes de que esta pantalla confirme
+    pg.evaluate("window.__DB.resto_comandas.forEach(c=>c.cerrada=true); window.__DB.resto_cuentas.push({id:'otro',local_id:'L1',mesa:3,total:5000,propina:0,metodo:'Efectivo',garzon:'Ana',items:[{n:'Café',q:2,p:2500}],turno_id:'T1',created_at:new Date().toISOString()})")
+    pg.click('[data-act="pagar"]'); pg.wait_for_timeout(900)
+    check('DUP3: si otro equipo ya cobró la mesa, avisa', any('ya fue cobrada' in m for m in msgs))
+    check('DUP3: no crea un segundo cobro de la misma mesa', len([c for c in pg.evaluate('window.__DB.resto_cuentas') if c['mesa']==3])==1)
+    check('DUP3: no muestra "Cobrado" ni queda la mesa abierta en pantalla', 'Cobrado' not in pg.inner_text('body') and pg.locator('[data-act="pagar"]').count()==0)
+e=run({'email':'u','role':'','db':dup_db()},DUP3,LS_ADM); print('ERR DUP3',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)
