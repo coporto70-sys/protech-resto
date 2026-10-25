@@ -967,4 +967,48 @@ def DUP3(pg):
     check('DUP3: no muestra "Cobrado" ni queda la mesa abierta en pantalla', 'Cobrado' not in pg.inner_text('body') and pg.locator('[data-act="pagar"]').count()==0)
 e=run({'email':'u','role':'','db':dup_db()},DUP3,LS_ADM); print('ERR DUP3',e)
 
+# ---- Pedir cuenta / "garzón cobra" por local ----
+def pc_db(cobra, caja=False, pedida=False):
+    d=db_roles(caja=caja); d['resto_locales'][0]['garzon_cobra']=cobra
+    d['resto_comandas']=[{'id':'c1','local_id':'L1','mesa':3,'items':[{'n':'Café','q':2,'p':2500,'e':'cafeteria'}],'nota':'','estado':'entregado','garzon':'Ana','created_at':iso(20),'cerrada':False,'cuenta_pedida_at':(iso(1) if pedida else None)}]
+    return d
+def PC1(pg):
+    pg.on('dialog',lambda d:d.accept())
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    check('PC1: con "solo cobra la caja" el garzón sin PIN de caja no ve Cerrar cuenta', pg.locator('[data-act="cerrar"]').count()==0 and pg.locator('[data-act="parcial"]').count()==0)
+    check('PC1: ve el botón Pedir cuenta a la caja', pg.locator('[data-act="pedircuenta"]').count()==1)
+    n0=len(pg.evaluate('window.__DB.resto_cuentas'))
+    pg.click('[data-act="pedircuenta"]'); pg.wait_for_timeout(700)
+    check('PC1: la mesa queda marcada con cuenta pedida', bool(pg.evaluate('window.__DB.resto_comandas[0].cuenta_pedida_at')))
+    check('PC1: pedir la cuenta no crea ningún cobro', len(pg.evaluate('window.__DB.resto_cuentas'))==n0)
+    check('PC1: el botón pasa a "Cuenta pedida" y queda desactivado', 'Cuenta pedida' in pg.inner_text('#app') and pg.locator('[data-act="pedircuenta"][disabled]').count()==1)
+e=run({'email':'u','role':'','db':pc_db(False)},PC1,LS_ANA); print('ERR PC1',e)
+
+def PC2(pg):
+    pg.on('dialog',lambda d:d.accept())
+    check('PC2: la administradora ve la mesa con "Cuenta pedida" en el plano', 'Cuenta pedida' in pg.inner_text('[data-act="mesa"][data-n="3"]'))
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    check('PC2: la administradora puede cobrarla (Cerrar cuenta) y ve el aviso', pg.locator('[data-act="cerrar"]').count()==1 and 'pidió la cuenta' in pg.inner_text('#app'))
+e=run({'email':'u','role':'','db':pc_db(False,pedida=True)},PC2,LS_ADM); print('ERR PC2',e)
+
+def PC3(pg):
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    check('PC3: con "garzones cobran" (como hoy) ve Cerrar cuenta y no Pedir cuenta', pg.locator('[data-act="cerrar"]').count()==1 and pg.locator('[data-act="pedircuenta"]').count()==0)
+e=run({'email':'u','role':'','db':pc_db(True)},PC3,LS_ANA); print('ERR PC3',e)
+
+def PC4(pg):
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    check('PC4: el garzón con PIN de caja sí cobra aunque el local pida cuenta a la caja', pg.locator('[data-act="cerrar"]').count()==1 and pg.locator('[data-act="pedircuenta"]').count()==0)
+e=run({'email':'u','role':'','db':pc_db(False,caja=True)},PC4,LS_ANA); print('ERR PC4',e)
+
+def PC5(pg):
+    pg.on('dialog',lambda d:d.accept())
+    pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
+    check('PC5: la administradora ve el interruptor de quién cobra', pg.locator('[data-act="garzcobra"]').count()==2)
+    pg.click('[data-act="garzcobra"][data-v="0"]'); pg.wait_for_timeout(700)
+    check('PC5: guarda "solo cobra la caja" en el local', pg.evaluate('window.__DB.resto_locales[0].garzon_cobra')==False)
+    pg.click('[data-act="garzcobra"][data-v="1"]'); pg.wait_for_timeout(700)
+    check('PC5: vuelve a "los garzones cobran"', pg.evaluate('window.__DB.resto_locales[0].garzon_cobra')==True)
+e=run({'email':'u','role':'','db':pc_db(True)},PC5,LS_ADM); print('ERR PC5',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)
