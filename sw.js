@@ -2,7 +2,7 @@
    - Archivos de la app: primero la red (así siempre llega la versión nueva) y, si no hay internet, la copia guardada.
    - Librerías externas (CDN): se guardan y se refrescan en segundo plano.
    - La base de datos (Supabase) nunca pasa por aquí. */
-const V = 'resto-v7';
+const V = 'resto-v8';
 const BASE = ['./', 'index.html', 'app.js', 'robi.js', 'app.css', 'soporte.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 const CDN = ['cdn.jsdelivr.net', 'cdnjs.cloudflare.com'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(BASE).catch(() => {})).then(() => self.skipWaiting())); });
