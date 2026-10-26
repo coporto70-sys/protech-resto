@@ -89,3 +89,12 @@ table{border-collapse:collapse}
 .cal-d{position:relative;background:#fff;border:1.5px solid var(--line);padding:10px 0;border-radius:8px;color:var(--ink);font-weight:600}
 .cal-d.hoy{border-color:var(--brand)}.cal-d.con{background:var(--soft);border-color:var(--soft-line)}.cal-d.sel{background:var(--brand);color:#fff;border-color:var(--brand)}
 .cal-d i{position:absolute;top:2px;right:5px;font-size:.65rem;font-style:normal;color:var(--brand-d);font-weight:800}.cal-d.sel i{color:#fff}
+
+/* Vigilante de caja */
+.vig{position:sticky;top:0;z-index:40;margin:0 0 12px;padding:12px;border-radius:12px;background:#b3261e;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.35);animation:pulso 1.2s ease-in-out 5}
+.vig-t{font-weight:900;font-size:1.05rem;letter-spacing:.02em;margin-bottom:8px}
+.vig-i{background:rgba(255,255,255,.14);border-radius:10px;padding:10px;margin-bottom:8px}
+.vig-i.media{background:rgba(255,255,255,.08)}
+.vig-i b{font-size:1.02rem}.vig-r{opacity:.92;margin:4px 0 8px;font-size:.92rem}
+.vig-i .btn{background:#fff;color:#b3261e;font-weight:800}
+.vig-m{opacity:.9;font-size:.9rem}
