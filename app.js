@@ -403,7 +403,7 @@ function shell(inner) {
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
     <button class="btn-line" style="padding:6px 12px" data-act="sonido">Sonido: ${SNDL[SND]}${SND !== 'off' && !(AC && AC.state === 'running') ? ' (toca para activar)' : ''}</button>
     ${rolesOn() ? `<button class="btn-line" style="padding:6px 12px" data-act="cambiar">${esc(S.rol === 'ingeniero' ? 'Carlos Oporto · Ingeniero' : S.rol === 'admin' ? 'Administradora' : S.rol === 'cocina' ? (S.quien && S.quien !== 'Cocina' ? 'Cocina · ' + S.quien : 'Cocina') : S.quien)} · cambiar</button>` : ''}
-    <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${S.rol === 'cocina' && SND !== 'off' && !(AC && AC.state === 'running') ? '<button class="btn" style="width:100%;margin-bottom:12px;padding:14px;font-size:1.1rem" data-act="activarsonido">🔔 Toca aquí para activar el sonido de las comandas</button>' : ''}${inner}</main>${robiHTML()}`;
+    <button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header><main>${vigHTML()}${S.rol === 'cocina' && SND !== 'off' && !(AC && AC.state === 'running') ? '<button class="btn" style="width:100%;margin-bottom:12px;padding:14px;font-size:1.1rem" data-act="activarsonido">🔔 Toca aquí para activar el sonido de las comandas</button>' : ''}${inner}</main>${robiHTML()}`;
 }
 function mesasHTML() {
   if (S.mesa !== null && !puedeVerMesa(S.mesa)) S.mesa = null;
@@ -1776,6 +1776,7 @@ document.addEventListener('click', async e => {
       if (error) { S.busy = false; S.err = 'Correo o clave incorrectos'; render(); return; }
       S.user = data.user; await cargar(); suscribir(); S.view = 'mesas'; S.busy = false; render(); return;
     }
+    if (a === 'vig-visto') { await vigVisto(d.id); render(); return; }
     if (a === 'sonido') {
       const o = ['ambos', 'cocina', 'salon', 'off']; SND = o[(o.indexOf(SND) + 1) % o.length];
       try { localStorage.setItem('pr-snd', SND); } catch (x) {}
@@ -2470,6 +2471,45 @@ document.addEventListener('click', async e => {
   } catch (x) { S.busy = false; console.error(x); }
   render();
 });
+/* ---------- Vigilante de caja ----------
+   Lee las alertas que deja el control de caja (resto_control_alertas) y las hace SONAR en la pantalla de la administradora
+   hasta que alguien toca "Entendido". Solo lee y avisa: nunca corrige ni mueve dinero. */
+const VIG = { lista: [], vistas: new Set(), ult: 0, firma: '' };
+function sonarAlerta() { for (let i = 0; i < 4; i++) { tono(880, i * 0.9, 0.42, 'sawtooth', 1); tono(660, i * 0.9 + 0.45, 0.42, 'sawtooth', 1); } vibra([500, 200, 500, 200, 500, 200, 500]); }
+function vigHTML() {
+  if (!VIG.lista.length || !S.user || !D || !esAdm()) return '';
+  const g = VIG.lista.slice(0, 3).map(a => `<div class="vig-i ${a.gravedad === 'alta' ? 'alta' : 'media'}"><b>🚨 ${esc(a.titulo)}</b><div>${esc(a.detalle)}</div>${a.revisar ? `<div class="vig-r">Qué revisar: ${esc(a.revisar)}</div>` : ''}<button class="btn" data-act="vig-visto" data-id="${esc(a.id)}">Entendido, lo estoy revisando</button></div>`).join('');
+  return `<div class="vig" role="alert"><div class="vig-t">ALERTA DE CAJA · Robi detectó ${VIG.lista.length === 1 ? 'algo para revisar' : VIG.lista.length + ' cosas para revisar'}</div>${g}${VIG.lista.length > 3 ? `<div class="vig-m">… y ${VIG.lista.length - 3} más</div>` : ''}</div>`;
+}
+async function vigRevisar() {
+  if (!S.user || !D || !esAdm()) { if (VIG.lista.length) { VIG.lista = []; VIG.firma = ''; } return false; }
+  const desde = new Date(Date.now() - 36 * 3600000).toISOString();
+  const r = await sb.from('resto_control_alertas').select('id,gravedad,titulo,detalle,revisar,fase,created_at').eq('local_id', D.id).is('visto_at', null).in('gravedad', ['alta', 'media']).gte('created_at', desde).order('created_at', { ascending: false }).limit(20);
+  if (!r || r.error) return false;
+  const lista = (r.data || []).sort((a, b) => (a.gravedad === b.gravedad ? 0 : a.gravedad === 'alta' ? -1 : 1));
+  const nuevas = lista.filter(a => !VIG.vistas.has(a.id));
+  nuevas.forEach(a => VIG.vistas.add(a.id));
+  const altas = lista.filter(a => a.gravedad === 'alta');
+  const firma = lista.map(a => a.id).join(',');
+  const cambio = firma !== VIG.firma; VIG.lista = lista; VIG.firma = firma;
+  if (SND !== 'off') {
+    const recordar = altas.length && Date.now() - VIG.ult > 120000;   // mientras haya una alerta grave sin ver, vuelve a sonar cada 2 minutos
+    if (nuevas.some(a => a.gravedad === 'alta') || recordar) {
+      VIG.ult = Date.now(); sonarAlerta();
+      const a0 = altas[0]; if (a0) { toast('ALERTA DE CAJA · ' + a0.titulo, 'tk-c'); try { if (window.Robi && window.Robi.voz.ok() && robiLS('pr-robi-auto') === '1') robiHablar('Atención. Alerta de caja. ' + a0.titulo + '.'); } catch (e) {} }
+    } else if (nuevas.length) { sonarListo(); toast('AVISO DE CAJA · ' + nuevas[0].titulo, 'tk-l'); }
+  }
+  return cambio;
+}
+async function vigVisto(id) {
+  const r = await sb.from('resto_control_alertas').update({ visto_at: new Date().toISOString(), visto_por: S.quien || (esIng() ? 'Carlos Oporto' : 'Administradora') }).eq('id', id);
+  if (r && r.error) { alert('No se pudo marcar la alerta como vista: ' + r.error.message); return; }
+  VIG.lista = VIG.lista.filter(a => a.id !== id); VIG.firma = VIG.lista.map(a => a.id).join(',');
+}
+setInterval(async () => {
+  if (!S.user || !D || S.busy || document.hidden) return;
+  try { if (await vigRevisar()) render(); } catch (e) { console.error(e); }
+}, 15000);
 /* Refresco de seguridad (por si el tiempo real se corta): cada 20 s solo lo que cambia durante el servicio, y completo cada 3 minutos. No redibuja si nada cambió. */
 let POLLN = 0, ULT = 0;
 setInterval(async () => {
