@@ -1,7 +1,9 @@
 -- Protech Resto · 033 · Fotos de referencia de los productos (se ven en el pedido por QR)
 --
 -- Agrega resto_menu.foto (dirección de la imagen), un almacenamiento público "resto-fotos" para guardarlas
--- (la administradora sube la foto desde Carta y mesas; cada local solo escribe en su propia carpeta)
+-- (la administradora sube la foto desde Carta y mesas; cada local solo escribe en su propia carpeta.
+-- No se exige el rol aquí porque las llamadas al almacenamiento no llevan el pase de sesión; guardar la dirección
+-- en resto_menu.foto sí sigue limitado a la administradora por la política de la carta)
 -- y entrega la foto en la carta pública del pedido por QR (resto_qr_menu).
 -- Solo AGREGA. Es idempotente: se puede ejecutar más de una vez.
 
@@ -12,13 +14,13 @@ insert into storage.buckets (id, name, public) values ('resto-fotos', 'resto-fot
 
 drop policy if exists resto_fotos_ins on storage.objects;
 create policy resto_fotos_ins on storage.objects for insert to authenticated
-  with check (bucket_id = 'resto-fotos' and (storage.foldername(name))[1] = public.resto_mi_local()::text and public.resto_puede(array['admin']));
+  with check (bucket_id = 'resto-fotos' and (storage.foldername(name))[1] = public.resto_mi_local()::text);
 drop policy if exists resto_fotos_upd on storage.objects;
 create policy resto_fotos_upd on storage.objects for update to authenticated
-  using (bucket_id = 'resto-fotos' and (storage.foldername(name))[1] = public.resto_mi_local()::text and public.resto_puede(array['admin']));
+  using (bucket_id = 'resto-fotos' and (storage.foldername(name))[1] = public.resto_mi_local()::text);
 drop policy if exists resto_fotos_del on storage.objects;
 create policy resto_fotos_del on storage.objects for delete to authenticated
-  using (bucket_id = 'resto-fotos' and (storage.foldername(name))[1] = public.resto_mi_local()::text and public.resto_puede(array['admin']));
+  using (bucket_id = 'resto-fotos' and (storage.foldername(name))[1] = public.resto_mi_local()::text);
 
 -- La carta pública ahora incluye la foto ('f') de cada producto
 create or replace function public.resto_qr_menu(p_local uuid)
