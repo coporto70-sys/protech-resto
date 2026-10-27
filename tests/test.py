@@ -1066,7 +1066,7 @@ e=run({'email':'u','role':'','db':e_db},QR5,LS_ANA); print('ERR QR5',e)
 PEDIR_STUB = """
 window.__CALLS=[]; window.__EST='por_confirmar'; window.__FASE=1; window.__MOT='';
 window.supabase={createClient:()=>({rpc:async(n,p)=>{ window.__CALLS.push([n,p]);
-  if(n==='resto_qr_menu') return {data:Object.assign({nombre:'Super Pastel',mesas:8,mesas2:6,menu:[{id:'m1',n:'Café',c:'Bebidas',p:2500,e:'cafeteria'},{id:'m2',n:'Torta',c:'Pasteles',p:3000,e:'cocina'}]}, window.__VIEJA?{}:{confirmar:true}),error:null};
+  if(n==='resto_qr_menu') return {data:Object.assign({nombre:'Super Pastel',mesas:8,mesas2:6,menu:(window.__MENU||[{id:'m1',n:'Café',c:'Bebidas',p:2500,e:'cafeteria'},{id:'m2',n:'Torta',c:'Pasteles',p:3000,e:'cocina'}])}, window.__VIEJA?{}:{confirmar:true}),error:null};
   if(n==='resto_qr_pedir') return {data:window.__VIEJA?{ok:true}:{ok:true,pedido:'P1',estado:'por_confirmar'},error:null};
   if(n==='resto_qr_estado') return {data:{estado:window.__EST,fase:window.__FASE,motivo:window.__MOT},error:null};
   if(n==='resto_qr_avisar') return {data:{ok:true},error:null};
@@ -1121,5 +1121,42 @@ def CL4(pg):
     enviar_torta(pg)
     check('CL4: y el pedido sigue funcionando con la pantalla simple de antes', '¡Pedido enviado!' in pg.inner_text('#app'))
 e=run_pedir(CL4,'window.__VIEJA=true;'); print('ERR CL4',e)
+
+
+# --- Fotos de la carta y buscador del cliente
+import base64
+PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+def FT1(pg):
+    pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
+    check('FT1: cada plato tiene su botón de foto', pg.locator('input[data-foto="m1"]').count()==1)
+    pg.set_input_files('input[data-foto="m1"]',files=[{'name':'cafe.png','mimeType':'image/png','buffer':PNG}]); pg.wait_for_timeout(1200)
+    up=pg.evaluate('window.__UP||[]')
+    check('FT1: sube la foto achicada (JPG) a la carpeta del local', len(up)==1 and up[0]['b']=='resto-fotos' and up[0]['path'].startswith('L1/m1-') and up[0]['type']=='image/jpeg')
+    check('FT1: guarda la dirección de la foto en el plato', str(pg.evaluate("window.__DB.resto_menu.find(m=>m.id==='m1').foto")).startswith('https://fotos.test/resto-fotos/L1/m1-'))
+    check('FT1: la carta muestra la miniatura y "Cambiar foto"', pg.locator('img[src^="https://fotos.test/"]').count()>=1 and 'Cambiar foto' in pg.inner_text('#app'))
+    pg.on('dialog',lambda d:d.accept())
+    pg.click('[data-act="fotoquitar"][data-id="m1"]'); pg.wait_for_timeout(800)
+    check('FT1: "Quitar foto" la borra del plato y del almacenamiento', not pg.evaluate("window.__DB.resto_menu.find(m=>m.id==='m1').foto") and len(pg.evaluate('window.__RM||[]'))>=1)
+e=run({'email':'u','role':'','db':base_db()},FT1,LS_ADM); print('ERR FT1',e)
+
+MENU_GRANDE = "Array.from({length:30},(_,k)=>({id:'p'+k,n:(k%3==0?'Café ':k%3==1?'Torta ':'Sándwich ')+k,c:(k%3==0?'Bebidas':k%3==1?'Pasteles':'Salados'),p:1000+k,f:(k==1?'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==':''),e:'cocina'}))"
+def run_pedir_menu(fn):
+    return run_pedir(fn, "window.__MENU="+MENU_GRANDE+";")
+def CL5(pg):
+    check('CL5: con carta larga aparece la lupa y las categorías', pg.locator('#bus').count()==1 and pg.locator('.chips button').count()==4)
+    pg.fill('#bus','sandwich'); pg.wait_for_timeout(200)
+    t=pg.inner_text('#lista')
+    check('CL5: la lupa encuentra sin importar tildes ni mayúsculas', 'Sándwich 2' in t and 'Torta' not in t and 'Café' not in t)
+    pg.fill('#bus','xyz'); pg.wait_for_timeout(200)
+    check('CL5: sin resultados avisa amablemente', 'No encontramos nada' in pg.inner_text('#lista'))
+    pg.fill('#bus',''); pg.click('.chips button:has-text("Pasteles")'); pg.wait_for_timeout(200)
+    check('CL5: tocar una categoría muestra solo esa', 'Torta 1' in pg.inner_text('#lista') and 'Café' not in pg.inner_text('#lista'))
+    pg.click('.chips button:has-text("Todo")'); pg.wait_for_timeout(200)
+    check('CL5: la foto aparece solo en el producto que la tiene', pg.locator('img.ph').count()==1)
+    pg.click('img.ph'); pg.wait_for_timeout(200)
+    check('CL5: tocar la foto la amplía con nombre y precio', pg.locator('.zoom img').count()==1 and 'Torta 1' in pg.inner_text('.zoom') and '$1.001' in pg.inner_text('.zoom'))
+    pg.click('.zoom button.btn'); pg.wait_for_timeout(200)
+    check('CL5: desde la foto se puede agregar al pedido y se cierra', pg.locator('.zoom').count()==0 and 'Ver mi pedido (1)' in pg.inner_text('.bar'))
+e=run_pedir_menu(CL5); print('ERR CL5',e)
 
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

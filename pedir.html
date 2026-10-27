@@ -46,6 +46,17 @@ label{display:block;font-size:.9rem;color:var(--mut);margin-top:12px}
 .seg li.ahora .dot{background:var(--brand);box-shadow:0 0 0 4px rgba(217,72,15,.2)}
 @media (prefers-reduced-motion:no-preference){.seg li.ahora .dot{animation:lat 1.6s ease-in-out infinite}}
 @keyframes lat{50%{box-shadow:0 0 0 8px rgba(217,72,15,.08)}}
+.bus{position:sticky;top:70px;z-index:5;background:var(--bg);padding:8px 0 4px}
+.bus input{border-radius:999px;padding:12px 18px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:6px 0 8px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chips button{flex-shrink:0;background:#fff;border:1.5px solid var(--line);color:var(--ink);padding:8px 14px;border-radius:999px;font-size:.9rem}
+.chips button.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.item .l{display:flex;align-items:center;gap:12px;min-width:0}
+.ph{width:68px;height:68px;border-radius:12px;object-fit:cover;flex-shrink:0;cursor:zoom-in;background:var(--line)}
+.zoom{position:fixed;inset:0;background:rgba(0,0,0,.84);z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:14px}
+.zoom img{max-width:100%;max-height:64vh;border-radius:16px;object-fit:contain}
+.zoom .t{color:#fff;font-weight:800;font-size:1.15rem;text-align:center}
 .ban{background:#fff7ed;border:1.5px solid #fdba74;border-radius:12px;padding:10px 12px;margin:12px 0;display:flex;justify-content:space-between;gap:8px;align-items:center}
 .ban button{padding:8px 12px;background:var(--brand);color:#fff}
 </style>
@@ -64,7 +75,7 @@ const P = new URLSearchParams(location.search);
 const LOCAL = P.get('l') || '', MESA = parseInt(P.get('m'), 10) || 0;
 const nmMesa = m => m > 100 ? 'Piso 2 · Mesa ' + (m - 100) : 'Mesa ' + m;
 let M = null, cart = {}, step = 'menu', err = '', busy = false, nota = '', nombre = '';
-let PED = null, AV = {}, aviso = '', armada = 0, poll = null;   // PED: pedido en curso · AV: avisos de la mesa
+let PED = null, AV = {}, aviso = '', armada = 0, poll = null, busq = '', catSel = '', zoomId = null;   // PED: pedido en curso · AV: avisos de la mesa
 const KEY = 'pr-ped-' + LOCAL + '-' + MESA;
 const memo = {
   get() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } },
@@ -115,15 +126,33 @@ function seguimientoHTML() {
     <ul class="seg">${PASOS.map((p, i) => `<li class="${i + 1 < f || f >= 4 ? 'hecho' : i + 1 === f ? 'ahora' : ''}"><span class="dot">${i + 1 < f || f >= 4 ? '✓' : i + 1}</span>${p}</li>`).join('')}</ul>
     <button class="btn-line" style="width:100%;margin-top:6px" data-a="${f >= 4 ? 'otro' : 'volver'}">${f >= 4 ? 'Pedir algo más' : 'Pedir algo más (agregar otro pedido)'}</button></div></main>`;
 }
-function menuHTML() {
-  const cats = [...new Set(M.menu.map(i => i.c))];
-  const lista = cats.map(c => `<div class="cat">${esc(c)}</div>` + M.menu.filter(i => i.c === c).map(i => {
-    const q = cart[i.id] || 0;
-    return `<div class="item"><div><div class="n">${esc(i.n)}</div><div class="p">${money(i.p)}</div></div>
+const norm = t => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+function itemHTML(i) {
+  const q = cart[i.id] || 0;
+  return `<div class="item"><div class="l">${i.f ? `<img class="ph" src="${esc(i.f)}" alt="Foto de ${esc(i.n)}" loading="lazy" data-a="zoom" data-id="${i.id}">` : ''}<div><div class="n">${esc(i.n)}</div><div class="p">${money(i.p)}</div></div></div>
       <div class="q">${q ? `<button data-a="menos" data-id="${i.id}" aria-label="Quitar uno">−</button><span>${q}</span>` : ''}<button class="add" data-a="mas" data-id="${i.id}" aria-label="Agregar uno">+</button></div></div>`;
-  }).join('')).join('');
+}
+/* La lista se redibuja sola mientras se escribe en la lupa, sin tocar el cuadro de búsqueda */
+function listaHTML() {
+  const ws = norm(busq).trim().split(/\s+/).filter(Boolean);
+  const its = M.menu.filter(i => (!catSel || i.c === catSel) && ws.every(w => norm(i.n + ' ' + (i.c || '')).includes(w)));
+  if (!its.length) return `<p class="mut" style="margin-top:24px;text-align:center">${M.menu.length ? 'No encontramos nada con eso. Prueba con otra palabra.' : 'No hay productos disponibles ahora. Llama a un garzón.'}</p>`;
+  return [...new Set(its.map(i => i.c))].map(c => `<div class="cat">${esc(c)}</div>` + its.filter(i => i.c === c).map(itemHTML).join('')).join('');
+}
+function buscadorHTML() {
+  if (M.menu.length < 8) return '';
+  const cats = [...new Set(M.menu.map(i => i.c).filter(Boolean))];
+  return `<div class="bus"><input id="bus" type="search" enterkeyhint="search" autocomplete="off" placeholder="🔍 Buscar en la carta…" value="${esc(busq)}" aria-label="Buscar en la carta"></div>
+    ${cats.length > 1 ? `<div class="chips"><button data-a="cat" data-c="" class="${catSel ? '' : 'on'}">Todo</button>${cats.map(c => `<button data-a="cat" data-c="${esc(c)}" class="${catSel === c ? 'on' : ''}">${esc(c)}</button>`).join('')}</div>` : ''}`;
+}
+function zoomHTML() {
+  const i = M.menu.find(x => x.id === zoomId); if (!i || !i.f) return '';
+  return `<div class="zoom" data-a="cerrarzoom" role="dialog" aria-label="Foto de ${esc(i.n)}"><img src="${esc(i.f)}" alt="Foto de ${esc(i.n)}"><div class="t">${esc(i.n)} · ${money(i.p)}</div>
+    <button class="btn" data-a="mas" data-id="${i.id}" style="background:var(--brand);color:#fff;padding:14px 28px">+ Agregar a mi pedido</button><button class="btn-line" data-a="cerrarzoom" style="background:transparent;color:#fff;border:1.5px solid #fff8">Cerrar</button></div>`;
+}
+function menuHTML() {
   const ban = PED && !finalizado() ? `<div class="ban"><span>Tu pedido: <b>${textoPed()}</b></span><button data-a="verped">Ver</button></div>` : '';
-  return head() + `<main>${acciones()}${ban}<p class="mut">${M.confirmar ? 'Elige lo que quieres: la caja confirmará tu pedido y se enviará a cocina. La cuenta se paga al final con tu garzón o en caja.' : 'Elige lo que quieres y envíalo directo a cocina. La cuenta se paga al final con tu garzón o en caja.'}</p>${err ?`<div class="err">${esc(err)}</div>` : ''}${lista || '<p class="mut" style="margin-top:20px">No hay productos disponibles ahora. Llama a un garzón.</p>'}</main>
+  return head() + `<main>${acciones()}${ban}<p class="mut">${M.confirmar ? 'Elige lo que quieres: la caja confirmará tu pedido y se enviará a cocina. La cuenta se paga al final con tu garzón o en caja.' : 'Elige lo que quieres y envíalo directo a cocina. La cuenta se paga al final con tu garzón o en caja.'}</p>${err ?`<div class="err">${esc(err)}</div>` : ''}${buscadorHTML()}<div id="lista">${listaHTML()}</div></main>${zoomId ? zoomHTML() : ''}
     <div class="bar"><button data-a="ver" ${cuenta() ? '' : 'disabled'}><span>${cuenta() ? 'Ver mi pedido (' + cuenta() + ')' : 'Agrega productos'}</span><span>${cuenta() ? money(total()) : ''}</span></button></div>`;
 }
 function resumenHTML() {
@@ -169,11 +198,15 @@ function iniciarPoll() {
   }, 4000);
 }
 document.addEventListener('visibilitychange', async () => { if (!document.hidden && PED && !finalizado()) { await estadoPed(); if (step === 'seg' || step === 'menu') render(); } });
-document.addEventListener('input', e => { if (e.target.id === 'nombre') nombre = e.target.value; if (e.target.id === 'nota') nota = e.target.value; });
+document.addEventListener('input', e => {
+  if (e.target.id === 'bus') { busq = e.target.value; const l = $('#lista'); if (l) l.innerHTML = listaHTML(); return; } if (e.target.id === 'nombre') nombre = e.target.value; if (e.target.id === 'nota') nota = e.target.value; });
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-a]'); if (!b) return;
   const a = b.dataset.a, id = b.dataset.id;
-  if (a === 'mas') { cart[id] = Math.min(20, (cart[id] || 0) + 1); }
+  if (a === 'mas') { cart[id] = Math.min(20, (cart[id] || 0) + 1); zoomId = null; }
+  else if (a === 'zoom') { zoomId = id; }
+  else if (a === 'cerrarzoom') { zoomId = null; }
+  else if (a === 'cat') { catSel = b.dataset.c || ''; }
   else if (a === 'menos') { cart[id] = (cart[id] || 0) - 1; if (cart[id] <= 0) delete cart[id]; }
   else if (a === 'ver') { err = ''; step = 'resumen'; scrollTo(0, 0); }
   else if (a === 'volver') { err = ''; step = 'menu'; }

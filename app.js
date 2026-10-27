@@ -324,7 +324,7 @@ async function cargar(parcial) {
   D = { id, insumos: ((ins && ins.data) || []).map(r => ({ id: r.id, n: r.nombre, u: r.unidad || 'un', s: +r.stock || 0, sm: +r.stock_min || 0, cu: r.costo_unit == null ? null : +r.costo_unit, on: r.activo !== false, v: r.vence || '' })), recetas: ((rec && rec.data) || []).map(r => ({ id: r.id, m: r.menu_id, i: r.insumo_id, q: +r.cantidad })), provs: ((prv && prv.data) || []).filter(r => r.activo !== false).map(r => ({ id: r.id, n: r.nombre, tel: r.telefono || '', mail: r.correo || '' })), ocs: ((oco && oco.data) || []).map(r => ({ id: r.id, pv: r.proveedor, est: r.estado, items: r.items || [], nota: r.nota || '', t: +new Date(r.created_at) })), insErr: !!(ins && ins.error), insmov: ((imv && imv.data) || []).map(r => ({ id: r.id, iid: r.insumo_id, d: +r.delta, mo: r.motivo, sd: r.stock_despues == null ? null : +r.stock_despues, ct: r.costo_total, td: r.tipo_doc || '', nd: r.numero_doc || '', pv: r.proveedor || '', nota: r.nota || '', caja: !!r.pagado_caja, por: r.registrado_por || '', t: +new Date(r.created_at) })), fondo: Math.max(0, +loc.data.fondo_caja || 0), fondoDesde: loc.data.fondo_desde ? +new Date(loc.data.fondo_desde) : 0, ult: (ult && ult.data && ult.data[0]) || null, gastos: ((gas && gas.data) || []).map(r => ({ id: r.id, turno_id: r.turno_id || null, tipo: r.tipo || 'Boleta', num: r.numero || '', prov: r.proveedor || '', det: r.detalle || '', m: +r.monto || 0, por: r.registrado_por || '', anul: !!r.anulado, anPor: r.anulado_por || '', anMot: r.anulado_motivo || '', pedPor: r.anul_pedida_por || '', pedMot: r.anul_pedida_motivo || '', mOrig: r.monto_original == null ? null : +r.monto_original, edPor: r.editado_por || '', edMot: r.editado_motivo || '', t: +new Date(r.created_at) })), turno: (tur.data && tur.data[0]) || null, pedidos: ped.data || [], reservas: res.data || [], name: loc.data.nombre, tramo: Math.min(4, Math.max(1, Math.round(+loc.data.tramo) || 4)), adminPin: loc.data.admin_pin || '', qr: !!loc.data.qr_activo, garzonCobra: loc.data.garzon_cobra !== false, propinaPct: loc.data.propina_pct === undefined || loc.data.propina_pct === null ? 10 : +loc.data.propina_pct, mesas: loc.data.mesas, mesas2: loc.data.mesas2 || 0,
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
-    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
+    menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '', f: r.foto || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
     comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada, cp: r.cuenta_pedida_at ? +new Date(r.cuenta_pedida_at) : 0 })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, pef: r.pago_efec || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
   /* Ventas de tortas: encargos con abonos (migración 030) */
@@ -1491,8 +1491,8 @@ function cajaHTML() {
 function cartaHTML() {
   const l = L();
   return `<h2>Carta y mesas</h2><div class="cols"><div class="card"><b>Platos</b>
-    ${buscaHTML('q-carta', 'Buscar plato o producto de la carta…')}${filtra(l.menu, 'q-carta').map(i =>`<div class="row ${i.on ? '' : 'off'}"><div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div>
-      <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><button class="btn-line" data-act="opcedit" data-id="${i.id}" title="Opciones rápidas para la comanda">Opciones${i.o ? ' ✓' : ''}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
+    ${buscaHTML('q-carta', 'Buscar plato o producto de la carta…')}${filtra(l.menu, 'q-carta').map(i =>`<div class="row ${i.on ? '' : 'off'}"><div style="display:flex;gap:10px;align-items:center">${i.f ? `<img src="${esc(i.f)}" alt="" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0">` : ''}<div>${esc(i.n)}<div class="mut">${esc(i.c)} · ${money(i.p)} · se prepara en ${i.e === 'cafeteria' ? 'cafetería' : 'cocina'}${i.cb ? ' · código ' + esc(i.cb) : ''}</div></div></div>
+      <div style="display:flex;gap:6px"><button class="btn-line" data-act="est" data-id="${i.id}">${i.e === 'cafeteria' ? '☕ Cafetería' : 'Cocina'}</button><label class="btn-line" style="cursor:pointer;display:inline-flex;align-items:center" title="Foto de referencia para el cliente (pedido por QR)">📷 ${i.f ? 'Cambiar foto' : 'Foto'}<input type="file" accept="image/*" hidden data-foto="${i.id}"></label>${i.f ? `<button class="btn-line" data-act="fotoquitar" data-id="${i.id}">Quitar foto</button>` : ''}<button class="btn-line" data-act="opcedit" data-id="${i.id}" title="Opciones rápidas para la comanda">Opciones${i.o ? ' ✓' : ''}</button><button class="btn-line" data-act="toggle" data-id="${i.id}">${i.on ? 'Disponible' : 'Agotado'}</button><button class="btn-bad" data-act="del" data-id="${i.id}">Quitar</button></div></div>`).join('') || '<p class="mut">Sin platos.</p>'}</div>
   <div>${esIng() ? tramosCardHTML() : ''}<div class="card" style="display:grid;gap:8px"><b>Agregar plato</b><p class="mut" style="margin:0">Aquí solo se agregan productos para la venta. Lo que compras para producirlos (mermeladas, tarros de duraznos, cremas…) va en la pestaña Inventario de producción.</p>
     <input id="an" placeholder="Nombre"><input id="ac" placeholder="Categoría (Café, Platos…)" list="cl"><datalist id="cl">${[...new Set(l.menu.map(i => i.c))].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <input id="ap" type="number" inputmode="numeric" placeholder="Precio">
@@ -1651,7 +1651,29 @@ document.addEventListener('input', e => {
   if (e.target.id === 'a-mesas') S.af.mesas = e.target.value;
   if (e.target.id === 'a-email') S.af.email = e.target.value;
 });
+/* Fotos de referencia: se achican a 640 px (JPG) antes de subir, así la carta carga rápido en el celular del cliente */
+async function achicarFoto(file) {
+  const bmp = await createImageBitmap(file), k = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  return await new Promise((ok, no) => cv.toBlob(b => b ? ok(b) : no(new Error('No se pudo procesar la imagen')), 'image/jpeg', 0.8));
+}
+function borrarFotoVieja(url) { try { const m = String(url || '').match(/resto-fotos\/(.+)$/); if (m) sb.storage.from('resto-fotos').remove([decodeURIComponent(m[1])]); } catch (e) {} }
+async function subirFoto(inp) {
+  const f = inp.files && inp.files[0], id = inp.dataset.foto; inp.value = '';
+  const i = f && (L().menu || []).find(x => x.id === id); if (!i) return;
+  if (!/^image\//.test(f.type)) { alert('Elige un archivo de imagen (foto).'); return; }
+  try {
+    toast('Subiendo foto de ' + i.n + '…', 'tk-l');
+    const blob = await achicarFoto(f), ruta = D.id + '/' + id + '-' + Date.now() + '.jpg';
+    const up = await sb.storage.from('resto-fotos').upload(ruta, blob, { contentType: 'image/jpeg', cacheControl: '31536000' });
+    if (up.error) { alert('No se pudo subir la foto: ' + up.error.message + (/bucket|not found/i.test(up.error.message) ? '\n\nFalta ejecutar la migración 033 en Supabase.' : '')); return; }
+    const url = sb.storage.from('resto-fotos').getPublicUrl(ruta).data.publicUrl;
+    if (!fallo(await sb.from('resto_menu').update({ foto: url }).eq('id', id))) { borrarFotoVieja(i.f); await cargar(); render(); toast('Foto guardada · ' + i.n, 'tk-l'); }
+  } catch (e) { alert('No se pudo procesar la foto: ' + (e.message || e)); }
+}
 document.addEventListener('change', e => {
+  if (e.target && e.target.dataset && e.target.dataset.foto) { subirFoto(e.target); return; }
   if (e.target.dataset && e.target.dataset.act === 'robi-auto') { robiLS('pr-robi-auto', e.target.checked ? '1' : null); if (e.target.checked) { robiLS('pr-robi-ya', '1'); robiHablar(robiBurbuja().m.txt); } else window.Robi.voz.callar(); return; }
   if (e.target.dataset && 'keep' in e.target.dataset) S.f[e.target.id] = e.target.value;
   if (e.target.id === 'metodo') { S.metodo = e.target.value; render(); }
@@ -2478,6 +2500,7 @@ document.addEventListener('click', async e => {
       else if (a === 'settramo' && esIng()) { const v = Math.min(4, Math.max(1, Math.round(+$('#tramo-sel').value) || 4)); if (!fallo(await sb.from('resto_locales').update({ tramo: v }).eq('id', D.id))) toast('Tramo ' + v + ' · ' + TRAMOS[v - 1].nombre, 'tk-l'); }
       else if (a === 'qrtoggle' && esAdm()) { fallo(await sb.from('resto_locales').update({ qr_activo: !L().qr }).eq('id', D.id)); }
       else if (a === 'qrimprimir' && esAdm()) { imprimirQR(); }
+      else if (a === 'fotoquitar' && esAdm()) { const i = L().menu.find(x => x.id === d.id); if (i && confirm('¿Quitar la foto de «' + i.n + '»?')) { if (!fallo(await sb.from('resto_menu').update({ foto: null }).eq('id', i.id))) { borrarFotoVieja(i.f); await cargar(); } } }
       else if (a === 'qrconf' && esAdm()) { if (!fallo(await sb.from('resto_locales').update({ qr_confirmar: !L().qrc }).eq('id', D.id))) { await cargar(); toast(L().qrc ? 'Los pedidos QR esperan tu confirmación' : 'Los pedidos QR van directo a cocina', 'tk-l'); } }
       else if (a === 'qrok') { const r = await sb.rpc('resto_qr_confirmar', { p_pedido: d.id }); if (!fallo(r)) { await cargar(); toast(r.data && r.data.ya ? 'Otra persona ya resolvió este pedido' : 'Pedido enviado a cocina', 'tk-l'); } }
       else if (a === 'qrno') { S.qrr = d.id; }
