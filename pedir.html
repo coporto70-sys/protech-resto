@@ -34,13 +34,28 @@ main{max-width:640px;margin:0 auto;padding:16px}
 .mut{color:var(--mut);font-size:.92rem}
 .btn{background:var(--brand);color:#fff}.btn-line{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
 label{display:block;font-size:.9rem;color:var(--mut);margin-top:12px}
+.acc{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.acc button{background:#fff;border:1.5px solid var(--line);color:var(--ink);padding:12px 8px;font-size:.92rem}
+.acc button.arm{border-color:var(--brand);color:var(--brand)}
+.acc button:disabled{background:#ecfdf3;border-color:#86efac;color:var(--ok);cursor:default}
+.seg{list-style:none;margin:14px 0 6px}
+.seg li{display:flex;gap:12px;align-items:center;padding:9px 0;color:var(--mut);font-weight:600}
+.seg li.hecho,.seg li.ahora{color:var(--ink)}
+.seg .dot{width:28px;height:28px;border-radius:50%;background:var(--line);color:#fff;display:grid;place-items:center;font-size:.85rem;flex-shrink:0}
+.seg li.hecho .dot{background:var(--ok)}
+.seg li.ahora .dot{background:var(--brand);box-shadow:0 0 0 4px rgba(217,72,15,.2)}
+@media (prefers-reduced-motion:no-preference){.seg li.ahora .dot{animation:lat 1.6s ease-in-out infinite}}
+@keyframes lat{50%{box-shadow:0 0 0 8px rgba(217,72,15,.08)}}
+.ban{background:#fff7ed;border:1.5px solid #fdba74;border-radius:12px;padding:10px 12px;margin:12px 0;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.ban button{padding:8px 12px;background:var(--brand);color:#fff}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-/* Pedido por QR: el cliente no inicia sesión. Solo llama a 2 funciones de la base que validan todo en el servidor. */
+/* Pedido por QR: el cliente no inicia sesión. Solo llama a funciones de la base que validan todo en el servidor:
+   resto_qr_menu (carta), resto_qr_pedir (enviar), resto_qr_estado (avance de SU pedido) y resto_qr_avisar (llamar al garzón / pedir la cuenta). */
 const sb = supabase.createClient('https://fchqqtdapyrgpkyxiful.supabase.co', 'sb_publishable_7jjHrGLPJ51aP0BKwcIizg_bakLNqiY');
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -49,7 +64,16 @@ const P = new URLSearchParams(location.search);
 const LOCAL = P.get('l') || '', MESA = parseInt(P.get('m'), 10) || 0;
 const nmMesa = m => m > 100 ? 'Piso 2 · Mesa ' + (m - 100) : 'Mesa ' + m;
 let M = null, cart = {}, step = 'menu', err = '', busy = false, nota = '', nombre = '';
+let PED = null, AV = {}, aviso = '', armada = 0, poll = null;   // PED: pedido en curso · AV: avisos de la mesa
+const KEY = 'pr-ped-' + LOCAL + '-' + MESA;
+const memo = {
+  get() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } },
+  set(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} },
+  del() { try { localStorage.removeItem(KEY); } catch (e) {} }
+};
+const PASOS = ['Pedido recibido', 'Pedido confirmado', 'En camino a tu mesa', 'Entregado'];
 const MSG = {
+  demasiados_avisos: 'Ya avisamos varias veces. Espera un momento, enseguida te atienden.',
   qr_inactivo: 'El pedido por QR no está activo en este local. Llama a un garzón y con gusto te atiende.',
   mesa_invalida: 'Este QR no corresponde a una mesa válida. Llama a un garzón.',
   demasiados_pedidos: 'Ya enviaste varios pedidos seguidos. Espera un par de minutos o llama a un garzón.',
@@ -71,6 +95,26 @@ async function cargar() {
 function head() { return `<header><b>${esc(M.nombre || 'Protech Resto')}</b><small>${MESA ? esc(nmMesa(MESA)) : ''}</small></header>`; }
 function msgPantalla(e, t, d) { return head() + `<main><div class="center card"><div class="e">${e}</div><h2>${t}</h2><p class="mut">${d}</p></div></main>`; }
 
+const finalizado = () => !!PED && (PED.estado === 'rechazado' || PED.fase >= 4);
+const textoPed = () => !PED ? '' : PED.estado === 'rechazado' ? 'no se pudo tomar' : PED.fase <= 1 ? 'la caja lo está confirmando' : PED.fase === 2 ? 'en preparación' : PED.fase === 3 ? 'en camino a tu mesa' : 'entregado';
+/* Botones de la mesa. "Pedir la cuenta" pide tocar dos veces para no avisar por error. Si la base aún no tiene la migración 032, no se muestran. */
+function acciones() {
+  if (M.confirmar === undefined) return '';
+  const g = AV.garzon && Date.now() - AV.garzon < 120000, c = AV.cuenta && Date.now() - AV.cuenta < 1800000, arm = !c && armada && Date.now() - armada < 4000;
+  return `<div class="acc"><button data-a="llamar" ${g ? 'disabled' : ''}>${g ? '✓ Ya avisamos al garzón' : '🔔 Llamar al garzón'}</button>
+    <button data-a="cuenta" class="${arm ? 'arm' : ''}" ${c ? 'disabled' : ''}>${c ? '✓ Cuenta pedida' : arm ? 'Toca otra vez para confirmar' : '🧾 Pedir la cuenta'}</button></div>${aviso ? `<div class="err">${esc(aviso)}</div>` : ''}`;
+}
+function seguimientoHTML() {
+  if (PED.estado === 'rechazado') return head() + `<main>${acciones()}<div class="center card"><div class="e">🙏</div><h2>No pudimos tomar tu pedido</h2>
+    <p class="mut">${esc(PED.motivo || 'La caja no pudo confirmarlo.')} Llama a un garzón y con gusto te ayuda.</p>
+    <button class="btn" style="margin-top:20px;width:100%" data-a="otro">Hacer otro pedido</button></div></main>`;
+  const f = PED.fase || 1;
+  const sub = f <= 1 ? (M.confirmar ? 'La caja lo está confirmando…' : 'Lo estamos recibiendo…') : f === 2 ? 'Cocina ya lo está preparando.' : f === 3 ? 'Ya va en camino a tu mesa.' : '¡Buen provecho!';
+  return head() + `<main>${acciones()}<div class="card"><b style="font-size:1.1rem">${f >= 4 ? '¡Tu pedido llegó!' : 'Tu pedido va así'}</b>
+    <p class="mut" style="margin-top:2px">${sub}</p>
+    <ul class="seg">${PASOS.map((p, i) => `<li class="${i + 1 < f || f >= 4 ? 'hecho' : i + 1 === f ? 'ahora' : ''}"><span class="dot">${i + 1 < f || f >= 4 ? '✓' : i + 1}</span>${p}</li>`).join('')}</ul>
+    <button class="btn-line" style="width:100%;margin-top:6px" data-a="${f >= 4 ? 'otro' : 'volver'}">${f >= 4 ? 'Pedir algo más' : 'Pedir algo más (agregar otro pedido)'}</button></div></main>`;
+}
 function menuHTML() {
   const cats = [...new Set(M.menu.map(i => i.c))];
   const lista = cats.map(c => `<div class="cat">${esc(c)}</div>` + M.menu.filter(i => i.c === c).map(i => {
@@ -78,7 +122,8 @@ function menuHTML() {
     return `<div class="item"><div><div class="n">${esc(i.n)}</div><div class="p">${money(i.p)}</div></div>
       <div class="q">${q ? `<button data-a="menos" data-id="${i.id}" aria-label="Quitar uno">−</button><span>${q}</span>` : ''}<button class="add" data-a="mas" data-id="${i.id}" aria-label="Agregar uno">+</button></div></div>`;
   }).join('')).join('');
-  return head() + `<main><p class="mut">Elige lo que quieres y envíalo directo a cocina. La cuenta se paga al final con tu garzón o en caja.</p>${err ? `<div class="err">${esc(err)}</div>` : ''}${lista || '<p class="mut" style="margin-top:20px">No hay productos disponibles ahora. Llama a un garzón.</p>'}</main>
+  const ban = PED && !finalizado() ? `<div class="ban"><span>Tu pedido: <b>${textoPed()}</b></span><button data-a="verped">Ver</button></div>` : '';
+  return head() + `<main>${acciones()}${ban}<p class="mut">${M.confirmar ? 'Elige lo que quieres: la caja confirmará tu pedido y se enviará a cocina. La cuenta se paga al final con tu garzón o en caja.' : 'Elige lo que quieres y envíalo directo a cocina. La cuenta se paga al final con tu garzón o en caja.'}</p>${err ?`<div class="err">${esc(err)}</div>` : ''}${lista || '<p class="mut" style="margin-top:20px">No hay productos disponibles ahora. Llama a un garzón.</p>'}</main>
     <div class="bar"><button data-a="ver" ${cuenta() ? '' : 'disabled'}><span>${cuenta() ? 'Ver mi pedido (' + cuenta() + ')' : 'Agrega productos'}</span><span>${cuenta() ? money(total()) : ''}</span></button></div>`;
 }
 function resumenHTML() {
@@ -103,8 +148,27 @@ function render() {
   if (M.error === 'qr_invalido') { app.innerHTML = msgPantalla('🤔', 'QR no válido', 'Escanea de nuevo el QR de tu mesa o llama a un garzón.'); return; }
   if (M.error === 'conexion') { app.innerHTML = msgPantalla('📶', 'Sin conexión', 'No pudimos cargar la carta. Revisa tu internet y vuelve a intentarlo, o llama a un garzón.'); return; }
   if (M.error) { app.innerHTML = msgPantalla('🙏', M.error === 'no_existe' ? 'Local no encontrado' : 'Pedido por QR no disponible', MSG[M.error] || 'Llama a un garzón.'); return; }
-  app.innerHTML = step === 'listo' ? listoHTML() : step === 'resumen' ? resumenHTML() : menuHTML();
+  app.innerHTML = step === 'seg' && PED ? seguimientoHTML() : step === 'listo' ? listoHTML() : step === 'resumen' ? resumenHTML() : menuHTML();
 }
+/* Avance del pedido: se consulta cada 4 s mientras el cliente lo está mirando */
+async function estadoPed() {
+  if (!PED) return;
+  const { data, error } = await sb.rpc('resto_qr_estado', { p_pedido: PED.id });
+  if (error || !data) return;                       // sin internet: se reintenta solo
+  if (data.error) { PED = null; memo.del(); if (step === 'seg') step = 'menu'; return; }
+  PED.estado = data.estado; PED.fase = data.fase || 1; PED.motivo = data.motivo || '';
+}
+function detenerPoll() { if (poll) { clearInterval(poll); poll = null; } }
+function iniciarPoll() {
+  detenerPoll();
+  poll = setInterval(async () => {
+    if (document.hidden || !PED) return;
+    const antes = JSON.stringify(PED); await estadoPed();
+    if ((JSON.stringify(PED) !== antes || AV.garzon || AV.cuenta) && (step === 'seg' || step === 'menu')) render();
+    if (!PED || finalizado()) detenerPoll();
+  }, 4000);
+}
+document.addEventListener('visibilitychange', async () => { if (!document.hidden && PED && !finalizado()) { await estadoPed(); if (step === 'seg' || step === 'menu') render(); } });
 document.addEventListener('input', e => { if (e.target.id === 'nombre') nombre = e.target.value; if (e.target.id === 'nota') nota = e.target.value; });
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-a]'); if (!b) return;
@@ -113,7 +177,22 @@ document.addEventListener('click', async e => {
   else if (a === 'menos') { cart[id] = (cart[id] || 0) - 1; if (cart[id] <= 0) delete cart[id]; }
   else if (a === 'ver') { err = ''; step = 'resumen'; scrollTo(0, 0); }
   else if (a === 'volver') { err = ''; step = 'menu'; }
-  else if (a === 'otro') { cart = {}; nota = ''; err = ''; step = 'menu'; scrollTo(0, 0); await cargar(); }
+  else if (a === 'verped') { step = 'seg'; scrollTo(0, 0); }
+  else if (a === 'otro') { cart = {}; nota = ''; err = ''; step = 'menu'; if (finalizado()) { PED = null; memo.del(); detenerPoll(); } scrollTo(0, 0); await cargar(); }
+  else if (a === 'llamar' || a === 'cuenta') {
+    const tipo = a === 'llamar' ? 'garzon' : 'cuenta';
+    if (tipo === 'cuenta' && !(armada && Date.now() - armada < 4000)) { armada = Date.now(); aviso = ''; setTimeout(() => { if (step === 'seg' || step === 'menu') render(); }, 4100); }
+    else {
+      armada = 0; aviso = ''; AV[tipo] = Date.now(); render();
+      setTimeout(() => { if (step === 'seg' || step === 'menu') render(); }, tipo === 'garzon' ? 120500 : 1800500);
+      const { error } = await sb.rpc('resto_qr_avisar', { p_local: LOCAL, p_mesa: MESA, p_tipo: tipo });
+      if (error) {
+        delete AV[tipo];
+        const k = Object.keys(MSG).find(x => (error.message || '').includes(x));
+        aviso = k ? MSG[k] : 'No se pudo avisar. Levanta la mano o pide ayuda a un garzón.';
+      }
+    }
+  }
   else if (a === 'enviar' && !busy) {
     busy = true; err = ''; render();
     const items = Object.entries(cart).map(([id, q]) => ({ id, q }));
@@ -126,11 +205,25 @@ document.addEventListener('click', async e => {
       else err = k ? MSG[k] : 'No se pudo enviar el pedido. Revisa tu internet e inténtalo de nuevo.';
       if (m.includes('sin_stock') || m.includes('no_disponible')) await cargar();
       if (m.includes('qr_inactivo')) { M = { error: 'qr_inactivo', nombre: M.nombre }; }
-    } else { cart = {}; nota = ''; step = 'listo'; scrollTo(0, 0); }
+    } else if (data.pedido) {
+      cart = {}; nota = ''; scrollTo(0, 0);
+      PED = { id: data.pedido, estado: data.estado === 'por_confirmar' ? 'por_confirmar' : 'confirmado', fase: data.estado === 'por_confirmar' ? 1 : 2, motivo: '' };
+      memo.set({ id: PED.id, t: Date.now() }); step = 'seg'; iniciarPoll();
+    } else { cart = {}; nota = ''; step = 'listo'; scrollTo(0, 0); }   // base sin la migración 032: pantalla simple de antes
   }
   render();
 });
-cargar().then(render); render();
+/* Si el cliente recarga la página o vuelve desde otra app, retoma el seguimiento de su pedido (hasta 6 horas) */
+cargar().then(async () => {
+  const s = memo.get();
+  if (s && s.id && Date.now() - s.t < 6 * 3600e3 && M && !M.error) {
+    PED = { id: s.id, estado: 'por_confirmar', fase: 1, motivo: '' };
+    await estadoPed();
+    if (PED && !finalizado()) { step = 'seg'; iniciarPoll(); } else { PED = null; memo.del(); }
+  } else if (s) memo.del();
+  render();
+});
+render();
 </script>
 </body>
 </html>

@@ -1011,4 +1011,115 @@ def PC5(pg):
     check('PC5: vuelve a "los garzones cobran"', pg.evaluate('window.__DB.resto_locales[0].garzon_cobra')==True)
 e=run({'email':'u','role':'','db':pc_db(True)},PC5,LS_ADM); print('ERR PC5',e)
 
+
+# --- QR: pedidos por confirmar y avisos de mesa (migración 032)
+def qr_db(roles=False):
+    d=db_roles() if roles else base_db()
+    d['resto_locales'][0].update({'qr_activo':True,'qr_confirmar':True})
+    d['resto_qr_pedidos']=[{'id':'qp1','local_id':'L1','mesa':4,'items':[{'id':'m2','n':'Torta','q':2,'p':3000,'e':'cocina'},{'id':'m1','n':'Café','q':1,'p':2500,'e':'cafeteria'}],'nota':'📱 Pedido QR · Ana · sin sal','estado':'por_confirmar','created_at':iso(2)}]
+    d['resto_qr_avisos']=[{'id':'qa1','local_id':'L1','mesa':5,'tipo':'garzon','atendido':False,'created_at':iso(1)},{'id':'qa2','local_id':'L1','mesa':3,'tipo':'cuenta','atendido':False,'created_at':iso(1)}]
+    return d
+def QR1(pg):
+    t=pg.inner_text('#app')
+    check('QR1: la administradora ve el pedido QR por confirmar con mesa, productos, nota y total', 'Pedidos QR por confirmar (1)' in t and 'Mesa 4' in t and '2× Torta' in t and 'sin sal' in t and '$8.500' in t)
+    check('QR1: ve los avisos de las mesas (llamado y cuenta)', 'Mesa 5' in t and 'llama al garzón' in t and 'pidió la cuenta' in t)
+    check('QR1: las mesas con aviso muestran el icono en el plano', '🔔' in pg.inner_text('button.mesa[data-n="5"]') and '🧾' in pg.inner_text('button.mesa[data-n="3"]'))
+    pg.click('[data-act="qrok"]'); pg.wait_for_timeout(700)
+    check('QR1: confirmar llama a la base con el id del pedido', pg.evaluate("window.__RPC.some(c=>c[0]==='resto_qr_confirmar'&&c[1].p_pedido==='qp1')"))
+    check('QR1: el pedido sale del panel y llega a cocina como comanda', 'Pedidos QR por confirmar' not in pg.inner_text('#app') and any(c.get('qr_pedido_id')=='qp1' for c in pg.evaluate('window.__DB.resto_comandas')))
+    pg.click('[data-act="qratender"][data-id="qa1"]'); pg.wait_for_timeout(700)
+    check('QR1: "Atendido" saca el aviso del panel', pg.evaluate("window.__DB.resto_qr_avisos[0].atendido")==True and 'Mesa 5' not in pg.inner_text('.card[style*="var(--brand)"]') if pg.locator('.card[style*="var(--brand)"]').count() else True)
+e=run({'email':'u','role':'','db':qr_db()},QR1,LS_ADM); print('ERR QR1',e)
+
+def QR2(pg):
+    pg.click('[data-act="qrno"]'); pg.wait_for_timeout(300)
+    check('QR2: rechazar pide un motivo opcional', pg.locator('#qrr-m').count()==1)
+    pg.fill('#qrr-m','Se acabó la torta'); pg.click('[data-act="qrnook"]'); pg.wait_for_timeout(700)
+    check('QR2: rechaza con el motivo y el pedido sale del panel', pg.evaluate("window.__DB.resto_qr_pedidos[0].estado")=='rechazado' and pg.evaluate("window.__DB.resto_qr_pedidos[0].motivo")=='Se acabó la torta' and 'Pedidos QR por confirmar' not in pg.inner_text('#app'))
+    check('QR2: un pedido rechazado no genera comanda', not any(c.get('qr_pedido_id') for c in pg.evaluate('window.__DB.resto_comandas')))
+e=run({'email':'u','role':'','db':qr_db()},QR2,LS_ADM); print('ERR QR2',e)
+
+def QR3(pg):
+    pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
+    check('QR3: la administradora ve el interruptor de confirmar pedidos QR', pg.locator('[data-act="qrconf"]').count()==1 and 'Dejar de confirmar' in pg.inner_text('[data-act="qrconf"]'))
+    pg.click('[data-act="qrconf"]'); pg.wait_for_timeout(700)
+    check('QR3: lo apaga en el local (los pedidos vuelven a ir directo a cocina)', pg.evaluate('window.__DB.resto_locales[0].qr_confirmar')==False)
+    pg.click('[data-act="qrconf"]'); pg.wait_for_timeout(700)
+    check('QR3: lo vuelve a encender', pg.evaluate('window.__DB.resto_locales[0].qr_confirmar')==True)
+e=run({'email':'u','role':'','db':qr_db()},QR3,LS_ADM); print('ERR QR3',e)
+
+def QR4(pg):
+    t=pg.inner_text('#app')
+    check('QR4: sin la migración 032 no aparece el panel ni se rompe nada', 'Pedidos QR por confirmar' not in t and 'Avisos de las mesas' not in t and pg.locator('[data-act="mesa"]').count()>0)
+    pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
+    check('QR4: en ajustes avisa que falta ejecutar la migración 032 y no ofrece confirmar', 'migración 032' in pg.inner_text('#app') and pg.locator('[data-act="qrconf"]').count()==0)
+e=run({'email':'u','role':'','db':qr_db(),'missing':['resto_qr_pedidos','resto_qr_avisos']},QR4,LS_ADM); print('ERR QR4',e)
+
+def QR5(pg):
+    t=pg.inner_text('#app')
+    check('QR5: el garzón ve los pedidos por confirmar', 'Pedidos QR por confirmar (1)' in t)
+    check('QR5: el garzón ve el aviso de su mesa 3 pero no el de la mesa 5 de otro garzón', 'pidió la cuenta' in t and 'llama al garzón' not in t)
+e_db=qr_db(True); e_db['resto_comandas']=[{'id':'c3','local_id':'L1','mesa':3,'items':[{'n':'Café','q':1,'p':2500,'e':'cafeteria'}],'nota':'','estado':'entregado','garzon':'Ana','created_at':iso(20),'cerrada':False},{'id':'c5','local_id':'L1','mesa':5,'items':[{'n':'Café','q':1,'p':2500,'e':'cafeteria'}],'nota':'','estado':'entregado','garzon':'Beto','created_at':iso(20),'cerrada':False}]
+e=run({'email':'u','role':'','db':e_db},QR5,LS_ANA); print('ERR QR5',e)
+
+# --- Pedido del cliente (pedir.html) con la base simulada
+PEDIR_STUB = """
+window.__CALLS=[]; window.__EST='por_confirmar'; window.__FASE=1; window.__MOT='';
+window.supabase={createClient:()=>({rpc:async(n,p)=>{ window.__CALLS.push([n,p]);
+  if(n==='resto_qr_menu') return {data:Object.assign({nombre:'Super Pastel',mesas:8,mesas2:6,menu:[{id:'m1',n:'Café',c:'Bebidas',p:2500,e:'cafeteria'},{id:'m2',n:'Torta',c:'Pasteles',p:3000,e:'cocina'}]}, window.__VIEJA?{}:{confirmar:true}),error:null};
+  if(n==='resto_qr_pedir') return {data:window.__VIEJA?{ok:true}:{ok:true,pedido:'P1',estado:'por_confirmar'},error:null};
+  if(n==='resto_qr_estado') return {data:{estado:window.__EST,fase:window.__FASE,motivo:window.__MOT},error:null};
+  if(n==='resto_qr_avisar') return {data:{ok:true},error:null};
+  return {data:null,error:{message:'rpc desconocida'}}; }})};
+"""
+def run_pedir(fn, pre=''):
+    with sync_playwright() as p:
+        b=p.chromium.launch(); ctx=b.new_context(viewport={'width':390,'height':800}); pg=ctx.new_page()
+        errs=[]; pg.on('pageerror',lambda e:errs.append(str(e)))
+        pg.add_init_script(pre+PEDIR_STUB)
+        pg.route('**/@supabase/supabase-js@2',lambda r:r.fulfill(body='/*stub*/',content_type='application/javascript'))
+        pg.goto('http://127.0.0.1:'+str(PORT)+'/pedir.html?l=L1&m=4'); pg.wait_for_timeout(600)
+        fn(pg); b.close(); return errs
+def enviar_torta(pg):
+    pg.click('[data-a="mas"][data-id="m2"]'); pg.click('[data-a="ver"]'); pg.wait_for_timeout(200); pg.click('[data-a="enviar"]'); pg.wait_for_timeout(500)
+
+def CL1(pg):
+    t=pg.inner_text('#app')
+    check('CL1: la carta muestra Llamar al garzón y Pedir la cuenta y avisa que la caja confirma', 'Llamar al garzón' in t and 'Pedir la cuenta' in t and 'la caja confirmará' in t)
+    enviar_torta(pg)
+    check('CL1: tras enviar queda en "Pedido recibido" esperando a la caja', 'La caja lo está confirmando' in pg.inner_text('#app') and 'Pedido recibido' in pg.inner_text('.seg li.ahora'))
+    check('CL1: el pedido se manda a la base con la mesa y la cantidad', pg.evaluate("window.__CALLS.some(c=>c[0]==='resto_qr_pedir'&&c[1].p_mesa===4&&c[1].p_items[0].id==='m2'&&c[1].p_items[0].q===1)"))
+    pg.evaluate("window.__EST='confirmado'; window.__FASE=2"); pg.wait_for_timeout(4600)
+    check('CL1: al confirmarse pasa a "Pedido confirmado" (cocina lo prepara)', 'Pedido confirmado' in pg.inner_text('.seg li.ahora') and 'Cocina ya lo está preparando' in pg.inner_text('#app'))
+    pg.evaluate("window.__FASE=3"); pg.wait_for_timeout(4600)
+    check('CL1: cuando cocina lo marca listo pasa a "En camino a tu mesa"', 'En camino' in pg.inner_text('.seg li.ahora'))
+    pg.evaluate("window.__FASE=4"); pg.wait_for_timeout(4600)
+    check('CL1: al entregarse muestra "¡Tu pedido llegó!" con los 4 pasos hechos', '¡Tu pedido llegó!' in pg.inner_text('#app') and pg.locator('.seg li.hecho').count()==4)
+    pg.click('[data-a="llamar"]'); pg.wait_for_timeout(300)
+    check('CL1: Llamar al garzón avisa a la base y queda como "Ya avisamos"', pg.evaluate("window.__CALLS.some(c=>c[0]==='resto_qr_avisar'&&c[1].p_tipo==='garzon'&&c[1].p_mesa===4)") and 'Ya avisamos al garzón' in pg.inner_text('.acc'))
+    pg.click('[data-a="cuenta"]'); pg.wait_for_timeout(200)
+    check('CL1: Pedir la cuenta pide tocar dos veces y no avisa con el primer toque', 'Toca otra vez' in pg.inner_text('.acc') and not pg.evaluate("window.__CALLS.some(c=>c[0]==='resto_qr_avisar'&&c[1].p_tipo==='cuenta')"))
+    pg.click('[data-a="cuenta"]'); pg.wait_for_timeout(300)
+    check('CL1: con el segundo toque pide la cuenta', pg.evaluate("window.__CALLS.some(c=>c[0]==='resto_qr_avisar'&&c[1].p_tipo==='cuenta')") and 'Cuenta pedida' in pg.inner_text('.acc'))
+e=run_pedir(CL1); print('ERR CL1',e)
+
+def CL2(pg):
+    enviar_torta(pg)
+    pg.reload(); pg.wait_for_timeout(900)
+    check('CL2: si el cliente recarga la página retoma el seguimiento de su pedido', pg.locator('.seg').count()==1 and 'Pedido recibido' in pg.inner_text('.seg li.ahora'))
+e=run_pedir(CL2); print('ERR CL2',e)
+
+def CL3(pg):
+    pg.evaluate("window.__EST='rechazado'; window.__MOT='Se acabó la torta'")
+    enviar_torta(pg); pg.wait_for_timeout(4600)
+    t=pg.inner_text('#app')
+    check('CL3: si la caja rechaza, el cliente ve el motivo y puede volver a pedir', 'No pudimos tomar tu pedido' in t and 'Se acabó la torta' in t and pg.locator('[data-a="otro"]').count()==1)
+e=run_pedir(CL3); print('ERR CL3',e)
+
+def CL4(pg):
+    check('CL4: con una base sin la migración 032 no se muestran los botones nuevos', 'Llamar al garzón' not in pg.inner_text('#app'))
+    enviar_torta(pg)
+    check('CL4: y el pedido sigue funcionando con la pantalla simple de antes', '¡Pedido enviado!' in pg.inner_text('#app'))
+e=run_pedir(CL4,'window.__VIEJA=true;'); print('ERR CL4',e)
+
 bad=[n for n,ok in results if not ok]; print('\nRESULT', len(results)-len(bad),'/',len(results),'OK', 'FALLAS:',bad)

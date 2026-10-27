@@ -227,6 +227,34 @@ function avisarAnu() {
   }
   EXA = { lid: D.id, m: new Map(an.map(a => [a.id, a.estado])) };
 }
+/* Pedidos QR por confirmar y avisos de mesa (llamar al garzón / pedir la cuenta): suena y avisa a la administradora y a los garzones */
+let QRNO = false, EXQ = null, rt2 = null;
+function avisarQR() {
+  const rol = rolesOn() ? S.rol : 'admin', ve = rol === 'admin' || rol === 'ingeniero' || rol === 'garzon';
+  const pend = D.qrPend || [], avs = D.qrAv || [];
+  if (EXQ && EXQ.lid === D.id && ve && SND !== 'off') {
+    const np = pend.filter(x => !EXQ.p.has(x.id));
+    if (np.length) { sonarListo(); toast('PEDIDO QR POR CONFIRMAR · ' + [...new Set(np.map(x => nm(x.mesa)))].join(', '), 'tk-c'); }
+    const na = avs.filter(x => !EXQ.a.has(x.id) && (rol !== 'garzon' || mesaPropia(x.mesa)));
+    if (na.length) { sonarListo(); toast(na.map(x => nm(x.mesa) + (x.tipo === 'cuenta' ? ' PIDE LA CUENTA' : ' LLAMA AL GARZÓN')).join(' · '), 'tk-l'); }
+  }
+  EXQ = { lid: D.id, p: new Set(pend.map(x => x.id)), a: new Set(avs.map(x => x.id)) };
+}
+const qaIc = n => { const a = (D.qrAv || []).filter(x => x.mesa === n); return a.length ? (a.some(x => x.tipo === 'cuenta') ? '🧾 ' : '🔔 ') : ''; };
+function qrPanelHTML() {
+  const l = L();
+  if (!l.qrOk || (rolesOn() && !esAdm() && !esGarzonRol())) return '';
+  const avs = (l.qrAv || []).filter(a => !esGarzonRol() || mesaPropia(a.mesa)), pd = l.qrPend || [];
+  if (!pd.length && !avs.length) return '';
+  const tot = p => p.items.reduce((a, i) => a + (+i.q || 0) * (+i.p || 0), 0);
+  const ped = pd.map(p => `<div class="row" style="align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:200px"><b>${nm(p.mesa)}</b> · hace ${mins(p.t)} min · ${money(tot(p))}
+      <div>${p.items.map(i => i.q + '× ' + esc(i.n)).join(', ')}</div>${esc(p.nota.replace(/^📱 Pedido QR( · )?/, '')) ? `<div class="mut">${esc(p.nota.replace(/^📱 Pedido QR( · )?/, ''))}</div>` : ''}</div>
+      ${S.qrr === p.id ? `<div style="display:grid;gap:6px;min-width:220px"><input id="qrr-m" data-keep placeholder="Motivo (opcional, lo ve el cliente)" maxlength="120" value="${fv('qrr-m')}"><div style="display:flex;gap:6px"><button class="btn-bad" data-act="qrnook" data-id="${p.id}">Rechazar pedido</button><button class="btn-line" data-act="qrnocancel">Volver</button></div></div>`
+      : `<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-ok" data-act="qrok" data-id="${p.id}">✅ Confirmar y mandar a cocina</button><button class="btn-line" data-act="qrno" data-id="${p.id}">Rechazar</button></div>`}</div>`).join('');
+  const av = avs.map(a => `<div class="row"><div>${a.tipo === 'cuenta' ? '🧾' : '🔔'} <b>${nm(a.mesa)}</b> ${a.tipo === 'cuenta' ? 'pidió la cuenta' : 'llama al garzón'} <span class="mut">· hace ${mins(a.t)} min</span></div>
+      <div style="display:flex;gap:6px">${a.tipo === 'cuenta' ? `<button class="btn-line" data-act="mesa" data-n="${a.mesa}">Ver mesa</button>` : ''}<button class="btn-ok" data-act="qratender" data-id="${a.id}">Atendido</button></div></div>`).join('');
+  return `<div class="card" style="margin-bottom:12px;border:2px solid var(--brand)">${pd.length ? `<b>📱 Pedidos QR por confirmar (${pd.length})</b>${ped}` : ''}${avs.length ? `<div style="${pd.length ? 'margin-top:10px;' : ''}"><b>Avisos de las mesas</b></div>${av}` : ''}</div>`;
+}
 const RESAL = new Set();
 setInterval(() => {
   if (!S.user || !D || !esAdm() || SND === 'off') return;
@@ -268,7 +296,7 @@ async function cargar(parcial) {
   if (!mi && S.admin) { D = null; S.view = 'admin'; return; }
   if (!mi) { S.err = 'Tu cuenta aún no tiene un local asignado. Avisa a Protech.'; await sb.auth.signOut(); S.user = null; D = null; return; }
   const id = mi.local_id, desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - 1);
-  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv, rec, prv, oco, tor, tab, ult] = await Promise.all([
+  const [loc, menu, com, cue, gar, tur, ped, res, coc, anu, gas, ins, imv, rec, prv, oco, tor, tab, ult, qrp, qra] = await Promise.all([
     get('loc', () => sb.from('resto_locales').select('*').eq('id', id).single()),
     get('menu', () => sb.from('resto_menu').select('*').eq('local_id', id).order('categoria').order('nombre')),
     get('com', () => sb.from('resto_comandas').select('*').eq('local_id', id).eq('cerrada', false)),
@@ -287,7 +315,9 @@ async function cargar(parcial) {
     get('oco', () => sb.from('resto_ordenes_compra').select('*').eq('local_id', id).order('created_at', { ascending: false }).limit(40)),
     get('tor', () => sb.from('resto_tortas').select('*').eq('local_id', id).gte('entrega_at', new Date(Date.now() - 30 * 864e5).toISOString()).order('entrega_at')),
     get('tab', () => sb.from('resto_tortas_abonos').select('*').eq('local_id', id).gte('created_at', new Date(Date.now() - 120 * 864e5).toISOString()).order('created_at')),
-    get('ult', () => sb.from('resto_turnos').select('id,cerrado_at,cerrado_por,desglose_deja').eq('local_id', id).not('cerrado_at', 'is', null).order('cerrado_at', { ascending: false }).limit(1))
+    get('ult', () => sb.from('resto_turnos').select('id,cerrado_at,cerrado_por,desglose_deja').eq('local_id', id).not('cerrado_at', 'is', null).order('cerrado_at', { ascending: false }).limit(1)),
+    get('qrp', () => QRNO ? Promise.resolve({ data: [], error: { message: 'migración 032 pendiente' } }) : sb.from('resto_qr_pedidos').select('*').eq('local_id', id).eq('estado', 'por_confirmar').order('created_at')),
+    get('qra', () => QRNO ? Promise.resolve({ data: [], error: { message: 'migración 032 pendiente' } }) : sb.from('resto_qr_avisos').select('*').eq('local_id', id).eq('atendido', false).gte('created_at', new Date(Date.now() - 2 * 3600e3).toISOString()).order('created_at'))
   ]);
   if (loc.error) { if (!D) S.err = 'No se pudo cargar el local.'; reintentarCarga(); return; }
   const prev = D && D.id === id ? new Map(D.comandas.map(c => [c.id, c.estado])) : null;
@@ -301,6 +331,12 @@ async function cargar(parcial) {
   D.tortaOk = !!(tor && !tor.error && tab && !tab.error);
   D.abonosT = D.tortaOk ? (tab.data || []).map(a => ({ id: a.id, tid: a.torta_id, m: +a.monto, met: a.metodo, pef: a.pago_efec || 0, turno: a.turno_id || null, por: a.recibido_por || '', anul: !!a.anulado, t: +new Date(a.created_at) })) : [];
   D.tortas = D.tortaOk ? (tor.data || []).map(r => ({ id: r.id, cli: r.cliente, tel: r.telefono || '', desc: r.descripcion, precio: +r.precio, ent: r.entrega_at, nota: r.nota || '', est: r.estado || 'pendiente', por: r.creado_por || '', ret: r.retirado_at, abonos: D.abonosT.filter(a => a.tid === r.id) })) : [];
+  /* Pedido por QR con confirmación y avisos de mesa (migración 032). Si aún no se ejecuta, queda apagado sin molestar. */
+  if (qrp && qrp.error && /does not exist|schema cache|relation|pendiente/i.test(qrp.error.message || '')) QRNO = true;
+  D.qrOk = !!(qrp && !qrp.error && qra && !qra.error);
+  D.qrc = D.qrOk && !!loc.data.qr_confirmar;
+  D.qrPend = D.qrOk ? (qrp.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items || [], nota: r.nota || '', t: +new Date(r.created_at) })) : [];
+  D.qrAv = D.qrOk ? (qra.data || []).map(r => ({ id: r.id, mesa: r.mesa, tipo: r.tipo, t: +new Date(r.created_at) })) : [];
   D.insumos.sort(porNombre); D.provs.sort(porNombre); /* inventario de producción y proveedores siempre de la A a la Z */
   outLoad(); outAplicar();
   D.anuOk =!!(anu && !anu.error); /* falso hasta que se ejecute la migración de anulaciones */
@@ -310,6 +346,7 @@ async function cargar(parcial) {
   if (prev) avisar(prev);
   avisarExtra();
   avisarAnu();
+  avisarQR();
 }
 /* ---------- Registro de quién está en caja ---------- */
 async function ensureSes() {
@@ -339,7 +376,7 @@ async function reconectar() {
     if (!data.session) return;
     S.user = data.session.user;
     await cargar();
-    if (rt) { sb.removeChannel(rt); rt = null; }
+    if (rt) { sb.removeChannel(rt); rt = null; } if (rt2) { sb.removeChannel(rt2); rt2 = null; }
     suscribir(); render();
   } catch (e) { reintentarCarga(); }
 }
@@ -348,11 +385,12 @@ window.addEventListener('online', () => { if (S.user) reconectar(); });
 setInterval(() => { if (S.user && !document.hidden) sb.auth.getSession(); }, 10 * 60 * 1000);
 function suscribir() {
   if (rt || !D) return;
-  const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv', resto_recetas: 'rec', resto_proveedores: 'prv', resto_ordenes_compra: 'oco', resto_tortas: 'tor', resto_tortas_abonos: 'tab' };
+  const TK = { resto_comandas: 'com', resto_menu: 'menu', resto_locales: 'loc', resto_cuentas: 'cue', resto_turnos: 'tur', resto_pedidos: 'ped', resto_reservas: 'res', resto_anulaciones: 'anu', resto_sesiones: 'ses', resto_gastos: 'gas', resto_insumos: 'ins', resto_insumo_mov: 'imv', resto_recetas: 'rec', resto_proveedores: 'prv', resto_ordenes_compra: 'oco', resto_tortas: 'tor', resto_tortas_abonos: 'tab', resto_qr_pedidos: 'qrp', resto_qr_avisos: 'qra' };
   const refresca = t => { if (t && TK[t]) PEND.add(TK[t]); if (t === 'resto_turnos') PEND.add('ult'); else PEND.add('*'); clearTimeout(tmr); tmr = setTimeout(async () => { if (!S.user) return; const p = PEND.has('*') ? null : new Set(PEND); PEND.clear(); await cargar(p); render(); }, 300); };
   rt = sb.channel('resto-' + D.id);
   ['resto_comandas', 'resto_menu', 'resto_locales', 'resto_cuentas', 'resto_turnos', 'resto_pedidos', 'resto_reservas', 'resto_sesiones', 'resto_anulaciones', 'resto_gastos', 'resto_insumos', 'resto_insumo_mov', 'resto_recetas', 'resto_proveedores', 'resto_ordenes_compra', 'resto_tortas', 'resto_tortas_abonos'].forEach(t => rt.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t)));
   rt.subscribe();
+  if (!QRNO) { rt2 = sb.channel('resto-qr-' + D.id); ['resto_qr_pedidos', 'resto_qr_avisos'].forEach(t => rt2.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => refresca(t))); rt2.subscribe(); }
 }
 const _h = location.hash || '';
 if (/type=(invite|recovery)/.test(_h)) S.setpass = true;
@@ -415,7 +453,7 @@ function mesasHTML() {
     const a = abiertas(n), lis = a.some(c => c.estado === 'listo');
     const rv = !a.length && resDe(n);
     return `<button class="mesa ${lis ? 'lis' : a.length ? 'ocu' : ''}" ${rv ? 'style="border-color:var(--brand);background:var(--soft)"' : ''} data-act="mesa" data-n="${n}"><b>${n > 100 ? n - 100 : n}</b>
-      <span>${lis ? 'Pedido listo' : a.length ? (cuentaPedida(n) ? '🧾 Cuenta pedida · ' : 'Ocupada · ') + money(totalMesa(n)) + (a.find(c => c.garzon) ? '<br><b>' + esc(a.find(c => c.garzon).garzon) + '</b>' : '') : rv ? 'Reservada ' + esc(rv.hora) + ' · ' + esc(rv.nombre) : 'Libre'}</span></button>`;
+      <span>${qaIc(n)}${lis ? 'Pedido listo' : a.length ? (cuentaPedida(n) ? '🧾 Cuenta pedida · ' : 'Ocupada · ') + money(totalMesa(n)) + (a.find(c => c.garzon) ? '<br><b>' + esc(a.find(c => c.garzon).garzon) + '</b>' : '') : rv ? 'Reservada ' + esc(rv.hora) + ' · ' + esc(rv.nombre) : 'Libre'}</span></button>`;
   };
   for (let n = 1; n <= l.mesas; n++) g += tarjeta(n);
   for (let k = 1; k <= l.mesas2; k++) g2 += tarjeta(100 + k);
@@ -430,7 +468,7 @@ function mesasHTML() {
   const ocup = []; for (let n = 1; n <= l.mesas; n++) ocup.push(n); for (let k = 1; k <= l.mesas2; k++) ocup.push(100 + k);
   const oc = ocup.filter(n => abiertas(n).length), enMesas = oc.reduce((a, n) => a + totalMesa(n), 0);
   const resumen = `<p class="mut" style="margin-bottom:10px"><b>${oc.length}</b> de ${ocup.length} mesas ocupadas · por cobrar en mesas <b>${money(enMesas)}</b></p>`;
-  return `<h2>Mesas</h2>${resumen}${pushCardHTML()}${anuPendientesHTML()}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  return `<h2>Mesas</h2>${resumen}${pushCardHTML()}${anuPendientesHTML()}${qrPanelHTML()}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
 }
 const mesasAbiertas = () => [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0).map(c => c.mesa))].sort((a, b) => a - b);
 function porCobrarHTML() {
@@ -1156,7 +1194,7 @@ const fmtQ = n => (Math.round(n * 100) / 100).toLocaleString('es-CL');
 /* ---------- Registro de cambios (quién cambió qué y cuándo) ---------- */
 const BIT_TABLA = { resto_menu: 'Carta', resto_garzones: 'Garzón', resto_cocineras: 'Cocinera', resto_locales: 'Local', resto_insumos: 'Inventario de producción', resto_turnos: 'Caja', resto_gastos: 'Gasto de caja', resto_cuentas: 'Cobro' };
 const BIT_ACC = { INSERT: 'agregó', UPDATE: 'cambió', DELETE: 'eliminó' };
-const BIT_CAMPO = { nombre: 'nombre', categoria: 'sección', precio: 'precio', activo: 'activo', estacion: 'se prepara en', codigo: 'código', stock_min: 'mínimo', mesas: 'mesas (piso 1)', mesas2: 'mesas (piso 2)', fondo_caja: 'sencillo fijo', garzon_cobra: 'los garzones cobran', tramo: 'tramo', qr_activo: 'pedido por QR', pin: 'PIN', caja: 'cobra en caja', unidad: 'unidad', costo_unit: 'costo unitario', monto: 'monto', monto_original: 'monto original', metodo: 'forma de pago', metodo_original: 'forma de pago original', metodo_editado_por: 'corregido por', metodo_editado_motivo: 'motivo de la corrección', metodo_editado_at: 'corregido', propina_tarj: 'propina extra tarjeta', editado_por: 'corregido por', editado_at: 'corregido', editado_motivo: 'motivo de la corrección', anulado: 'anulado', anulado_por: 'anulado por', anulado_motivo: 'motivo', anul_pedida_por: 'anulación pedida por', anul_pedida_motivo: 'motivo pedido', tipo: 'documento', numero: 'número', proveedor: 'proveedor', detalle: 'detalle', cerrado_at: 'cerrado', cerrado_por: 'cerrado por', abierto_por: 'abierto por', monto_inicial: 'sencillo inicial', contado_efectivo: 'efectivo contado', diferencia: 'diferencia', esperado_efectivo: 'efectivo esperado' };
+const BIT_CAMPO = { nombre: 'nombre', categoria: 'sección', precio: 'precio', activo: 'activo', estacion: 'se prepara en', codigo: 'código', stock_min: 'mínimo', mesas: 'mesas (piso 1)', mesas2: 'mesas (piso 2)', fondo_caja: 'sencillo fijo', garzon_cobra: 'los garzones cobran', tramo: 'tramo', qr_activo: 'pedido por QR', qr_confirmar: 'confirmar pedidos QR', pin: 'PIN', caja: 'cobra en caja', unidad: 'unidad', costo_unit: 'costo unitario', monto: 'monto', monto_original: 'monto original', metodo: 'forma de pago', metodo_original: 'forma de pago original', metodo_editado_por: 'corregido por', metodo_editado_motivo: 'motivo de la corrección', metodo_editado_at: 'corregido', propina_tarj: 'propina extra tarjeta', editado_por: 'corregido por', editado_at: 'corregido', editado_motivo: 'motivo de la corrección', anulado: 'anulado', anulado_por: 'anulado por', anulado_motivo: 'motivo', anul_pedida_por: 'anulación pedida por', anul_pedida_motivo: 'motivo pedido', tipo: 'documento', numero: 'número', proveedor: 'proveedor', detalle: 'detalle', cerrado_at: 'cerrado', cerrado_por: 'cerrado por', abierto_por: 'abierto por', monto_inicial: 'sencillo inicial', contado_efectivo: 'efectivo contado', diferencia: 'diferencia', esperado_efectivo: 'efectivo esperado' };
 const bitVal = (k, v) => v === null || v === undefined ? '—' : typeof v === 'boolean' ? (v ? 'sí' : 'no') : ['precio', 'monto', 'monto_original', 'fondo_caja', 'monto_inicial', 'contado_efectivo', 'diferencia', 'esperado_efectivo', 'costo_unit'].includes(k) && typeof v === 'number' ? money(v) : String(v).length > 60 ? String(v).slice(0, 60) + '…' : String(v);
 async function cargarBit() {
   S.bitCarg = true;
@@ -1469,8 +1507,9 @@ function cartaHTML() {
     ${(l.cocineras || []).map(c => `<div class="row ${c.on ? '' : 'off'}"><div>${esc(c.n)}<div class="mut">${c.pin ? 'con PIN' : 'sin PIN'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${l.adminPin ? `<input id="cp-${c.id}" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="width:90px"><button class="btn-line" data-act="setcpin" data-id="${c.id}">Guardar PIN</button>` : ''}<button class="btn-line" data-act="ctoggle" data-id="${c.id}">${c.on ? 'Activa' : 'Inactiva'}</button><button class="btn-bad" data-act="cdel" data-id="${c.id}">Quitar</button></div></div>`).join('') || '<p class="mut" style="margin:6px 0">Aún no hay cocineras.</p>'}
     <div style="display:flex;gap:8px;margin-top:8px"><input id="cn" placeholder="Nombre de la cocinera"><button class="btn" data-act="cadd">Agregar</button></div></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Pedido por QR</b>
-    <p class="mut">${l.qr ? 'Activado: el cliente escanea el QR de su mesa, elige y el pedido llega solo a cocina (y a cafetería), con aviso sonoro. Sin cuenta ni descarga.' : 'Apagado. Al activarlo, cada mesa tendrá un QR para que el cliente pida desde su celular.'}</p>
+    <p class="mut">${l.qr ? (l.qrc ? 'Activado con confirmación: el cliente escanea el QR de su mesa, elige y el pedido espera en Mesas hasta que la caja lo confirme; recién ahí llega a cocina (y a cafetería). El cliente ve en su celular cómo va y puede llamar al garzón o pedir la cuenta.' : 'Activado: el cliente escanea el QR de su mesa, elige y el pedido llega solo a cocina (y a cafetería), con aviso sonoro. Sin cuenta ni descarga.') : 'Apagado. Al activarlo, cada mesa tendrá un QR para que el cliente pida desde su celular.'}</p>
     <button class="${l.qr ? 'btn-bad' : 'btn-ok'}" data-act="qrtoggle">${l.qr ? 'Desactivar pedido por QR' : 'Activar pedido por QR'}</button>
+    ${l.qrOk ? `<button class="${l.qrc ? 'btn-line' : 'btn-ok'}" data-act="qrconf">${l.qrc ? 'Dejar de confirmar (los pedidos van directo a cocina)' : 'Confirmar los pedidos en caja antes de enviarlos a cocina'}</button>` : '<p class="mut">Para confirmar pedidos y recibir llamados de las mesas falta ejecutar la migración 032 en Supabase.</p>'}
     <button class="btn-line" data-act="qrimprimir">Imprimir QR de las mesas</button></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Cantidad de mesas</b>
     <label class="mut">Mesas del primer piso<input id="nm" type="number" min="1" max="60" value="${l.mesas}"></label>
@@ -1903,7 +1942,7 @@ document.addEventListener('click', async e => {
       S.autForm = null; S.autPend = null; S.autErr = ''; delete S.f['aut-pin']; render(); return;
     }
     if (a === 'cambiar') { await endSes(); if (RTOK) { try { await sb.rpc('resto_logout'); } catch (e) {} } S.rol = null; S.quien = ''; S.qk = null; S.mesa = null; S.garzon = ''; olvidarRol(); render(); return; }
-    if (a === 'logout') { S.saliendo = true; EX = null; EXA = null; await endSes(); if (RTOK) { try { await sb.rpc('resto_logout'); } catch (e) {} } S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
+    if (a === 'logout') { S.saliendo = true; EX = null; EXA = null; await endSes(); if (RTOK) { try { await sb.rpc('resto_logout'); } catch (e) {} } S.rol = null; S.quien = ''; S.qk = null; olvidarRol(); if (rt) { sb.removeChannel(rt); rt = null; } if (rt2) { sb.removeChannel(rt2); rt2 = null; } await sb.auth.signOut(); S.user = null; D = null; S.mesa = null; S.admin = false; S.av = { locales: [], cargado: false, msg: '', err: '' }; S.saliendo = false; render(); return; }
     if (a === 'rec') { S.rc = d.v; render(); return; }
     if (a === 'activarsonido') { ctx(); sonarListo(); pantalla(); setTimeout(render, 400); return; }
     if (a === 'tab') { S.view = d.v; S.mesa = null; if (d.v === 'garz') S.rp = null; if (d.v === 'coms') S.cm = null; if (d.v === 'turno') S.th = null; if (d.v === 'resumen') { S.rs = null; setTimeout(rsCargar, 0); } if (d.v === 'bit') { S.bit = null; S.bitCarg = false; } S.mos = false; }
@@ -2439,6 +2478,12 @@ document.addEventListener('click', async e => {
       else if (a === 'settramo' && esIng()) { const v = Math.min(4, Math.max(1, Math.round(+$('#tramo-sel').value) || 4)); if (!fallo(await sb.from('resto_locales').update({ tramo: v }).eq('id', D.id))) toast('Tramo ' + v + ' · ' + TRAMOS[v - 1].nombre, 'tk-l'); }
       else if (a === 'qrtoggle' && esAdm()) { fallo(await sb.from('resto_locales').update({ qr_activo: !L().qr }).eq('id', D.id)); }
       else if (a === 'qrimprimir' && esAdm()) { imprimirQR(); }
+      else if (a === 'qrconf' && esAdm()) { if (!fallo(await sb.from('resto_locales').update({ qr_confirmar: !L().qrc }).eq('id', D.id))) { await cargar(); toast(L().qrc ? 'Los pedidos QR esperan tu confirmación' : 'Los pedidos QR van directo a cocina', 'tk-l'); } }
+      else if (a === 'qrok') { const r = await sb.rpc('resto_qr_confirmar', { p_pedido: d.id }); if (!fallo(r)) { await cargar(); toast(r.data && r.data.ya ? 'Otra persona ya resolvió este pedido' : 'Pedido enviado a cocina', 'tk-l'); } }
+      else if (a === 'qrno') { S.qrr = d.id; }
+      else if (a === 'qrnocancel') { S.qrr = null; }
+      else if (a === 'qrnook') { const r = await sb.rpc('resto_qr_rechazar', { p_pedido: d.id, p_motivo: ($('#qrr-m') || {}).value || '' }); if (!fallo(r)) { S.qrr = null; delete S.f['qrr-m']; await cargar(); toast('Pedido rechazado · el cliente ya lo ve en su celular', 'tk-l'); } }
+      else if (a === 'qratender') { const r = await sb.rpc('resto_qr_atender', { p_aviso: d.id }); if (!fallo(r)) await cargar(); }
       else if (a === 'toggle') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ activo: !i.on }).eq('id', d.id)); }
       else if (a === 'opcedit') { const i = L().menu.find(x => x.id === d.id); if (i) { const v = prompt('Opciones rápidas de «' + i.n + '», separadas por coma (ej: sin cebolla, bien cocido, sin hielo). Vacío para quitar:', i.o); if (v !== null) fallo(await sb.from('resto_menu').update({ opciones: v.trim() || null }).eq('id', d.id)); } }
       else if (a === 'est') { const i = L().menu.find(x => x.id === d.id); if (i) fallo(await sb.from('resto_menu').update({ estacion: i.e === 'cafeteria' ? 'cocina' : 'cafeteria' }).eq('id', d.id)); }
@@ -2516,7 +2561,7 @@ setInterval(async () => {
   if (!S.user || !D || S.busy || document.hidden) return;
   if (!(S.view === 'cocina' || S.view === 'cafe' || S.view === 'mesas')) return;
   POLLN++; const completo = POLLN % 9 === 0, antes = JSON.stringify(D);
-  await cargar(completo ? null : new Set(['com', 'cue', 'ped', 'anu', 'tur']));
+  await cargar(completo ? null : new Set(['com', 'cue', 'ped', 'anu', 'tur', 'qrp', 'qra']));
   if (!D) { render(); return; }
   if (JSON.stringify(D) !== antes || Date.now() - ULT > 60000) { ULT = Date.now(); render(); }
 }, 20000);
