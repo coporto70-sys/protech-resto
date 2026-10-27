@@ -1127,6 +1127,7 @@ e=run_pedir(CL4,'window.__VIEJA=true;'); print('ERR CL4',e)
 import base64
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
 def FT1(pg):
+    pg.evaluate("S.rol='ingeniero'; S.quien='Carlos Oporto'; render()"); pg.wait_for_timeout(300)
     pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
     check('FT1: cada plato tiene su botón de foto', pg.locator('input[data-foto="m1"]').count()==1)
     pg.set_input_files('input[data-foto="m1"]',files=[{'name':'cafe.png','mimeType':'image/png','buffer':PNG}]); pg.wait_for_timeout(1200)
@@ -1137,7 +1138,15 @@ def FT1(pg):
     pg.on('dialog',lambda d:d.accept())
     pg.click('[data-act="fotoquitar"][data-id="m1"]'); pg.wait_for_timeout(800)
     check('FT1: "Quitar foto" la borra del plato y del almacenamiento', not pg.evaluate("window.__DB.resto_menu.find(m=>m.id==='m1').foto") and len(pg.evaluate('window.__RM||[]'))>=1)
-e=run({'email':'u','role':'','db':base_db()},FT1,LS_ADM); print('ERR FT1',e)
+LS_ING="localStorage.setItem('pr-rol', JSON.stringify({lid:'L1',rol:'ingeniero',quien:'Carlos Oporto',tok:'T',t:Date.now()}));"
+e=run({'email':'u','role':'','db':db_roles()},FT1,LS_ADM); print('ERR FT1',e)
+
+def FT2(pg):
+    pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
+    check('FT2: la administradora VE la foto del plato en su carta', pg.locator('img[src^="https://fotos.test/"]').count()==1)
+    check('FT2: pero no tiene botón para subir, cambiar ni quitar fotos', pg.locator('input[data-foto]').count()==0 and pg.locator('[data-act="fotoquitar"]').count()==0 and 'Cambiar foto' not in pg.inner_text('#app'))
+d_ft2=db_roles(); d_ft2['resto_menu'][0]['foto']='https://fotos.test/resto-fotos/L1/m1-1.jpg'
+e=run({'email':'u','role':'','db':d_ft2},FT2,LS_ADM); print('ERR FT2',e)
 
 MENU_GRANDE = "Array.from({length:30},(_,k)=>({id:'p'+k,n:(k%3==0?'Café ':k%3==1?'Torta ':'Sándwich ')+k,c:(k%3==0?'Bebidas':k%3==1?'Pasteles':'Salados'),p:1000+k,f:(k==1?'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==':''),e:'cocina'}))"
 def run_pedir_menu(fn):
