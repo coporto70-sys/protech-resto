@@ -44,3 +44,18 @@ test('las cifras salen solo de los datos recibidos', () => {
 test('svg: cambia la boca según el tono y no trae scripts', () => {
   assert.notEqual(svg('ok', false), svg('mal', false)); assert.ok(!/<script/i.test(svg('ok', true)));
 });
+test('cobros repetidos: detecta el mismo cobro de una mesa en menos de 3 minutos', () => {
+  const { duplicados } = require('../robi.js');
+  const it = [{ n: 'Café', q: 2 }], t0 = 1_000_000_000_000;
+  const c = (id, dt, extra = {}) => ({ id, mesa: 4, total: 11490, metodo: 'Tarjeta', garzon: 'Ana', items: it, t: t0 + dt, ...extra });
+  const r = duplicados([c('a', 0), c('b', 47000)], t0 + 60000);
+  assert.equal(r.length, 1); assert.equal(r[0].id, 'dup-b'); assert.equal(r[0].gravedad, 'alta'); assert.match(r[0].detalle, /mesa 4/); assert.match(r[0].detalle, /\$11\.490/); assert.match(r[0].detalle, /47 segundos/);
+  // no son repetidos: otra forma de pago, otro monto, otros productos, mesa 0 (mostrador) o más de 3 minutos
+  assert.equal(duplicados([c('a', 0), c('b', 47000, { metodo: 'Efectivo' })], t0 + 60000).length, 0);
+  assert.equal(duplicados([c('a', 0), c('b', 47000, { total: 5000 })], t0 + 60000).length, 0);
+  assert.equal(duplicados([c('a', 0), c('b', 47000, { items: [{ n: 'Té', q: 1 }] })], t0 + 60000).length, 0);
+  assert.equal(duplicados([c('a', 0, { mesa: 0 }), c('b', 47000, { mesa: 0 })], t0 + 60000).length, 0);
+  assert.equal(duplicados([c('a', 0), c('b', 200000)], t0 + 300000).length, 0);
+  // cobros viejos (más de 12 horas) no suenan
+  assert.equal(duplicados([c('a', 0), c('b', 47000)], t0 + 13 * 3600000).length, 0);
+});

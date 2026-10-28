@@ -2550,12 +2550,19 @@ function vigHTML() {
   const g = VIG.lista.slice(0, 3).map(a => `<div class="vig-i ${a.gravedad === 'alta' ? 'alta' : 'media'}"><b>🚨 ${esc(a.titulo)}</b><div>${esc(a.detalle)}</div>${a.revisar ? `<div class="vig-r">Qué revisar: ${esc(a.revisar)}</div>` : ''}<button class="btn" data-act="vig-visto" data-id="${esc(a.id)}">Entendido, lo estoy revisando</button></div>`).join('');
   return `<div class="vig" role="alert"><div class="vig-t">ALERTA DE CAJA · Robi detectó ${VIG.lista.length === 1 ? 'algo para revisar' : VIG.lista.length + ' cosas para revisar'}</div>${g}${VIG.lista.length > 3 ? `<div class="vig-m">… y ${VIG.lista.length - 3} más</div>` : ''}</div>`;
 }
+/* Cobros repetidos en vivo (Robi): se calculan en este equipo con las cuentas ya cargadas; "Entendido" se recuerda aquí. */
+const dupVistos = () => { try { return new Set(JSON.parse(robiLS('pr-dup-vistos') || '[]')); } catch (e) { return new Set(); } };
+function dupAlertas() {
+  if (!window.Robi || !window.Robi.duplicados || !D) return [];
+  const ya = dupVistos();
+  return window.Robi.duplicados(D.cuentas, Date.now()).filter(a => !ya.has(a.id));
+}
 async function vigRevisar() {
   if (!S.user || !D || !esAdm()) { if (VIG.lista.length) { VIG.lista = []; VIG.firma = ''; } return false; }
   const desde = new Date(Date.now() - 36 * 3600000).toISOString();
   const r = await sb.from('resto_control_alertas').select('id,gravedad,titulo,detalle,revisar,fase,created_at').eq('local_id', D.id).is('visto_at', null).in('gravedad', ['alta', 'media']).gte('created_at', desde).order('created_at', { ascending: false }).limit(20);
   if (!r || r.error) return false;
-  const lista = (r.data || []).sort((a, b) => (a.gravedad === b.gravedad ? 0 : a.gravedad === 'alta' ? -1 : 1));
+  const lista = (r.data || []).concat(dupAlertas()).sort((a, b) => (a.gravedad === b.gravedad ? 0 : a.gravedad === 'alta' ? -1 : 1));
   const nuevas = lista.filter(a => !VIG.vistas.has(a.id));
   nuevas.forEach(a => VIG.vistas.add(a.id));
   const altas = lista.filter(a => a.gravedad === 'alta');
@@ -2571,6 +2578,11 @@ async function vigRevisar() {
   return cambio;
 }
 async function vigVisto(id) {
+  if (String(id).startsWith('dup-')) {
+    const s = dupVistos(); s.add(id); robiLS('pr-dup-vistos', JSON.stringify([...s].slice(-200)));
+    VIG.lista = VIG.lista.filter(a => a.id !== id); VIG.firma = VIG.lista.map(a => a.id).join(',');
+    return;
+  }
   const r = await sb.from('resto_control_alertas').update({ visto_at: new Date().toISOString(), visto_por: S.quien || (esIng() ? 'Carlos Oporto' : 'Administradora') }).eq('id', id);
   if (r && r.error) { alert('No se pudo marcar la alerta como vista: ' + r.error.message); return; }
   VIG.lista = VIG.lista.filter(a => a.id !== id); VIG.firma = VIG.lista.map(a => a.id).join(',');

@@ -140,6 +140,24 @@
     callar() { try { root.speechSynthesis && root.speechSynthesis.cancel(); } catch (e) {} },
   };
 
-  const api = { mensaje, consejo, svg, voz };
+  /* Cobros repetidos en vivo: mismo cobro (mesa, monto, forma de pago, garzón y productos) registrado dos veces con menos de 3 minutos de diferencia.
+     Reglas fijas, sin IA. Recibe las cuentas ya cargadas por la app ({id, mesa, total, metodo, garzon, items, t}) y devuelve alertas con el formato del vigilante de caja. */
+  const firma = its => (its || []).map(i => i.n + '×' + i.q).sort().join('|');
+  function duplicados(cuentas, ahora, ventanaMs, antiguedadMs) {
+    const v = ventanaMs || 180000, ant = antiguedadMs || 12 * 3600000, out = [];
+    const cu = (cuentas || []).filter(c => c && c.mesa > 0 && ahora - c.t < ant).sort((a, b) => a.t - b.t);
+    for (let i = 0; i < cu.length; i++) {
+      const b = cu[i];
+      const a = cu.slice(0, i).reverse().find(x => x.mesa === b.mesa && x.total === b.total && x.metodo === b.metodo && (x.garzon || '') === (b.garzon || '') && firma(x.items) === firma(b.items) && b.t - x.t < v);
+      if (!a) continue;
+      const seg = Math.round((b.t - a.t) / 1000);
+      out.push({ id: 'dup-' + b.id, gravedad: 'alta', titulo: 'Posible cobro repetido: mesa ' + b.mesa,
+        detalle: 'La mesa ' + b.mesa + (b.garzon ? ' (' + b.garzon + ')' : '') + ' se cobró dos veces con el mismo monto, ' + $(b.total) + ' en ' + String(b.metodo || '').toLowerCase() + ', con solo ' + seg + (seg === 1 ? ' segundo' : ' segundos') + ' de diferencia.',
+        revisar: 'Pregunta si el cliente pagó una sola vez o dos. Si fue una sola, avisa a Protech para anular el cobro repetido antes de cerrar la caja.', fase: 'en vivo' });
+    }
+    return out;
+  }
+
+  const api = { mensaje, consejo, svg, voz, duplicados };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Robi = api;
 })(typeof window !== 'undefined' ? window : globalThis);
