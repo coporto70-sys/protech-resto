@@ -58,4 +58,8 @@ test('cobros repetidos: detecta el mismo cobro de una mesa en menos de 3 minutos
   assert.equal(duplicados([c('a', 0), c('b', 200000)], t0 + 300000).length, 0);
   // cobros viejos (más de 12 horas) no suenan
   assert.equal(duplicados([c('a', 0), c('b', 47000)], t0 + 13 * 3600000).length, 0);
+  // con comandas: dos cafés pedidos en comandas distintas y cobrados por separado NO es repetido; cobrar de más sí
+  const cm = (n) => Array.from({ length: n }, () => ({ mesa: 4, items: [{ n: 'Café', q: 2 }], t: t0 - 60000 }));
+  assert.equal(duplicados([c('a', 0), c('b', 47000)], t0 + 60000, undefined, undefined, cm(2)).length, 0);
+  assert.equal(duplicados([c('a', 0), c('b', 47000)], t0 + 60000, undefined, undefined, cm(1)).length, 1);
 });

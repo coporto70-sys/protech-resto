@@ -2552,17 +2552,26 @@ function vigHTML() {
 }
 /* Cobros repetidos en vivo (Robi): se calculan en este equipo con las cuentas ya cargadas; "Entendido" se recuerda aquí. */
 const dupVistos = () => { try { return new Set(JSON.parse(robiLS('pr-dup-vistos') || '[]')); } catch (e) { return new Set(); } };
-function dupAlertas() {
+async function dupAlertas() {
   if (!window.Robi || !window.Robi.duplicados || !D) return [];
-  const ya = dupVistos();
-  return window.Robi.duplicados(D.cuentas, Date.now()).filter(a => !ya.has(a.id));
+  const ya = dupVistos(), ahora = Date.now();
+  const cand = window.Robi.duplicados(D.cuentas, ahora).filter(a => !ya.has(a.id));
+  if (!cand.length) return [];
+  /* confirma contra lo pedido (comandas de las últimas 12 h, también las cerradas); si no se puede consultar, no suena: mejor callar que acusar un cobro legítimo */
+  try {
+    const mesas = [...new Set(D.cuentas.filter(c => cand.some(a => a.id === 'dup-' + c.id)).map(c => c.mesa))];
+    const q = await sb.from('resto_comandas').select('mesa,items,created_at').eq('local_id', D.id).in('mesa', mesas).gte('created_at', new Date(ahora - 12 * 3600000).toISOString());
+    if (!q || q.error) return [];
+    const com = (q.data || []).map(r => ({ mesa: r.mesa, items: r.items, t: +new Date(r.created_at) }));
+    return window.Robi.duplicados(D.cuentas, ahora, undefined, undefined, com).filter(a => !ya.has(a.id));
+  } catch (e) { return []; }
 }
 async function vigRevisar() {
   if (!S.user || !D || !esAdm()) { if (VIG.lista.length) { VIG.lista = []; VIG.firma = ''; } return false; }
   const desde = new Date(Date.now() - 36 * 3600000).toISOString();
   const r = await sb.from('resto_control_alertas').select('id,gravedad,titulo,detalle,revisar,fase,created_at').eq('local_id', D.id).is('visto_at', null).in('gravedad', ['alta', 'media']).gte('created_at', desde).order('created_at', { ascending: false }).limit(20);
   if (!r || r.error) return false;
-  const lista = (r.data || []).concat(dupAlertas()).sort((a, b) => (a.gravedad === b.gravedad ? 0 : a.gravedad === 'alta' ? -1 : 1));
+  const lista = (r.data || []).concat(await dupAlertas()).sort((a, b) => (a.gravedad === b.gravedad ? 0 : a.gravedad === 'alta' ? -1 : 1));
   const nuevas = lista.filter(a => !VIG.vistas.has(a.id));
   nuevas.forEach(a => VIG.vistas.add(a.id));
   const altas = lista.filter(a => a.gravedad === 'alta');

@@ -143,13 +143,17 @@
   /* Cobros repetidos en vivo: mismo cobro (mesa, monto, forma de pago, garzón y productos) registrado dos veces con menos de 3 minutos de diferencia.
      Reglas fijas, sin IA. Recibe las cuentas ya cargadas por la app ({id, mesa, total, metodo, garzon, items, t}) y devuelve alertas con el formato del vigilante de caja. */
   const firma = its => (its || []).map(i => i.n + '×' + i.q).sort().join('|');
-  function duplicados(cuentas, ahora, ventanaMs, antiguedadMs) {
+  /* Si se pasa `comandas` ({mesa, items, t}, últimas 12 h incluidas las cerradas), solo es repetido si lo cobrado de algún producto supera lo pedido en la mesa:
+     dos cortados pedidos en comandas distintas y cobrados por separado NO son un cobro repetido. */
+  const cant = (arr, mesa, n, ahora, ant) => (arr || []).filter(x => x.mesa === mesa && ahora - x.t < ant).reduce((s, x) => s + (x.items || []).filter(i => i.n === n).reduce((u, i) => u + (+i.q || 0), 0), 0);
+  function duplicados(cuentas, ahora, ventanaMs, antiguedadMs, comandas) {
     const v = ventanaMs || 180000, ant = antiguedadMs || 12 * 3600000, out = [];
     const cu = (cuentas || []).filter(c => c && c.mesa > 0 && ahora - c.t < ant).sort((a, b) => a.t - b.t);
     for (let i = 0; i < cu.length; i++) {
       const b = cu[i];
       const a = cu.slice(0, i).reverse().find(x => x.mesa === b.mesa && x.total === b.total && x.metodo === b.metodo && (x.garzon || '') === (b.garzon || '') && firma(x.items) === firma(b.items) && b.t - x.t < v);
       if (!a) continue;
+      if (comandas && !(b.items || []).some(i => cant(comandas, b.mesa, i.n, ahora, ant) < cant(cuentas.filter(x => x.id !== b.id && x.t <= b.t), b.mesa, i.n, ahora, ant) + (+i.q || 0))) continue;
       const seg = Math.round((b.t - a.t) / 1000);
       out.push({ id: 'dup-' + b.id, gravedad: 'alta', titulo: 'Posible cobro repetido: mesa ' + b.mesa,
         detalle: 'La mesa ' + b.mesa + (b.garzon ? ' (' + b.garzon + ')' : '') + ' se cobró dos veces con el mismo monto, ' + $(b.total) + ' en ' + String(b.metodo || '').toLowerCase() + ', con solo ' + seg + (seg === 1 ? ' segundo' : ' segundos') + ' de diferencia.',
