@@ -32,7 +32,7 @@
   function consejo(vista, quien) {
     const c = CONSEJOS[vista];
     const hola = quien ? '¡Hola, ' + quien + '! ' : '¡Hola! ';
-    const fiesta = halloween() ? '¡Feliz Halloween! ' : '';
+    const fiesta = mago() ? '¡Feliz noche de magia! ' : halloween() ? '¡Feliz Halloween! ' : '';
     if (!c) return { tono: 'hola', paso: 'Ayuda', txt: fiesta + hola + 'Soy Robi. Pregúntame lo que necesites del sistema.' };
     return { tono: 'hola', paso: c[0], txt: fiesta + hola + c[1] + ' Si tienes una duda, pregúntame abajo.' };
   }
@@ -87,16 +87,44 @@
   }
 
   /* Disfraz de Halloween: del 24 de octubre al 2 de noviembre Robi usa sombrero de bruja. Se puede apagar en este equipo con localStorage 'pr-robi-hw' = '0'. */
-  function halloween() {
+  function ventanaFiesta() {
     try { if (root.localStorage && root.localStorage.getItem('pr-robi-hw') === '0') return false; } catch (e) {}
     const f = new Date(), m = f.getMonth(), d = f.getDate();
     return (m === 9 && d >= 24) || (m === 10 && d <= 2);
   }
+  /* Tema "Academia Arcana": en las mismas fechas Robi es aprendiz de mago (sombrero de estrellas, capa y varita de diseño propio).
+     Para volver a la bruja en este equipo: localStorage 'pr-robi-tema' = 'bruja'. */
+  function mago() {
+    try { if (root.localStorage && root.localStorage.getItem('pr-robi-tema') === 'bruja') return false; } catch (e) {}
+    return ventanaFiesta();
+  }
+  function halloween() { return ventanaFiesta() && !mago(); }
 
   /* El robot: una esfera amigable que flota, con antena de corazón, ojos grandes, sonrisa y mejillas. Diseño propio de Protech. */
   function svg(tono, habla) {
     const boca = tono === 'mal' ? 'M41 66 Q50 60 59 66' : tono === 'aviso' ? 'M42 64 L58 64' : 'M40 62 Q50 72 60 62';
-    const hw = halloween();
+    const hw = halloween(), mg = mago();
+    const estrellaMg = (x, y, k, c) => '<path transform="translate(' + x + ' ' + y + ') scale(' + k + ')" d="M0 -5 L1.4 -1.4 L5 0 L1.4 1.4 L0 5 L-1.4 1.4 L-5 0 L-1.4 -1.4Z" fill="' + c + '"/>';
+    const gorro = '<g class="robi-mg">' +
+      '<path d="M35 26 Q45 14 50 -5 Q56 14 65 26 Z" fill="#1e1b4b" stroke="#0f0d2e" stroke-width="2" stroke-linejoin="round"/>' +
+      '<ellipse cx="50" cy="27" rx="31" ry="6" fill="#312e81" stroke="#0f0d2e" stroke-width="2"/>' +
+      '<path d="M39 22.5 Q50 26 61 22.5 L62.5 26.5 Q50 30.5 37.5 26.5 Z" fill="#7f1d3a"/>' +
+      '<circle cx="50" cy="26.4" r="2.2" fill="#e0b04a"/>' +
+      estrellaMg(50, -7, 0.9, '#f6d98a') + estrellaMg(48, 9, 0.8, '#f6d98a') + estrellaMg(56, 17, 0.6, '#e0b04a') +
+      '<path d="M44 16 A3.6 3.6 0 1 0 47 20.5 A2.7 2.7 0 1 1 44 16Z" fill="#f6d98a"/>' +
+      '</g>';
+    const capa = '<g class="robi-capa">' +
+      '<path d="M24 86 Q50 100 76 86 L80 94 Q50 110 20 94 Z" fill="#7f1d3a" stroke="#4c0d22" stroke-width="2" stroke-linejoin="round"/>' +
+      '<circle cx="50" cy="96.5" r="3.4" fill="#e0b04a" stroke="#a16207" stroke-width="1"/>' +
+      '</g>';
+    const varita = '<g class="robi-varita">' +
+      '<path d="M91 60 L97 36" stroke="#5b3a1e" stroke-width="3" stroke-linecap="round"/>' +
+      '<path d="M91 60 L92.4 55" stroke="#e0b04a" stroke-width="3" stroke-linecap="round"/>' +
+      estrellaMg(97.5, 31, 1.1, '#fde047') +
+      '<g class="robi-chispa">' + estrellaMg(88, 28, 0.55, '#f6d98a') + '</g>' +
+      '<g class="robi-chispa">' + estrellaMg(97, 47, 0.5, '#c4b5fd') + '</g>' +
+      '<g class="robi-chispa">' + estrellaMg(90, 40, 0.4, '#fde047') + '</g>' +
+      '</g>';
     const sombrero = '<g class="robi-hw">' +
       '<path d="M35 25 Q44 13 49 5 Q55 -1 61 6 Q57 7 57 12 Q58 19 65 25 Z" fill="#6d28d9" stroke="#3b0764" stroke-width="2" stroke-linejoin="round"/>' +
       '<ellipse cx="50" cy="26" rx="30" ry="5.5" fill="#5b21b6" stroke="#3b0764" stroke-width="2"/>' +
@@ -105,8 +133,8 @@
       '<path d="M84 12 Q87 8 90 12 Q93 8 96 12 Q93 11 90 15 Q87 11 84 12Z" fill="#1f1814"/>' +
       '</g>';
     const cejas = tono === 'mal' ? '<path d="M31 41 L43 46 M69 41 L57 46" stroke="#7c2d12" stroke-width="2.6" stroke-linecap="round"/>' : '';
-    return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="0 0 100 104" aria-hidden="true" focusable="false">' +
-      (hw ? '' : '<line x1="50" y1="14" x2="50" y2="22" stroke="#78716c" stroke-width="3" stroke-linecap="round"/>' +
+    return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="' + (mg ? '0 -8 100 112' : '0 0 100 104') + '" aria-hidden="true" focusable="false">' +
+      (hw || mg ? '' : '<line x1="50" y1="14" x2="50" y2="22" stroke="#78716c" stroke-width="3" stroke-linecap="round"/>' +
       '<path class="robi-cor" d="M50 14 C44 5 34 9 38 16 C41 21 50 25 50 25 C50 25 59 21 62 16 C66 9 56 5 50 14Z" fill="#f43f5e"/>') +
       '<circle cx="9" cy="58" r="6" fill="#d9480f"/><circle cx="91" cy="58" r="6" fill="#d9480f"/>' +
       '<circle cx="50" cy="58" r="40" fill="#fff7ed" stroke="#d9480f" stroke-width="3.5"/>' +
@@ -115,7 +143,7 @@
       '<circle cx="39" cy="49.5" r="2.3" fill="#fff"/><circle cx="65" cy="49.5" r="2.3" fill="#fff"/></g>' + cejas +
       '<circle cx="27" cy="65" r="5" fill="#fda4af" opacity=".75"/><circle cx="73" cy="65" r="5" fill="#fda4af" opacity=".75"/>' +
       '<path class="robi-boca" d="' + boca + '" fill="none" stroke="#7c2d12" stroke-width="3" stroke-linecap="round"/>' +
-      (hw ? sombrero : '') +
+      (hw ? sombrero : '') + (mg ? capa + varita + gorro : '') +
       '</svg>';
   }
 
@@ -162,6 +190,6 @@
     return out;
   }
 
-  const api = { mensaje, consejo, svg, voz, duplicados };
+  const api = { mensaje, consejo, svg, voz, duplicados, mago };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Robi = api;
 })(typeof window !== 'undefined' ? window : globalThis);

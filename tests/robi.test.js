@@ -63,3 +63,15 @@ test('cobros repetidos: detecta el mismo cobro de una mesa en menos de 3 minutos
   assert.equal(duplicados([c('a', 0), c('b', 47000)], t0 + 60000, undefined, undefined, cm(2)).length, 0);
   assert.equal(duplicados([c('a', 0), c('b', 47000)], t0 + 60000, undefined, undefined, cm(1)).length, 1);
 });
+
+test('tema mago: del 24/10 al 2/11 Robi es aprendiz de mago; fuera de fechas o con "bruja" se apaga', () => {
+  const Real = Date;
+  const en = (y, m, d, fn) => { global.Date = class extends Real { constructor(...a) { return a.length ? new Real(...a) : new Real(y, m, d, 12); } }; try { return fn(); } finally { global.Date = Real; } };
+  en(2026, 9, 28, () => { assert.ok(require('../robi.js').mago()); const v = svg('ok', false); assert.ok(/robi-mg/.test(v) && !/robi-hw/.test(v) && !/<script/i.test(v)); });
+  en(2026, 10, 2, () => assert.ok(require('../robi.js').mago()));
+  en(2026, 10, 3, () => { assert.ok(!require('../robi.js').mago()); assert.ok(!/robi-mg|robi-hw/.test(svg('ok', false))); });
+  en(2026, 9, 23, () => assert.ok(!require('../robi.js').mago()));
+  global.localStorage = { getItem: k => (k === 'pr-robi-tema' ? 'bruja' : null) };
+  globalThis.localStorage = global.localStorage;
+  try { en(2026, 9, 28, () => { assert.ok(!require('../robi.js').mago()); assert.ok(/robi-hw/.test(svg('ok', false))); }); } finally { delete global.localStorage; }
+});
