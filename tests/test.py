@@ -993,7 +993,7 @@ e=run({'email':'u','role':'','db':pc_db(False,pedida=True)},PC2,LS_ADM); print('
 
 def PC3(pg):
     pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
-    check('PC3: con "garzones cobran" (como hoy) ve Cerrar cuenta y no Pedir cuenta', pg.locator('[data-act="cerrar"]').count()==1 and pg.locator('[data-act="pedircuenta"]').count()==0)
+    check('PC3: aunque el local tenga datos viejos con "garzones cobran", el garzón sin PIN de caja no cobra y pide la cuenta', pg.locator('[data-act="cerrar"]').count()==0 and pg.locator('[data-act="parcial"]').count()==0 and pg.locator('[data-act="pedircuenta"]').count()==1)
 e=run({'email':'u','role':'','db':pc_db(True)},PC3,LS_ANA); print('ERR PC3',e)
 
 def PC4(pg):
@@ -1002,14 +1002,42 @@ def PC4(pg):
 e=run({'email':'u','role':'','db':pc_db(False,caja=True)},PC4,LS_ANA); print('ERR PC4',e)
 
 def PC5(pg):
-    pg.on('dialog',lambda d:d.accept())
     pg.click('[data-act="tab"][data-v="carta"]'); pg.wait_for_timeout(300)
-    check('PC5: la administradora ve el interruptor de quién cobra', pg.locator('[data-act="garzcobra"]').count()==2)
-    pg.click('[data-act="garzcobra"][data-v="0"]'); pg.wait_for_timeout(700)
-    check('PC5: guarda "solo cobra la caja" en el local', pg.evaluate('window.__DB.resto_locales[0].garzon_cobra')==False)
-    pg.click('[data-act="garzcobra"][data-v="1"]'); pg.wait_for_timeout(700)
-    check('PC5: vuelve a "los garzones cobran"', pg.evaluate('window.__DB.resto_locales[0].garzon_cobra')==True)
+    check('PC5: la administradora ya no ve interruptor y se le explica que solo cobra la caja', pg.locator('[data-act="garzcobra"]').count()==0 and 'Solo cobra la caja' in pg.inner_text('#app'))
 e=run({'email':'u','role':'','db':pc_db(True)},PC5,LS_ADM); print('ERR PC5',e)
+
+# ---- El garzón solo indica la propina; la caja cobra y ve el aviso ----
+def PT1(pg):
+    pg.on('dialog',lambda d:d.accept())
+    pg.click('[data-act="mesa"][data-n="3"]'); pg.wait_for_timeout(300)
+    check('PT1: el garzón ve el formulario de propina (sin botones de cobro)', pg.locator('#gp-inc').count()==1 and pg.locator('[data-act="cerrar"]').count()==0 and pg.locator('[data-act="pagar"]').count()==0)
+    pg.select_option('#gp-pct','15'); pg.wait_for_timeout(150)
+    pg.fill('#gp-tj','500'); pg.fill('#gp-efe','300'); pg.select_option('#gp-donde','mano'); pg.wait_for_timeout(150)
+    n0=len(pg.evaluate('window.__DB.resto_cuentas'))
+    pg.click('[data-act="pedircuenta"]'); pg.wait_for_timeout(800)
+    c=pg.evaluate('window.__DB.resto_comandas[0]')
+    check('PT1: la cuenta queda pedida con la propina indicada', bool(c.get('cuenta_pedida_at')) and c.get('propina_pedida')=={'inc':True,'pct':15,'tj':500,'efe':300,'donde':'mano','por':'Ana'})
+    check('PT1: el garzón no registra ningún cobro', len(pg.evaluate('window.__DB.resto_cuentas'))==n0)
+    pg.fill('#gp-efe','800'); pg.click('[data-act="gpsave"]'); pg.wait_for_timeout(700)
+    check('PT1: puede actualizar la propina mientras la caja no cobra', pg.evaluate('window.__DB.resto_comandas[0].propina_pedida.efe')==800)
+e=run({'email':'u','role':'','db':pc_db(False)},PT1,LS_ANA); print('ERR PT1',e)
+
+def pt_db():
+    d=pc_db(False,pedida=True); n=iso(5)
+    d['resto_comandas'][0]['propina_pedida']={'inc':True,'pct':15,'tj':500,'efe':300,'donde':'mano','por':'Ana'}
+    d['resto_turnos']=[{'id':'T1','local_id':'L1','abierto_por':'Administradora','monto_inicial':100000,'abierto_at':n,'created_at':n}]
+    return d
+def PT2(pg):
+    pg.on('dialog',lambda d:d.accept())
+    t=pg.inner_text('#app')
+    check('PT2: la caja ve el aviso con la mesa, el garzón y la propina indicada', 'Cuentas por cobrar en caja' in t and 'Mesa 3' in t and 'Ana' in t and 'Propina 15%' in t)
+    pg.click('.card [data-act="cobrarmesa"][data-n="3"]'); pg.wait_for_timeout(500)
+    check('PT2: al cobrar se precarga la propina que indicó el garzón', pg.input_value('#proppct')=='15' and pg.input_value('#pefec')=='300' and pg.input_value('#pedonde')=='mano' and 'indicó' in pg.inner_text('#app'))
+e=run({'email':'u','role':'','db':pt_db()},PT2,LS_ADM); print('ERR PT2',e)
+
+def PT3(pg):
+    check('PT3: el garzón sin PIN de caja no ve el aviso de cuentas por cobrar', 'Cuentas por cobrar en caja' not in pg.inner_text('#app'))
+e=run({'email':'u','role':'','db':pt_db()},PT3,LS_ANA); print('ERR PT3',e)
 
 
 # --- QR: pedidos por confirmar y avisos de mesa (migración 032)

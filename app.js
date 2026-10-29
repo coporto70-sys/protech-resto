@@ -49,10 +49,18 @@ const veTodo = () => esIng() || !!S.admin; /* Protech ve todo, aunque el tramo d
 const cajaGarzon = () => { const g = D && D.garzones.find(x => x.n === S.quien && x.on); return !!(g && g.pin && g.cj); };
 const puedeCobrar = () => !rolesOn() || S.rol === 'admin' || esIng() || (S.rol === 'garzon' && cajaGarzon());
 /* Todos los garzones cobran sus mesas; la venta por mostrador y la pestaña Caja son solo para la administradora y los garzones autorizados con PIN */
-const puedeCobrarMesa = () => !rolesOn() || S.rol === 'admin' || esIng() || (S.rol === 'garzon' && (!D || D.garzonCobra !== false || cajaGarzon()));
+const puedeCobrarMesa = () => !rolesOn() || S.rol === 'admin' || esIng() || (S.rol === 'garzon' && cajaGarzon());
 /* Si el local dejó "garzón puede cobrar" en NO, el garzón sin PIN de caja solo pide la cuenta y la caja la cobra */
 const soloPideCuenta = () => esGarzonRol() && !puedeCobrarMesa();
 const cuentaPedida = n => { const a = abiertas(n); return a.length > 0 && a.every(c => c.cp); };
+/* Propina que el garzón indicó al pedir la cuenta ({inc, pct, tj, efe, donde}): la caja la ve y la usa al cobrar. El garzón no registra el pago. */
+const ppDe = n => { const c = abiertas(n).find(x => x.pp); return c ? c.pp : null; };
+const gpBase = n => { const p = ppDe(n); return { n, inc: p ? p.inc !== false : true, pct: p && p.pct != null ? +p.pct : pctProp(), tj: p ? +p.tj || 0 : 0, efe: p ? +p.efe || 0 : 0, donde: p && p.donde === 'mano' ? 'mano' : 'caja' }; };
+const gpEst = n => { if (!S.gp || S.gp.n !== n) S.gp = gpBase(n); return S.gp; };
+const gpPaquete = n => { const g = gpEst(n); return { inc: g.inc, pct: g.pct, tj: Math.max(0, Math.round(+g.tj || 0)), efe: Math.max(0, Math.round(+g.efe || 0)), donde: g.donde, por: S.quien || '' }; };
+const ppTexto = p => !p ? 'Sin propina indicada' : (p.inc === false ? 'Sin propina sugerida' : 'Propina ' + p.pct + '%') + (p.tj ? ' + ' + money(p.tj) + ' extra con tarjeta' : '') + (p.efe ? ' + ' + money(p.efe) + ' en efectivo (' + (p.donde === 'mano' ? 'directo al garzón' : 'quedó en la caja') + ')' : '');
+/* Al abrir el cobro en la caja se precarga lo que indicó el garzón; la caja puede cambiarlo */
+const aplicarPP = n => { const p = ppDe(n); if (!p) return; S.propina = p.inc !== false; S.propPct = p.pct != null && +p.pct !== pctProp() ? +p.pct : null; if (p.tj) S.pt = String(p.tj); if (p.efe) { S.pe = String(p.efe); S.peDonde = p.donde === 'mano' ? 'mano' : null; } };
 /* Mesas propias: cada mesa es de quien la tomó. Un garzón no entra a la mesa de otro; solo quien tiene caja (PIN autorizado) puede abrirla para cobrarla. */
 const duenoMesa = n => ((abiertas(n).find(c => c.garzon) || {}).garzon) || '';
 const esGarzonRol = () => rolesOn() && S.rol === 'garzon';
@@ -228,7 +236,17 @@ function avisarAnu() {
   EXA = { lid: D.id, m: new Map(an.map(a => [a.id, a.estado])) };
 }
 /* Pedidos QR por confirmar y avisos de mesa (llamar al garzón / pedir la cuenta): suena y avisa a la administradora y a los garzones */
-let QRNO = false, EXQ = null, rt2 = null;
+let QRNO = false, EXQ = null, rt2 = null, EXC = null;
+/* Cuentas pedidas por los garzones: suena y avisa en la caja con la mesa y el garzón a cargo */
+function avisarCuentas() {
+  const ve = !rolesOn() || S.rol === 'admin' || esIng() || (S.rol === 'garzon' && cajaGarzon());
+  const mesas = [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0 && c.mesa < 1000).map(c => c.mesa))].filter(cuentaPedida);
+  if (EXC && EXC.lid === D.id && ve && SND !== 'off') {
+    const nu = mesas.filter(n => !EXC.s.has(n) && (ppDe(n) || !(D.qrAv || []).some(a => a.mesa === n && a.tipo === 'cuenta')));
+    if (nu.length) { sonarListo(); toast('CUENTA PEDIDA · ' + nu.map(n => nm(n) + ' (' + (duenoMesa(n) || 'sin garzón') + ')').join(', '), 'tk-c'); }
+  }
+  EXC = { lid: D.id, s: new Set(mesas) };
+}
 function avisarQR() {
   const rol = rolesOn() ? S.rol : 'admin', ve = rol === 'admin' || rol === 'ingeniero' || rol === 'garzon';
   const pend = D.qrPend || [], avs = D.qrAv || [];
@@ -325,7 +343,7 @@ async function cargar(parcial) {
     garzones: (gar.data || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '', cj: r.caja === undefined ? true : !!r.caja })),
     cocineras: ((coc && coc.data) || []).map(r => ({ id: r.id, n: r.nombre, on: r.activo, pin: r.pin || '' })),
     menu: (menu.data || []).map(r => ({ id: r.id, n: r.nombre, c: r.categoria, p: r.precio, on: r.activo, e: r.estacion === 'cafeteria' ? 'cafeteria' : 'cocina', s: r.stock == null ? null : r.stock, sm: r.stock_min || 0, cb: r.codigo || '', o: r.opciones || '', f: r.foto || '' })).sort((x, y) => String(x.c || '').localeCompare(String(y.c || ''), 'es', { sensitivity: 'base' }) || String(x.n || '').localeCompare(String(y.n || ''), 'es', { sensitivity: 'base', numeric: true })),
-    comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada, cp: r.cuenta_pedida_at ? +new Date(r.cuenta_pedida_at) : 0 })),
+    comandas: (com.data || []).map(r => ({ id: r.id, mesa: r.mesa, items: r.items, est: (r.items && r.items[0] && r.items[0].e === 'cafeteria') ? 'cafeteria' : 'cocina', note: r.nota || '', estado: r.estado, garzon: r.garzon || '', t: +new Date(r.created_at), cerrada: r.cerrada, cp: r.cuenta_pedida_at ? +new Date(r.cuenta_pedida_at) : 0, pp: r.propina_pedida || null })),
     cuentas: (cue.data || []).map(r => ({ id: r.id, mesa: r.mesa, total: r.total, propina: r.propina, pe: r.propina_efec || 0, pq: !!r.propina_efec_caja, pt: r.propina_tarj || 0, pef: r.pago_efec || 0, metodo: r.metodo, garzon: r.garzon || '', items: r.items, turno_id: r.turno_id || null, cobrado_por: r.cobrado_por || '', desc: +r.descuento || 0, descM: r.desc_motivo || '', descA: r.desc_aut || '', mOrig: r.metodo_original || '', mPor: r.metodo_editado_por || '', mMot: r.metodo_editado_motivo || '', t: +new Date(r.created_at) })) };
   /* Ventas de tortas: encargos con abonos (migración 030) */
   D.tortaOk = !!(tor && !tor.error && tab && !tab.error);
@@ -347,6 +365,7 @@ async function cargar(parcial) {
   avisarExtra();
   avisarAnu();
   avisarQR();
+  avisarCuentas();
 }
 /* ---------- Registro de quién está en caja ---------- */
 async function ensureSes() {
@@ -468,7 +487,9 @@ function mesasHTML() {
   const ocup = []; for (let n = 1; n <= l.mesas; n++) ocup.push(n); for (let k = 1; k <= l.mesas2; k++) ocup.push(100 + k);
   const oc = ocup.filter(n => abiertas(n).length), enMesas = oc.reduce((a, n) => a + totalMesa(n), 0);
   const resumen = `<p class="mut" style="margin-bottom:10px"><b>${oc.length}</b> de ${ocup.length} mesas ocupadas · por cobrar en mesas <b>${money(enMesas)}</b></p>`;
-  return `<h2>Mesas</h2>${resumen}${pushCardHTML()}${anuPendientesHTML()}${qrPanelHTML()}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
+  const pedidas = ocup.filter(n => abiertas(n).length && cuentaPedida(n));
+  const avisoCuentas = puedeCobrarMesa() && pedidas.length ? `<div class="card" style="margin-bottom:12px;border:2px solid var(--brand)"><b>🧾 Cuentas por cobrar en caja</b>${pedidas.map(n => `<div class="row"><div><b>${nm(n)}</b> · ${esc(duenoMesa(n) || 'sin garzón')} · ${money(totalMesa(n))}<div class="mut">${esc(ppTexto(ppDe(n)))}</div></div><button class="btn-ok" data-act="cobrarmesa" data-n="${n}" ${cajaAbierta() ? '' : 'disabled'}>Cobrar</button></div>`).join('')}${cajaAbierta() ? '' : '<p class="mut" style="margin-top:6px">Abre la caja para poder cobrar.</p>'}</div>` : '';
+  return `<h2>Mesas</h2>${resumen}${avisoCuentas}${pushCardHTML()}${anuPendientesHTML()}${qrPanelHTML()}${avisoListos}${cartaPed}${l.mesas2 ? '<div class="piso">Piso 1</div>' : ''}<div class="grid">${g}</div>${l.mesas2 ? `<div class="piso">Piso 2</div><div class="grid">${g2}</div>` : ''}<p class="mut" style="margin-top:14px">Toca una mesa para tomar un pedido. Verde = pedido listo para llevar.</p>`;
 }
 const mesasAbiertas = () => [...new Set(L().comandas.filter(c => !c.cerrada && c.mesa > 0).map(c => c.mesa))].sort((a, b) => a - b);
 function porCobrarHTML() {
@@ -550,7 +571,8 @@ function camposPago(base) {
   const cp = calcPago(base), pct = pctEfect();
   const dl = S.desc ? `<div class="row"><span>Descuento ${S.desc.t === 'cortesia' ? '(cortesía)' : S.desc.t === 'pct' ? S.desc.v + '%' : ''}<div class="mut">${esc(S.desc.motivo)} · autorizó ${esc(S.desc.aut)}</div></span><span style="display:flex;gap:8px;align-items:center"><b style="color:var(--bad)">−${money(cp.desc)}</b><button class="btn-line" style="padding:4px 10px" data-act="descquitar">Quitar</button></span></div>`
     : `<div class="row"><span class="mut">¿Descuento o cortesía?</span><button class="btn-line" style="padding:6px 12px" data-act="descabrir">Aplicar descuento</button></div>`;
-  return `${dl}${autFormHTML()}
+  const ppN = !S.mos && S.mesa != null && ppDe(S.mesa) ? `<p class="mut" style="margin:0 0 6px">💬 ${esc(duenoMesa(S.mesa) || 'El garzón')} indicó: ${esc(ppTexto(ppDe(S.mesa)))}.</p>` : '';
+  return `${dl}${autFormHTML()}${ppN}
     <label class="row" style="cursor:pointer"><span>Propina sugerida ${pct}%</span><input type="checkbox" style="width:auto" data-act="propina" ${S.propina ? 'checked' : ''}></label>
     ${S.propina ? `<label class="mut" style="display:block;margin-top:4px">Porcentaje de propina<select id="proppct">${[0, 5, 10, 15, 20, 25].concat([pctProp()]).filter((v, i, a) => a.indexOf(v) === i).sort((x, y) => x - y).map(v => `<option value="${v}" ${v === pct ? 'selected' : ''}>${v}%${v === pctProp() ? ' (sugerida)' : ''}</option>`).join('')}</select></label>` : ''}
     <label class="mut" style="display:block;margin-top:8px">Forma de pago<select id="metodo"><option ${S.metodo === 'Efectivo' ? 'selected' : ''}>Efectivo</option><option ${S.metodo === 'Tarjeta' ? 'selected' : ''}>Tarjeta</option><option ${S.metodo === 'Transferencia' ? 'selected' : ''}>Transferencia</option><option value="Mixto" ${S.metodo === 'Mixto' ? 'selected' : ''}>Mixto (efectivo + tarjeta)</option></select></label>
@@ -752,7 +774,19 @@ function mesaDetalle() {
     ${soloPideCuenta() ? '' : `<button class="btn-line" style="width:100%;margin-top:8px" data-act="parcial" ${tot > 0 && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cobrar parte (alguien se retira)</button>`}
     ${ab.length && n < 1000 ? `<div style="margin-top:10px"><label class="mut">Dividir en partes iguales<div style="display:flex;gap:8px;align-items:center"><input id="div-n" data-keep type="number" min="2" max="30" inputmode="numeric" style="width:70px" value="${S.f['div-n'] || 2}"><b>${(+S.f['div-n'] >= 2 ? money(Math.ceil(tot / Math.min(30, +S.f['div-n']))) : money(Math.ceil(tot / 2)))} por persona</b></div></label></div>
     <div style="margin-top:10px"><label class="mut">Mover o unir con otra mesa<div style="display:flex;gap:8px"><select id="mv-mesa" data-keep><option value="">Elige mesa…</option>${mesasLista().filter(x => x !== n).map(x => `<option value="${x}" ${String(S.f['mv-mesa']) === String(x) ? 'selected' : ''}>${nm(x)}${abiertas(x).length ? ' (ocupada: se unen)' : ''}</option>`).join('')}</select><button class="btn-line" data-act="mover">Mover</button></div></label></div>` : ''}
-    ${soloPideCuenta() ? `<button class="btn-ok" style="width:100%;margin-top:8px" data-act="pedircuenta" ${ab.length && !cuentaPedida(n) ? '' : 'disabled'}>${cuentaPedida(n) ? '🧾 Cuenta pedida · la caja la cobrará' : '🧾 Pedir cuenta a la caja'}</button>` : `<button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cerrar cuenta</button>`}${sinCaja}</div>${cierre}${parcial}</div></div>`;
+    ${soloPideCuenta() ? propinaGarzonHTML(n, ab) + `<button class="btn-ok" style="width:100%;margin-top:8px" data-act="pedircuenta" ${ab.length && !cuentaPedida(n) ? '' : 'disabled'}>${cuentaPedida(n) ? '🧾 Cuenta pedida · la caja la cobrará' : '🧾 Pedir cuenta a la caja'}</button>${cuentaPedida(n) ? '<button class="btn-line" style="width:100%;margin-top:8px" data-act="gpsave">Actualizar la propina</button>' : ''}` : `<button class="btn-ok" style="width:100%;margin-top:8px" data-act="cerrar" ${ab.length && cajaAbierta() && puedeCobrarMesa() ? '' : 'disabled'}>Cerrar cuenta</button>`}${sinCaja}</div>${cierre}${parcial}</div></div>`;
+}
+/* El garzón no registra pagos: solo indica la propina de la mesa. La caja la ve al cobrar. */
+function propinaGarzonHTML(n, ab) {
+  if (!ab.length) return '';
+  const g = gpEst(n), ops = [0, 5, 10, 15, 20, 25].concat([pctProp(), g.pct]).filter((v, i, a) => a.indexOf(v) === i).sort((x, y) => x - y);
+  return `<div class="card" style="margin-top:8px;background:#fffbeb;display:grid;gap:8px"><b>Propina de esta mesa</b>
+    <label class="row" style="cursor:pointer"><span>Incluir propina sugerida</span><input type="checkbox" style="width:auto" id="gp-inc" ${g.inc ? 'checked' : ''}></label>
+    ${g.inc ? `<label class="mut">Porcentaje<select id="gp-pct">${ops.map(v => `<option value="${v}" ${v === +g.pct ? 'selected' : ''}>${v}%${v === pctProp() ? ' (sugerida)' : ''}</option>`).join('')}</select></label>` : ''}
+    <label class="mut">Propina extra con tarjeta (se suma a la cuenta)<input id="gp-tj" type="number" inputmode="numeric" min="0" placeholder="0" value="${g.tj || ''}"></label>
+    <label class="mut">Propina en efectivo<input id="gp-efe" type="number" inputmode="numeric" min="0" placeholder="0" value="${g.efe || ''}"></label>
+    <label class="mut">¿Dónde quedó la propina en efectivo?<select id="gp-donde"><option value="caja" ${g.donde === 'caja' ? 'selected' : ''}>Quedó en la caja (del vuelto)</option><option value="mano" ${g.donde === 'mano' ? 'selected' : ''}>Me la dieron directo a mí</option></select></label>
+    <p class="mut" style="margin:0">Tú no registras el pago: la caja lo cobra y ve esta propina junto con tu nombre y la mesa.</p></div>`;
 }
 function estacionHTML(esta) {
   const delEsta = (c) => (c.items || []).filter(i => (i.e === 'cafeteria' ? 'cafeteria' : 'cocina') === esta);
@@ -1516,8 +1550,7 @@ function cartaHTML() {
     <label class="mut">Mesas del segundo piso (0 si no tiene)<input id="nm2" type="number" min="0" max="30" value="${l.mesas2}"></label>
     <button class="btn-line" data-act="mesas">Guardar</button></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>¿Quién cobra las mesas?</b>
-    <p class="mut">${l.garzonCobra !== false ? 'Hoy cada garzón cobra sus mesas.' : 'Hoy solo cobra la caja: el garzón toca "Pedir cuenta" y tú (o un garzón con PIN de caja) la cobras.'} En cualquier caso una misma cuenta no se puede cobrar dos veces.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="${l.garzonCobra !== false ? 'btn-ok' : 'btn-line'}" data-act="garzcobra" data-v="1">Los garzones cobran sus mesas</button><button class="${l.garzonCobra === false ? 'btn-ok' : 'btn-line'}" data-act="garzcobra" data-v="0">Solo cobra la caja</button></div></div>
+    <p class="mut">Solo cobra la caja: tú o un garzón con PIN de caja. El garzón toca "Pedir cuenta a la caja", anota la propina de la mesa y la caja ve el aviso con la mesa y el garzón a cargo. Una misma cuenta no se puede cobrar dos veces.</p></div>
   <div class="card" style="margin-top:12px;display:grid;gap:8px"><b>Propina sugerida</b>
     <p class="mut">Porcentaje que se sugiere al cobrar cada cuenta. Quitarla o cambiarla en una cuenta necesita tu autorización (o tu PIN en el equipo del garzón).</p>
     <label class="mut">Porcentaje (%)<input id="ppct" type="number" min="0" max="30" value="${pctProp()}"></label>
@@ -1640,6 +1673,8 @@ document.addEventListener('input', e => {
   if (e.target.id === 'tr-e') { const v = $('#tr-vuelto'); if (v) { v.dataset.saldo = Math.round(+S.f['tr-e'] || 0); actualizaVueltoT(); } tMixAct('tr-e', 'tr-tj'); }
   if (e.target.id === 'tab-m' || e.target.id === 'tab-e') { const x = $('#tab-tj'); if (x) { x.dataset.total = Math.round(+S.f['tab-m'] || 0); tMixAct('tab-e', 'tab-tj'); } }
   if (e.target.id === 'ta' || e.target.id === 'tae') { const x = $('#tae-tj'); if (x) { x.dataset.total = Math.round(+S.f.ta || 0); tMixAct('tae', 'tae-tj'); } }
+  if (e.target.id === 'gp-tj' && S.mesa != null) gpEst(S.mesa).tj = e.target.value;
+  if (e.target.id === 'gp-efe' && S.mesa != null) gpEst(S.mesa).efe = e.target.value;
   if (e.target.id === 'ptarj') {
     S.pt = e.target.value;
     /* actualiza el total en pantalla sin redibujar (así no se pierde el cursor al escribir) */
@@ -1688,6 +1723,9 @@ document.addEventListener('change', e => {
     S.propina = e.target.checked;
     render();
   }
+  if (S.mesa != null && e.target.id === 'gp-inc') { gpEst(S.mesa).inc = e.target.checked; render(); }
+  if (S.mesa != null && e.target.id === 'gp-pct') { gpEst(S.mesa).pct = +e.target.value; render(); }
+  if (S.mesa != null && e.target.id === 'gp-donde') { gpEst(S.mesa).donde = e.target.value === 'mano' ? 'mano' : 'caja'; render(); }
   if (e.target.id === 'proppct') {
     const v = +e.target.value;
     S.propPct = v === pctProp() ? null : v;
@@ -1815,7 +1853,7 @@ document.addEventListener('click', async e => {
   if (['mostrador', 'mospagar'].includes(a) && !puedeCobrar()) { alert('La venta por mostrador la cobra la administradora o un garzón autorizado con PIN.'); return; }
   if (a.startsWith('ins') && ['insadd', 'inscompra', 'insuso', 'insmerma', 'inscont', 'insmin', 'insoff'].includes(a) && !esAdm()) { alert('El inventario de producción lo maneja la administradora.'); return; }
   if (['tabrir', 'tcerrar', 'gasto', 'retiro', 'proppag'].includes(a) && !puedeCobrar()) { alert('Solo la administradora o un garzón autorizado con PIN puede abrir y cerrar la caja.'); return; }
-  if (['cobrarmesa', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && !puedeCobrarMesa()) { alert(esGarzonRol() ? 'En este local solo cobra la caja. Toca "Pedir cuenta a la caja" y la caja cobrará esta mesa.' : 'Solo la administradora o los garzones pueden cobrar mesas.'); return; }
+  if (['cobrarmesa', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && !puedeCobrarMesa()) { alert(esGarzonRol() ? 'Los garzones no registran pagos: toca "Pedir cuenta a la caja", anota la propina y la caja cobrará esta mesa.' : 'Solo la administradora o los garzones pueden cobrar mesas.'); return; }
   if (a === 'mesa' && !puedeVerMesa(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede tomar pedidos en esta mesa.'); return; }
   if (a === 'cobrarmesa' && !puedeCobrarEsta(+d.n)) { alert('Esta mesa la atiende ' + (duenoMesa(+d.n) || 'otro garzón') + '. Solo ella o él puede cobrarla.'); return; }
   if (['enviar', 'cerrar', 'parcial', 'pagar', 'pagarparte'].includes(a) && S.mesa !== null && !S.mos) {
@@ -1977,7 +2015,7 @@ document.addEventListener('click', async e => {
     else if (a === 'anupin') { S.anp = d.id; S.an = null; S.anpE = ''; delete S.f['anu-pin']; }
     else if (a === 'mosadd') addMos(d.id);
     else if (a === 'dec') { S.cart[d.id] = Math.max(0, (S.cart[d.id] || 0) - 1); if (!S.cart[d.id]) delete S.cart[d.id]; }
-    else if (a === 'cobrarmesa') { S.back = S.mos ? 'mesas' : S.view; S.mos = false; S.view = 'mesas'; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = true; S.parcial = false; S.sel = {}; resetCobro(); S.propina = true; S.metodo = 'Efectivo'; }
+    else if (a === 'cobrarmesa') { S.back = S.mos ? 'mesas' : S.view; S.mos = false; S.view = 'mesas'; S.mesa = +d.n; S.cart = {}; S.note = ''; S.cerrando = true; S.parcial = false; S.sel = {}; resetCobro(); S.propina = true; S.metodo = 'Efectivo'; aplicarPP(S.mesa); }
     else if (a === 'mostrador') { delete S.f['bus-mos']; S.back = S.view; S.view = 'mesas'; S.mos = true; S.cart = {}; S.note = ''; S.propina = false; S.metodo = 'Efectivo'; resetCobro(); }
     else if (a === 'mosvolver') { delete S.f['bus-mos']; Object.keys(S.f).forEach(k => { if (k.startsWith('bq-')) delete S.f[k]; }); if (S.back && S.back !== 'mesas') S.view = S.back; S.back = null; S.mos = false; S.cart = {}; S.propina = true; resetCobro(); }
     else if (a === 'nuevoped') { S.np = { tipo: d.t }; S.f = {}; }
@@ -2000,7 +2038,7 @@ document.addEventListener('click', async e => {
       else if (!pideOk('¿Mover los pedidos de ' + nm(S.mesa) + ' a ' + nm(to) + '?')) { }
       else if (!fallo(await sb.from('resto_comandas').update({ mesa: to }).in('id', ab.map(c => c.id)))) { toast('Pedidos movidos a ' + nm(to), 'tk-l'); delete S.f['mv-mesa']; S.mesa = to; await cargar(); }
     }
-    else if (a === 'cerrar') { S.cerrando = true; S.parcial = false; S.sel = {}; }
+    else if (a === 'cerrar') { S.cerrando = true; S.parcial = false; S.sel = {}; resetCobro(); S.propina = true; aplicarPP(S.mesa); }
     else if (a === 'nocerrar') S.cerrando = false;
     else if (a === 'parcial') { S.parcial = true; S.cerrando = false; S.sel = {}; resetCobro(); }
     else if (a === 'noparcial') { S.parcial = false; S.sel = {}; resetCobro(); }
@@ -2464,14 +2502,20 @@ document.addEventListener('click', async e => {
           else if (!fallo(r)) { const lr = await loginRol('admin', 'admin', p); S.rol = 'admin'; S.quien = 'Administradora'; RTOK = lr.ok ? lr.token : ''; guardarRol(D.id, 'admin', 'Administradora', RTOK); alert('PIN guardado. Desde ahora cada persona entra con su PIN.'); }
         }
       }
-      else if (a === 'pedircuenta') {
-        const ab = abiertas(S.mesa);
+      else if (a === 'pedircuenta' || a === 'gpsave') {
+        const ab = abiertas(S.mesa), ids = ab.map(c => c.id);
         if (!ab.length || !mesaPropia(S.mesa)) alert('Esta mesa no tiene pedidos abiertos o la atiende otro garzón.');
-        else if (!cuentaPedida(S.mesa) && !fallo(await sb.from('resto_comandas').update({ cuenta_pedida_at: new Date().toISOString() }).in('id', ab.map(c => c.id)))) { await cargar(); toast('Cuenta pedida · la caja la cobrará', 'tk-l'); }
-      }
-      else if (a === 'garzcobra' && esAdm()) {
-        const si = d.v === '1';
-        if (!fallo(await sb.from('resto_locales').update({ garzon_cobra: si }).eq('id', D.id))) { await cargar(); toast(si ? 'Los garzones cobran sus mesas' : 'Ahora solo cobra la caja', 'tk-l'); }
+        else if (a === 'pedircuenta' && cuentaPedida(S.mesa)) { /* ya estaba pedida */ }
+        else {
+          const pp = gpPaquete(S.mesa), campos = a === 'pedircuenta' ? { cuenta_pedida_at: new Date().toISOString() } : {};
+          let r = await sb.from('resto_comandas').update({ ...campos, propina_pedida: pp }).in('id', ids);
+          if (r.error && /propina_pedida/i.test(r.error.message || '')) {
+            /* falta la migración 037: la cuenta se pide igual, pero la propina no viaja a la caja */
+            if (a === 'pedircuenta') { r = await sb.from('resto_comandas').update(campos).in('id', ids); if (!fallo(r)) { await cargar(); toast('Cuenta pedida · avisa a la caja la propina (falta activar la migración 037)', 'tk-c'); } }
+            else alert('Todavía no se puede guardar la propina: falta activar la migración 037 en la base de datos.');
+          }
+          else if (!fallo(r)) { S.gp = null; await cargar(); toast(a === 'pedircuenta' ? 'Cuenta pedida · la caja la cobrará' : 'Propina actualizada', 'tk-l'); }
+        }
       }
       else if (a === 'setppct' && esAdm()) {
         const v = Math.round(+($('#ppct') || {}).value);
