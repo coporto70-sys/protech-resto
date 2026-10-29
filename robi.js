@@ -132,6 +132,12 @@
       '<rect x="46.5" y="21.5" width="7" height="5.5" rx="1" fill="none" stroke="#fde047" stroke-width="1.8"/>' +
       '<path d="M84 12 Q87 8 90 12 Q93 8 96 12 Q93 11 90 15 Q87 11 84 12Z" fill="#1f1814"/>' +
       '</g>';
+    /* Lentes de Robi: marcos redondeados oscuros con detalle dorado (diseño propio). */
+    const lentes = '<g class="robi-lentes" fill="none" stroke="#1f1814" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">' +
+      '<rect x="26.5" y="42" width="21" height="19" rx="7.5"/><rect x="52.5" y="42" width="21" height="19" rx="7.5"/>' +
+      '<path d="M47.5 50 Q50 47.5 52.5 50" fill="none"/><path d="M26.5 49 L19 46.5 M73.5 49 L81 46.5" fill="none"/>' +
+      '<path d="M30.5 46 L34 44.6 M56.5 46 L60 44.6" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="1.6"/>' +
+      '<circle cx="50" cy="48.6" r="1" fill="#e0b04a" stroke="none"/></g>';
     const cejas = tono === 'mal' ? '<path d="M31 41 L43 46 M69 41 L57 46" stroke="#7c2d12" stroke-width="2.6" stroke-linecap="round"/>' : '';
     return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="' + (mg ? '0 -8 100 112' : '0 0 100 104') + '" aria-hidden="true" focusable="false">' +
       (hw || mg ? '' : '<line x1="50" y1="14" x2="50" y2="22" stroke="#78716c" stroke-width="3" stroke-linecap="round"/>' +
@@ -140,7 +146,7 @@
       '<circle cx="50" cy="58" r="40" fill="#fff7ed" stroke="#d9480f" stroke-width="3.5"/>' +
       '<path d="M22 40 Q30 24 48 22" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".9"/>' +
       '<g class="robi-ojos"><ellipse cx="37" cy="52" rx="6.5" ry="7.5" fill="#1f1814"/><ellipse cx="63" cy="52" rx="6.5" ry="7.5" fill="#1f1814"/>' +
-      '<circle cx="39" cy="49.5" r="2.3" fill="#fff"/><circle cx="65" cy="49.5" r="2.3" fill="#fff"/></g>' + cejas +
+      '<circle cx="39" cy="49.5" r="2.3" fill="#fff"/><circle cx="65" cy="49.5" r="2.3" fill="#fff"/></g>' + lentes + cejas +
       '<circle cx="27" cy="65" r="5" fill="#fda4af" opacity=".75"/><circle cx="73" cy="65" r="5" fill="#fda4af" opacity=".75"/>' +
       '<path class="robi-boca" d="' + boca + '" fill="none" stroke="#7c2d12" stroke-width="3" stroke-linecap="round"/>' +
       (hw ? sombrero : '') + (mg ? capa + varita + gorro : '') +
