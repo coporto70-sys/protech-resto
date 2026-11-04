@@ -75,7 +75,7 @@ table{border-collapse:collapse}
 .robi-cara{touch-action:none;cursor:grab;position:relative;border:0;background:none;padding:0;cursor:pointer;width:70px;height:96px;display:block}
 .robi-svg{width:70px;height:auto;display:block;animation:robi-flota 3.4s ease-in-out infinite;filter:drop-shadow(0 4px 6px rgba(43,27,16,.18))}
 .robi-sombra{position:absolute;left:50%;bottom:0;width:46px;height:8px;margin-left:-23px;border-radius:50%;background:rgba(43,27,16,.2);filter:blur(2px);animation:robi-sombra 3.4s ease-in-out infinite}
-.robi-svg .robi-ojos{transform-origin:50px 44px;animation:robi-parpadea 4.5s infinite}.robi-svg.habla .robi-boca{animation:robi-habla .28s ease-in-out infinite alternate;transform-origin:50px 58px}
+.robi-svg .robi-ojos{transform-origin:50px 44px;animation:robi-parpadea 4.5s infinite}.robi-svg.habla .robi-boca{animation:robi-habla .28s ease-in-out infinite alternate;transform-origin:50px 62px}
 .robi-svg.habla .robi-brazo{transform-origin:69px 78px;animation:robi-saluda .45s ease-in-out infinite alternate}
 .robi-cor{transform-origin:50px 14px;animation:robi-late 1.6s ease-in-out infinite}
 @keyframes robi-flota{50%{transform:translateY(-9px)}}@keyframes robi-sombra{50%{transform:scale(.7);opacity:.55}}
