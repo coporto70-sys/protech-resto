@@ -563,7 +563,7 @@ function autFormHTML() {
       ${S.f['d-tipo'] === 'cortesia' ? '' : `<label class="mut">Valor<input id="d-val" data-keep type="number" inputmode="numeric" min="1" placeholder="${S.f['d-tipo'] === 'monto' ? '$' : '%'}" value="${fv('d-val')}"></label>`}
       <label class="mut">Motivo<select id="d-mot" data-keep>${DESC_MOTIVOS.map(m => `<option ${S.f['d-mot'] === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>`
     : `<p class="mut" style="margin:0">Quitar o cambiar la propina necesita autorización de la administradora.</p>`;
-  return `<div class="card" style="margin-top:10px;background:#fffbeb;display:grid;gap:8px"><b>${f === 'desc' ? 'Descuento o cortesía' : 'Cambiar la propina'}</b>${cuerpo}${pin}
+  return `<div class="card" style="margin-top:10px;background:#fbf4e4;display:grid;gap:8px"><b>${f === 'desc' ? 'Descuento o cortesía' : 'Cambiar la propina'}</b>${cuerpo}${pin}
     ${S.autErr ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.autErr)}</div>` : ''}
     <div style="display:flex;gap:8px"><button class="btn" style="flex:1" data-act="autok">Autorizar</button><button class="btn-line" data-act="autno">Cancelar</button></div></div>`;
 }
@@ -780,7 +780,7 @@ function mesaDetalle() {
 function propinaGarzonHTML(n, ab) {
   if (!ab.length) return '';
   const g = gpEst(n), ops = [0, 5, 10, 15, 20, 25].concat([pctProp(), g.pct]).filter((v, i, a) => a.indexOf(v) === i).sort((x, y) => x - y);
-  return `<div class="card" style="margin-top:8px;background:#fffbeb;display:grid;gap:8px"><b>Propina de esta mesa</b>
+  return `<div class="card" style="margin-top:8px;background:#fbf4e4;display:grid;gap:8px"><b>Propina de esta mesa</b>
     <label class="row" style="cursor:pointer"><span>Incluir propina sugerida</span><input type="checkbox" style="width:auto" id="gp-inc" ${g.inc ? 'checked' : ''}></label>
     ${g.inc ? `<label class="mut">Porcentaje<select id="gp-pct">${ops.map(v => `<option value="${v}" ${v === +g.pct ? 'selected' : ''}>${v}%${v === pctProp() ? ' (sugerida)' : ''}</option>`).join('')}</select></label>` : ''}
     <label class="mut">Propina extra con tarjeta (se suma a la cuenta)<input id="gp-tj" type="number" inputmode="numeric" min="0" placeholder="0" value="${g.tj || ''}"></label>
@@ -1029,7 +1029,7 @@ function corteHTML(t) {
   if (!esAdm()) return '';
   const cs = cortesPosibles(t); if (!cs.length) return '';
   const hasta = corteDe(t), fuera = hasta ? D.cuentas.filter(c => c.t >= +new Date(t.abierto_at) && c.t > hasta).length : 0;
-  return `<div class="card" style="background:#fff7ed;padding:10px;display:grid;gap:6px"><label><b>¿Hasta cuándo cierras?</b>
+  return `<div class="card" style="background:#faf1df;padding:10px;display:grid;gap:6px"><label><b>¿Hasta cuándo cierras?</b>
     <select id="c-corte" data-keep style="width:100%;margin-top:4px"><option value="">Todo el turno, hasta ahora</option>${cs.map(ms => `<option value="${ms}" ${hasta === ms ? 'selected' : ''}>Solo hasta el día ${diaCorte(ms)} (23:59)</option>`).join('')}</select></label>
     ${hasta ? `<p class="mut" style="margin:0">Se cierra solo lo cobrado, gastado y retirado hasta el ${diaCorte(hasta)} a las 23:59. ${fuera ? 'Los ' + fuera + ' cobro' + (fuera === 1 ? '' : 's') + ' de después, con sus gastos y retiros, pasan al turno nuevo.' : 'Lo de después pasa al turno nuevo.'} Cuenta el efectivo como estaba al terminar ese día.</p>` : '<p class="mut" style="margin:0">Elige un día anterior si el turno quedó abierto y quieres cerrar solo ese día.</p>'}</div>`;
 }

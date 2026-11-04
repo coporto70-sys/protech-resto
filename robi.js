@@ -100,12 +100,14 @@
   }
   function halloween() { return ventanaFiesta() && !mago(); }
 
-  /* El robot: una esfera amigable que flota, con antena de corazón, ojos grandes, sonrisa y mejillas. Diseño propio de Protech. */
+  /* El robot: un bot humanoide amigable que flota, con antena de corazón, cabeza con orejas, lentes, torso café con detalles dorados,
+     brazos (el derecho saluda cuando habla) y piernas. Diseño propio de Protech. */
   function svg(tono, habla) {
-    const boca = tono === 'mal' ? 'M41 66 Q50 60 59 66' : tono === 'aviso' ? 'M42 64 L58 64' : 'M40 62 Q50 72 60 62';
+    const boca = tono === 'mal' ? 'M43 60 Q50 54 57 60' : tono === 'aviso' ? 'M44 58 L56 58' : 'M42 55.5 Q50 63 58 55.5';
     const hw = halloween(), mg = mago();
+    const CAFE = '#7a4b26', CAFE_D = '#4a2c14', ORO = '#c9a24a', ORO_L = '#e8cf8a';
     const estrellaMg = (x, y, k, c) => '<path transform="translate(' + x + ' ' + y + ') scale(' + k + ')" d="M0 -5 L1.4 -1.4 L5 0 L1.4 1.4 L0 5 L-1.4 1.4 L-5 0 L-1.4 -1.4Z" fill="' + c + '"/>';
-    const gorro = '<g class="robi-mg">' +
+    const gorro = '<g class="robi-mg" transform="translate(0 2)">' +
       '<path d="M35 26 Q45 14 50 -5 Q56 14 65 26 Z" fill="#1e1b4b" stroke="#0f0d2e" stroke-width="2" stroke-linejoin="round"/>' +
       '<ellipse cx="50" cy="27" rx="31" ry="6" fill="#312e81" stroke="#0f0d2e" stroke-width="2"/>' +
       '<path d="M39 22.5 Q50 26 61 22.5 L62.5 26.5 Q50 30.5 37.5 26.5 Z" fill="#7f1d3a"/>' +
@@ -113,43 +115,57 @@
       estrellaMg(50, -7, 0.9, '#f6d98a') + estrellaMg(48, 9, 0.8, '#f6d98a') + estrellaMg(56, 17, 0.6, '#e0b04a') +
       '<path d="M44 16 A3.6 3.6 0 1 0 47 20.5 A2.7 2.7 0 1 1 44 16Z" fill="#f6d98a"/>' +
       '</g>';
-    const capa = '<g class="robi-capa">' +
-      '<path d="M24 86 Q50 100 76 86 L80 94 Q50 110 20 94 Z" fill="#7f1d3a" stroke="#4c0d22" stroke-width="2" stroke-linejoin="round"/>' +
-      '<circle cx="50" cy="96.5" r="3.4" fill="#e0b04a" stroke="#a16207" stroke-width="1"/>' +
-      '</g>';
+    /* La capa va detrás del cuerpo; el broche va delante, en el cuello. */
+    const capa = '<g class="robi-capa"><path d="M31 74 Q16 96 20 114 Q50 124 80 114 Q84 96 69 74 Z" fill="#7f1d3a" stroke="#4c0d22" stroke-width="2" stroke-linejoin="round"/></g>';
+    const broche = '<circle cx="50" cy="73.5" r="3.2" fill="#e0b04a" stroke="#a16207" stroke-width="1"/>';
+    /* La varita la sostiene la mano derecha (sube y baja con el saludo). */
     const varita = '<g class="robi-varita">' +
-      '<path d="M91 60 L97 36" stroke="#5b3a1e" stroke-width="3" stroke-linecap="round"/>' +
-      '<path d="M91 60 L92.4 55" stroke="#e0b04a" stroke-width="3" stroke-linecap="round"/>' +
-      estrellaMg(97.5, 31, 1.1, '#fde047') +
-      '<g class="robi-chispa">' + estrellaMg(88, 28, 0.55, '#f6d98a') + '</g>' +
-      '<g class="robi-chispa">' + estrellaMg(97, 47, 0.5, '#c4b5fd') + '</g>' +
-      '<g class="robi-chispa">' + estrellaMg(90, 40, 0.4, '#fde047') + '</g>' +
+      '<path d="M83 66 L91 42" stroke="#5b3a1e" stroke-width="3" stroke-linecap="round"/>' +
+      '<path d="M83 66 L84.4 61" stroke="#e0b04a" stroke-width="3" stroke-linecap="round"/>' +
+      estrellaMg(91.5, 37, 1.1, '#fde047') +
+      '<g class="robi-chispa">' + estrellaMg(82, 34, 0.55, '#f6d98a') + '</g>' +
+      '<g class="robi-chispa">' + estrellaMg(95, 52, 0.5, '#c4b5fd') + '</g>' +
+      '<g class="robi-chispa">' + estrellaMg(87, 46, 0.4, '#fde047') + '</g>' +
       '</g>';
-    const sombrero = '<g class="robi-hw">' +
+    const sombrero = '<g class="robi-hw" transform="translate(0 2)">' +
       '<path d="M35 25 Q44 13 49 5 Q55 -1 61 6 Q57 7 57 12 Q58 19 65 25 Z" fill="#6d28d9" stroke="#3b0764" stroke-width="2" stroke-linejoin="round"/>' +
       '<ellipse cx="50" cy="26" rx="30" ry="5.5" fill="#5b21b6" stroke="#3b0764" stroke-width="2"/>' +
-      '<path d="M40 21.5 Q50 24 61 21.5 L62 25 Q50 28 39 25 Z" fill="#f97316"/>' +
+      '<path d="M40 21.5 Q50 24 61 21.5 L62 25 Q50 28 39 25 Z" fill="#c9a24a"/>' +
       '<rect x="46.5" y="21.5" width="7" height="5.5" rx="1" fill="none" stroke="#fde047" stroke-width="1.8"/>' +
-      '<path d="M84 12 Q87 8 90 12 Q93 8 96 12 Q93 11 90 15 Q87 11 84 12Z" fill="#1f1814"/>' +
+      '<path d="M84 12 Q87 8 90 12 Q93 8 96 12 Q93 11 90 15 Q87 11 84 12Z" fill="#2b1b10"/>' +
       '</g>';
     /* Lentes de Robi: marcos redondeados oscuros con detalle dorado (diseño propio). */
-    const lentes = '<g class="robi-lentes" fill="none" stroke="#1f1814" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">' +
-      '<rect x="26.5" y="42" width="21" height="19" rx="7.5"/><rect x="52.5" y="42" width="21" height="19" rx="7.5"/>' +
-      '<path d="M47.5 50 Q50 47.5 52.5 50" fill="none"/><path d="M26.5 49 L19 46.5 M73.5 49 L81 46.5" fill="none"/>' +
-      '<path d="M30.5 46 L34 44.6 M56.5 46 L60 44.6" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="1.6"/>' +
-      '<circle cx="50" cy="48.6" r="1" fill="#e0b04a" stroke="none"/></g>';
-    const cejas = tono === 'mal' ? '<path d="M31 41 L43 46 M69 41 L57 46" stroke="#7c2d12" stroke-width="2.6" stroke-linecap="round"/>' : '';
-    return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="' + (mg ? '0 -8 100 112' : '0 0 100 104') + '" aria-hidden="true" focusable="false">' +
-      (hw || mg ? '' : '<line x1="50" y1="14" x2="50" y2="22" stroke="#78716c" stroke-width="3" stroke-linecap="round"/>' +
-      '<path class="robi-cor" d="M50 14 C44 5 34 9 38 16 C41 21 50 25 50 25 C50 25 59 21 62 16 C66 9 56 5 50 14Z" fill="#f43f5e"/>') +
-      '<circle cx="9" cy="58" r="6" fill="#d9480f"/><circle cx="91" cy="58" r="6" fill="#d9480f"/>' +
-      '<circle cx="50" cy="58" r="40" fill="#fff7ed" stroke="#d9480f" stroke-width="3.5"/>' +
-      '<path d="M22 40 Q30 24 48 22" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".9"/>' +
-      '<g class="robi-ojos"><ellipse cx="37" cy="52" rx="6.5" ry="7.5" fill="#1f1814"/><ellipse cx="63" cy="52" rx="6.5" ry="7.5" fill="#1f1814"/>' +
-      '<circle cx="39" cy="49.5" r="2.3" fill="#fff"/><circle cx="65" cy="49.5" r="2.3" fill="#fff"/></g>' + lentes + cejas +
-      '<circle cx="27" cy="65" r="5" fill="#fda4af" opacity=".75"/><circle cx="73" cy="65" r="5" fill="#fda4af" opacity=".75"/>' +
-      '<path class="robi-boca" d="' + boca + '" fill="none" stroke="#7c2d12" stroke-width="3" stroke-linecap="round"/>' +
-      (hw ? sombrero : '') + (mg ? capa + varita + gorro : '') +
+    const lentes = '<g class="robi-lentes" fill="none" stroke="#2b1b10" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">' +
+      '<rect x="29.5" y="36" width="17" height="16" rx="6.5"/><rect x="53.5" y="36" width="17" height="16" rx="6.5"/>' +
+      '<path d="M46.5 43 Q50 40.5 53.5 43" fill="none"/><path d="M29.5 42 L24.5 40.5 M70.5 42 L75.5 40.5" fill="none"/>' +
+      '<path d="M33 40 L36 38.8 M57 40 L60 38.8" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>' +
+      '<circle cx="50" cy="41.8" r="1" fill="' + ORO + '" stroke="none"/></g>';
+    const cejas = tono === 'mal' ? '<path d="M32 33 L44 37 M68 33 L56 37" stroke="#5a3516" stroke-width="2.4" stroke-linecap="round"/>' : '';
+    /* Cuerpo: piernas, brazo izquierdo, torso con panel dorado y corazón, cuello, brazo derecho que saluda. */
+    const cuerpo =
+      '<rect x="38" y="103" width="9" height="15" rx="4" fill="' + CAFE_D + '"/><rect x="53" y="103" width="9" height="15" rx="4" fill="' + CAFE_D + '"/>' +
+      '<ellipse cx="41.5" cy="119.5" rx="8" ry="4.2" fill="' + ORO + '" stroke="#a37d2c" stroke-width="1.5"/><ellipse cx="58.5" cy="119.5" rx="8" ry="4.2" fill="' + ORO + '" stroke="#a37d2c" stroke-width="1.5"/>' +
+      '<path d="M31 78 Q20 84 22 97" fill="none" stroke="' + CAFE + '" stroke-width="7" stroke-linecap="round"/>' +
+      '<circle cx="22" cy="100.5" r="4.6" fill="' + ORO_L + '" stroke="' + ORO + '" stroke-width="1.5"/>' +
+      '<rect x="31" y="72" width="38" height="33" rx="11" fill="' + CAFE + '" stroke="' + CAFE_D + '" stroke-width="2.5"/>' +
+      '<rect x="40" y="79" width="20" height="15" rx="5" fill="' + ORO_L + '" stroke="' + ORO + '" stroke-width="1.6"/>' +
+      '<path d="M50 91.5 C43.5 86.5 44.5 80.8 47.6 80.8 C49 80.8 50 81.8 50 82.9 C50 81.8 51 80.8 52.4 80.8 C55.5 80.8 56.5 86.5 50 91.5Z" fill="#b0553a"/>' +
+      '<path d="M33 99.5 L67 99.5" stroke="' + ORO + '" stroke-width="2.4" stroke-linecap="round"/>' +
+      '<rect x="44" y="66" width="12" height="7" rx="2.5" fill="' + ORO + '"/>' +
+      '<g class="robi-brazo"><path d="M69 78 Q81 80 83.5 70" fill="none" stroke="' + CAFE + '" stroke-width="7" stroke-linecap="round"/>' +
+      (mg ? varita : '') + '<circle cx="83.5" cy="66.5" r="4.6" fill="' + ORO_L + '" stroke="' + ORO + '" stroke-width="1.5"/></g>';
+    return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="' + (mg ? '0 -8 100 134' : '0 0 100 126') + '" aria-hidden="true" focusable="false">' +
+      (mg ? capa : '') + cuerpo + (mg ? broche : '') +
+      (hw || mg ? '' : '<line x1="50" y1="19" x2="50" y2="25" stroke="' + CAFE + '" stroke-width="3" stroke-linecap="round"/>' +
+      '<path class="robi-cor" d="M50 9 C46 3 38 6 41 12 C43 16 50 20 50 20 C50 20 57 16 59 12 C62 6 54 3 50 9Z" fill="#e0526a"/>') +
+      '<circle cx="25" cy="46" r="5.5" fill="' + ORO + '" stroke="#a37d2c" stroke-width="1.5"/><circle cx="75" cy="46" r="5.5" fill="' + ORO + '" stroke="#a37d2c" stroke-width="1.5"/>' +
+      '<rect x="26" y="24" width="48" height="43" rx="18" fill="#fbf3e4" stroke="' + CAFE + '" stroke-width="3.2"/>' +
+      '<path d="M31 35 Q34 28 46 27" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" opacity=".9"/>' +
+      '<g class="robi-ojos"><ellipse cx="38" cy="44" rx="4.3" ry="5.2" fill="#2b1b10"/><ellipse cx="62" cy="44" rx="4.3" ry="5.2" fill="#2b1b10"/>' +
+      '<circle cx="39.6" cy="42" r="1.7" fill="#fff"/><circle cx="63.6" cy="42" r="1.7" fill="#fff"/></g>' + lentes + cejas +
+      '<circle cx="32.5" cy="57" r="3.4" fill="#e9a08f" opacity=".7"/><circle cx="67.5" cy="57" r="3.4" fill="#e9a08f" opacity=".7"/>' +
+      '<path class="robi-boca" d="' + boca + '" fill="none" stroke="#5a3516" stroke-width="2.8" stroke-linecap="round"/>' +
+      (hw ? sombrero : '') + (mg ? gorro : '') +
       '</svg>';
   }
 
