@@ -99,12 +99,20 @@
     return ventanaFiesta();
   }
   function halloween() { return ventanaFiesta() && !mago(); }
+  /* Navidad: del 3 de noviembre al 31 de diciembre Robi se viste de Viejito Pascuero (gorro rojo con pompón, barba blanca,
+     traje rojo con cinturón y botas; diseño propio de Protech). Apagar en este equipo con localStorage 'pr-robi-navidad' = '0'. */
+  function navidad() {
+    try { if (root.localStorage && root.localStorage.getItem('pr-robi-navidad') === '0') return false; } catch (e) {}
+    const f = new Date(), m = f.getMonth(), d = f.getDate();
+    return (m === 10 && d >= 3) || m === 11;
+  }
 
   /* Robi es un chef amigable que flota: gorro de cocinero, lentes, bigote, chaqueta blanca con botones dorados, pañuelo al cuello,
      y el brazo derecho que saluda cuando habla. Diseño propio de Protech. En las fechas de fiesta cambia el gorro por el disfraz. */
   function svg(tono, habla) {
     const boca = tono === 'mal' ? 'M44 63.5 Q50 59 56 63.5' : tono === 'aviso' ? 'M45 61.5 L55 61.5' : 'M43.5 59.5 Q50 65.5 56.5 59.5';
-    const hw = halloween(), mg = mago();
+    const hw = halloween(), mg = mago(), nv = !hw && !mg && navidad();
+    const ROJO = '#c62828', ROJO_D = '#8e1b1b';
     const CAFE = '#7a4b26', CAFE_D = '#4a2c14', ORO = '#c9a24a', ORO_L = '#e8cf8a', PIEL = '#f6d2b0', PIEL_L = '#a8693a', BL = '#ffffff', BORDE = '#cfc6b8';
     const estrellaMg = (x, y, k, c) => '<path transform="translate(' + x + ' ' + y + ') scale(' + k + ')" d="M0 -5 L1.4 -1.4 L5 0 L1.4 1.4 L0 5 L-1.4 1.4 L-5 0 L-1.4 -1.4Z" fill="' + c + '"/>';
     const gorro = '<g class="robi-mg" transform="translate(0 2)">' +
@@ -142,6 +150,16 @@
       '<path d="M43 19 L43 28 M50 19 L50 28 M57 19 L57 28" stroke="' + BORDE + '" stroke-width="1.3" stroke-linecap="round"/>' +
       '<path d="M35.5 25.5 L64.5 25.5" stroke="' + ORO + '" stroke-width="2" stroke-linecap="round"/>' +
       '</g>';
+    /* Gorro de Viejito Pascuero: cono rojo que cae hacia la derecha, pompón y borde de piel blanca. */
+    const pascuero = '<g class="robi-nv">' +
+      '<path d="M29 27 Q31 5 52 2 Q71 1 81 15 Q73 11 66 14 Q70 20 71 27 Z" fill="' + ROJO + '" stroke="' + ROJO_D + '" stroke-width="2" stroke-linejoin="round"/>' +
+      '<circle cx="82" cy="17" r="5.4" fill="' + BL + '" stroke="' + BORDE + '" stroke-width="1.6"/>' +
+      '<rect x="25" y="21.5" width="50" height="10" rx="5" fill="' + BL + '" stroke="' + BORDE + '" stroke-width="1.8"/>' +
+      '</g>';
+    const barba = '<g class="robi-barba">' +
+      '<path d="M26.5 49 Q25 70 36 79 Q43 86 50 86.5 Q57 86 64 79 Q75 70 73.5 49 Q67 58.5 50 58.5 Q33 58.5 26.5 49Z" fill="' + BL + '" stroke="' + BORDE + '" stroke-width="2" stroke-linejoin="round"/>' +
+      '<path d="M37 70 Q39 75 42 77 M50 74 L50 80 M63 70 Q61 75 58 77" fill="none" stroke="' + BORDE + '" stroke-width="1.3" stroke-linecap="round"/>' +
+      '</g>';
     /* Lentes de Robi: marcos redondeados oscuros con detalle dorado (diseño propio). */
     const lentes = '<g class="robi-lentes" fill="none" stroke="#2b1b10" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">' +
       '<rect x="29.5" y="36" width="17" height="16" rx="6.5"/><rect x="53.5" y="36" width="17" height="16" rx="6.5"/>' +
@@ -149,19 +167,29 @@
       '<path d="M33 40 L36 38.8 M57 40 L60 38.8" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>' +
       '<circle cx="50" cy="41.8" r="1" fill="' + ORO + '" stroke="none"/></g>';
     const cejas = tono === 'mal' ? '<path d="M32 33 L44 37 M68 33 L56 37" stroke="#5a3516" stroke-width="2.4" stroke-linecap="round"/>' : '';
-    const manga = d => '<path d="' + d + '" fill="none" stroke="' + BORDE + '" stroke-width="9.4" stroke-linecap="round"/><path d="' + d + '" fill="none" stroke="' + BL + '" stroke-width="6.4" stroke-linecap="round"/>';
+    const manga = d => '<path d="' + d + '" fill="none" stroke="' + (nv ? ROJO_D : BORDE) + '" stroke-width="9.4" stroke-linecap="round"/><path d="' + d + '" fill="none" stroke="' + (nv ? ROJO : BL) + '" stroke-width="6.4" stroke-linecap="round"/>';
+    /* Puño de piel blanca del traje de Pascuero, justo antes de la mano. */
+    const puno = (x, y) => nv ? '<circle cx="' + x + '" cy="' + y + '" r="4.4" fill="' + BL + '" stroke="' + BORDE + '" stroke-width="1.4"/>' : '';
     const mano = (x, y) => '<circle cx="' + x + '" cy="' + y + '" r="4.6" fill="' + PIEL + '" stroke="' + PIEL_L + '" stroke-width="1.5"/>';
     /* Cuerpo: piernas y zapatos, brazo izquierdo, chaqueta con botones y pañuelo, cuello, brazo derecho que saluda. */
+    const pierna = nv ? ROJO_D : '#3a3a44', zapato = nv ? '#1c1917' : CAFE_D;
+    /* Traje de Pascuero: chaqueta roja con franja de piel blanca, cinturón negro con hebilla dorada. */
+    const traje = '<rect x="31" y="72" width="38" height="33" rx="11" fill="' + ROJO + '" stroke="' + ROJO_D + '" stroke-width="2.5"/>' +
+      '<path d="M50 82 L50 104" stroke="' + BL + '" stroke-width="5" stroke-linecap="round"/>' +
+      '<rect x="31.5" y="91" width="37" height="6.5" fill="#1c1917"/>' +
+      '<rect x="45" y="89.8" width="10" height="9" rx="1.5" fill="none" stroke="' + ORO + '" stroke-width="2"/>' +
+      '<path d="M33 103.5 Q50 107 67 103.5" fill="none" stroke="' + BL + '" stroke-width="3.4" stroke-linecap="round"/>';
     const cuerpo =
-      '<rect x="38" y="103" width="9" height="15" rx="4" fill="#3a3a44"/><rect x="53" y="103" width="9" height="15" rx="4" fill="#3a3a44"/>' +
-      '<ellipse cx="41.5" cy="119.5" rx="8" ry="4.2" fill="' + CAFE_D + '"/><ellipse cx="58.5" cy="119.5" rx="8" ry="4.2" fill="' + CAFE_D + '"/>' +
-      manga('M31 78 Q20 84 22 97') + mano(22, 100.5) +
+      '<rect x="38" y="103" width="9" height="15" rx="4" fill="' + pierna + '"/><rect x="53" y="103" width="9" height="15" rx="4" fill="' + pierna + '"/>' +
+      '<ellipse cx="41.5" cy="119.5" rx="8" ry="4.2" fill="' + zapato + '"/><ellipse cx="58.5" cy="119.5" rx="8" ry="4.2" fill="' + zapato + '"/>' +
+      manga('M31 78 Q20 84 22 97') + puno(22, 97) + mano(22, 100.5) +
       '<rect x="44" y="66" width="12" height="8" rx="3" fill="' + PIEL + '"/>' +
+      (nv ? traje :
       '<rect x="31" y="72" width="38" height="33" rx="11" fill="' + BL + '" stroke="' + BORDE + '" stroke-width="2.5"/>' +
       '<path d="M50 80 L50 104" stroke="' + BORDE + '" stroke-width="1.6"/>' +
       '<circle cx="44.5" cy="87" r="2" fill="' + ORO + '"/><circle cx="55.5" cy="87" r="2" fill="' + ORO + '"/><circle cx="44.5" cy="96" r="2" fill="' + ORO + '"/><circle cx="55.5" cy="96" r="2" fill="' + ORO + '"/>' +
-      '<path d="M41.5 72.5 L58.5 72.5 L50 83 Z" fill="#b0553a" stroke="#8c3f28" stroke-width="1.2" stroke-linejoin="round"/>' +
-      '<g class="robi-brazo">' + manga('M69 78 Q81 80 83.5 70') + (mg ? varita : '') + mano(83.5, 66.5) + '</g>';
+      '<path d="M41.5 72.5 L58.5 72.5 L50 83 Z" fill="#b0553a" stroke="#8c3f28" stroke-width="1.2" stroke-linejoin="round"/>') +
+      '<g class="robi-brazo">' + manga('M69 78 Q81 80 83.5 70') + (mg ? varita : '') + puno(83.5, 70) + mano(83.5, 66.5) + '</g>';
     return '<svg class="robi-svg' + (habla ? ' habla' : '') + '" viewBox="' + (mg ? '0 -8 100 134' : hw ? '0 0 100 126' : '0 -4 100 130') + '" aria-hidden="true" focusable="false">' +
       (mg ? capa : '') + cuerpo + (mg ? broche : '') +
       '<circle cx="25" cy="47" r="5.2" fill="' + PIEL + '" stroke="' + PIEL_L + '" stroke-width="1.8"/><circle cx="75" cy="47" r="5.2" fill="' + PIEL + '" stroke="' + PIEL_L + '" stroke-width="1.8"/>' +
@@ -169,9 +197,10 @@
       '<g class="robi-ojos"><ellipse cx="38" cy="44" rx="4.3" ry="5.2" fill="#2b1b10"/><ellipse cx="62" cy="44" rx="4.3" ry="5.2" fill="#2b1b10"/>' +
       '<circle cx="39.6" cy="42" r="1.7" fill="#fff"/><circle cx="63.6" cy="42" r="1.7" fill="#fff"/></g>' + lentes + cejas +
       '<circle cx="32" cy="57" r="3.4" fill="#ee9b8a" opacity=".65"/><circle cx="68" cy="57" r="3.4" fill="#ee9b8a" opacity=".65"/>' +
-      '<path d="M50 54.2 Q44 50.8 38.5 55 Q42.5 58.8 50 56.8 Q57.5 58.8 61.5 55 Q56 50.8 50 54.2Z" fill="#5a3516"/>' +
+      (nv ? barba : '') +
+      '<path d="M50 54.2 Q44 50.8 38.5 55 Q42.5 58.8 50 56.8 Q57.5 58.8 61.5 55 Q56 50.8 50 54.2Z" fill="' + (nv ? BL : '#5a3516') + '"' + (nv ? ' stroke="' + BORDE + '" stroke-width="1.4"' : '') + '/>' +
       '<path class="robi-boca" d="' + boca + '" fill="none" stroke="#7c3a22" stroke-width="2.4" stroke-linecap="round"/>' +
-      (hw ? sombrero : mg ? gorro : chef) +
+      (hw ? sombrero : mg ? gorro : nv ? pascuero : chef) +
       '</svg>';
   }
 
@@ -218,6 +247,6 @@
     return out;
   }
 
-  const api = { mensaje, consejo, svg, voz, duplicados, mago };
+  const api = { mensaje, consejo, svg, voz, duplicados, mago, navidad };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Robi = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -75,3 +75,13 @@ test('tema mago: del 24/10 al 2/11 Robi es aprendiz de mago; fuera de fechas o c
   globalThis.localStorage = global.localStorage;
   try { en(2026, 9, 28, () => { assert.ok(!require('../robi.js').mago()); assert.ok(/robi-hw/.test(svg('ok', false))); }); } finally { delete global.localStorage; }
 });
+
+test('navidad: del 3/11 al 31/12 Robi es Viejito Pascuero; fuera de fechas vuelve el chef', () => {
+  const Real = Date;
+  const en = (y, m, d, fn) => { global.Date = class extends Real { constructor(...a) { return a.length ? new Real(...a) : new Real(y, m, d, 12); } }; try { return fn(); } finally { global.Date = Real; } };
+  const r = require('../robi.js');
+  en(2026, 10, 19, () => { assert.ok(r.navidad()); const v = svg('ok', true); assert.ok(/robi-nv/.test(v) && /robi-barba/.test(v) && !/robi-chef/.test(v) && !/<script/i.test(v)); });
+  en(2026, 11, 31, () => assert.ok(r.navidad()));
+  en(2026, 9, 28, () => assert.ok(!/robi-nv/.test(svg('ok', false))));
+  en(2027, 0, 2, () => { assert.ok(!r.navidad()); assert.ok(/robi-chef/.test(svg('ok', false))); });
+});
