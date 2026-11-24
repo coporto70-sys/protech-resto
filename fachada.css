@@ -1,0 +1,68 @@
+/* Protech Resto · Fachada estilo cafetería
+   Toldo a rayas, letrero con tipografía serif, vitrina con taza humeante y carta de papel para entrar.
+   Solo usa fuentes del sistema (funciona sin internet). */
+:root{--espresso:#2b1b10;--crema:#fbf4e6;--canela:#a0632f;--toldo-a:#5a3516;--toldo-b:#f4e6cc;--serif:"Playfair Display",Georgia,"Times New Roman",Cambria,serif}
+
+/* ---------- Toldo a rayas con borde ondulado ---------- */
+.toldo{height:46px;position:relative;background:repeating-linear-gradient(90deg,var(--toldo-a) 0 44px,var(--toldo-b) 44px 88px);box-shadow:inset 0 10px 14px -8px rgba(0,0,0,.35)}
+.toldo::after{content:"";position:absolute;left:0;right:0;bottom:-15px;height:16px;background:radial-gradient(circle at 22px 0,var(--toldo-a) 21px,transparent 22px) 0 0/88px 16px repeat-x,radial-gradient(circle at 66px 0,var(--toldo-b) 21px,transparent 22px) 0 0/88px 16px repeat-x;filter:drop-shadow(0 3px 2px rgba(43,27,16,.22))}
+.toldo.mini{height:16px}.toldo.mini::after{bottom:-11px;height:12px;background:radial-gradient(circle at 22px 0,var(--toldo-a) 21px,transparent 22px) 0 0/88px 12px repeat-x,radial-gradient(circle at 66px 0,var(--toldo-b) 21px,transparent 22px) 0 0/88px 12px repeat-x}
+
+/* ---------- Pantalla de entrada (fachada) ---------- */
+.fachada{min-height:100vh;display:flex;flex-direction:column;background-color:var(--crema);background-image:radial-gradient(ellipse at 50% 0,rgba(201,162,74,.18),transparent 60%),url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%237a4b26' stroke-opacity='.09' stroke-width='2'%3E%3Cellipse cx='24' cy='28' rx='9' ry='13' transform='rotate(-25 24 28)'/%3E%3Cpath d='M20 18q6 10 0 20' transform='rotate(-25 24 28)'/%3E%3Cellipse cx='88' cy='86' rx='9' ry='13' transform='rotate(30 88 86)'/%3E%3Cpath d='M84 76q6 10 0 20' transform='rotate(30 88 86)'/%3E%3C/g%3E%3C/svg%3E")}
+.letrero{text-align:center;padding:34px 16px 6px}
+.letrero .marca{font-family:var(--serif);font-size:clamp(2rem,6vw,3.1rem);font-weight:800;letter-spacing:.06em;color:var(--espresso);line-height:1}
+.letrero .marca span{color:var(--canela);font-style:italic;letter-spacing:.02em}
+.letrero .lema{display:inline-flex;align-items:center;gap:10px;margin-top:10px;font-size:.78rem;text-transform:uppercase;letter-spacing:.32em;color:var(--brand-d);font-weight:700}
+.letrero .lema::before,.letrero .lema::after{content:"";width:34px;height:1.5px;background:var(--gold)}
+.vitrina{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:28px;align-items:center;max-width:920px;width:100%;margin:0 auto;padding:18px 20px 34px}
+.vitrina-arte{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px}
+.vitrina-arte svg{width:min(320px,80%);height:auto;filter:drop-shadow(0 14px 18px rgba(43,27,16,.18))}
+.vitrina-arte p{font-family:var(--serif);font-style:italic;font-size:1.15rem;color:var(--brand-d);max-width:330px}
+.taza-vapor path{animation:vapor 3.2s ease-in-out infinite;opacity:.0}
+.taza-vapor path:nth-child(2){animation-delay:1s}.taza-vapor path:nth-child(3){animation-delay:2s}
+@keyframes vapor{0%{opacity:0;transform:translateY(10px)}35%{opacity:.75}100%{opacity:0;transform:translateY(-18px)}}
+@media (prefers-reduced-motion:reduce){.taza-vapor path{animation:none;opacity:.6}}
+
+/* Carta de papel (formulario) */
+.fachada .login{margin:0;max-width:none;padding:0}
+.fachada .login .card{position:relative;border:0;border-radius:6px;padding:28px 26px 24px;background:#fffdf8;box-shadow:0 1px 0 #e6d5b8,0 18px 40px rgba(43,27,16,.16);outline:1.5px solid var(--gold-l);outline-offset:-9px}
+.fachada .login .card::before{content:"☕";position:absolute;top:-20px;left:50%;transform:translateX(-50%);width:40px;height:40px;border-radius:50%;background:var(--espresso);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.1rem;box-shadow:0 0 0 4px #fffdf8,0 0 0 5.5px var(--gold-l)}
+.carta-t{text-align:center;font-family:var(--serif);font-size:1.45rem;font-weight:700;color:var(--espresso);margin-top:4px}
+.carta-s{text-align:center;color:var(--mut);font-size:.86rem;margin-top:2px}
+.carta-sep{display:flex;align-items:center;gap:8px;color:var(--gold);font-size:.8rem}.carta-sep::before,.carta-sep::after{content:"";flex:1;height:1px;background:var(--soft-line)}
+.fachada .login .btn{padding:13px 14px;font-size:1.02rem;background:linear-gradient(180deg,#7a4b26,#5a3516);letter-spacing:.02em}
+.fachada .login .btn:hover{background:linear-gradient(180deg,#6b3f1d,#4a2b11)}
+.fachada .hint{background:#fbf3e2}
+.fachada-pie{text-align:center;font-size:.75rem;color:var(--mut);padding:0 16px 18px}
+@media (max-width:820px){.vitrina{grid-template-columns:1fr;gap:10px;padding-top:6px}.vitrina-arte svg{width:170px}.vitrina-arte p{font-size:1rem}.letrero{padding-top:24px}}
+
+/* ---------- ¿Quién eres? (pizarra de turno) ---------- */
+.quien-top{text-align:center;margin:18px 0 18px}
+.quien-top .saludo{font-family:var(--serif);font-style:italic;color:var(--canela);font-size:1.05rem}
+.quien-top h2{font-family:var(--serif);font-size:1.9rem;margin:2px 0 0;color:var(--espresso)}
+.quien-top .mut{margin-top:4px}
+.quien-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.quien-grid .mesa{display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 10px 14px;border-radius:16px;background:#fffdf8}
+.quien-grid .mesa:hover{border-color:var(--gold);box-shadow:0 8px 22px rgba(43,27,16,.12)}
+.quien-av{position:relative;width:58px;height:58px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-weight:800;font-size:1.35rem;color:#fff;background:linear-gradient(145deg,#8a5a31,#4a2b11);box-shadow:0 0 0 3px #fffdf8,0 0 0 4.5px var(--gold-l)}
+.quien-av i{position:absolute;right:-6px;bottom:-4px;font-style:normal;font-size:1rem;background:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.quien-av.adm{background:linear-gradient(145deg,#d4ad55,#9a7428)}.quien-av.coc{background:linear-gradient(145deg,#6b7f4a,#3f4f2a)}.quien-av.ing{background:linear-gradient(145deg,#3a3f58,#1e2133)}
+.quien-grid .mesa b{font-size:1.02rem!important}
+
+/* ---------- Encabezado de la app: letrero de madera con toldo ---------- */
+header{background:linear-gradient(180deg,#3a2415,var(--hdr));border-bottom:0;margin-bottom:12px}
+header::after{content:"";position:absolute;left:0;right:0;bottom:-12px;height:12px;pointer-events:none;background:radial-gradient(circle at 14px 0,var(--toldo-a) 13px,transparent 14px) 0 0/56px 12px repeat-x,radial-gradient(circle at 42px 0,var(--toldo-b) 13px,transparent 14px) 0 0/56px 12px repeat-x;filter:drop-shadow(0 2px 1.5px rgba(43,27,16,.25))}
+header>div:first-child{display:flex;align-items:center;gap:10px}
+header>div:first-child b{font-family:var(--serif);font-size:1.15rem;letter-spacing:.02em}
+.logo-taza{flex:none;width:34px;height:34px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -2px 0 rgba(0,0,0,.15)}
+.logo-taza svg{width:20px;height:20px}
+html.mg header::after,html.hw header::after{display:none}
+@media print{header::after,.toldo{display:none}}
+.quien-grid{display:flex;flex-wrap:wrap;justify-content:center}.quien-grid .mesa{width:170px!important}
+.quien-grid .mesa .quien-av{color:#fff;font-size:1.3rem;letter-spacing:.02em}
+.quien-grid .mesa .quien-av i{font-size:.95rem}
+.fachada .hint a{color:var(--brand-d);font-weight:700}
+nav button{white-space:nowrap}
+@media (max-width:820px){.vitrina{gap:30px}.letrero .lema{letter-spacing:.18em;font-size:.7rem}.letrero .lema::before,.letrero .lema::after{width:18px}}
+@media (max-width:420px){.quien-grid .mesa{width:calc(50% - 7px)!important}}

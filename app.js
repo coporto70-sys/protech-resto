@@ -120,7 +120,10 @@ function restaurarRol() {
 }
 function quienHTML() {
   const g = D.garzones.filter(x => x.on), coc = D.cocineras.filter(x => x.on);
-  const opt = (k, n, sub) => `<button class="mesa" style="width:100%" data-act="qsel" data-k="${esc(k)}"><b style="font-size:1.1rem">${esc(n)}</b><span>${sub}</span></button>`;
+  const ini = n => String(n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const tipo = k => k === 'admin' ? ['adm', '🔑'] : k === 'ing' ? ['ing', '⚙️'] : k === 'cocina' || k.startsWith('c:') ? ['coc', '👩‍🍳'] : ['', '☕'];
+  const opt = (k, n, sub) => { const [c, e] = tipo(k); return `<button class="mesa" style="width:100%" data-act="qsel" data-k="${esc(k)}"><span class="quien-av ${c}">${esc(ini(n))}<i>${e}</i></span><b style="font-size:1.1rem">${esc(n)}</b><span>${sub}</span></button>`; };
+  const h = new Date().getHours(), saludo = h < 12 ? 'Buenos días' : h < 20 ? 'Buenas tardes' : 'Buenas noches';
   let sel = '';
   if (S.qk) {
     const ing = S.qk === 'ing', nombre = ing ? 'Carlos Oporto' : S.qk === 'admin' ? 'Administradora' : S.qk.slice(2);
@@ -129,8 +132,8 @@ function quienHTML() {
       ${S.pinErr ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.pinErr)}</div>` : ''}
       <div style="display:flex;gap:8px"><button class="btn" style="flex:1" data-act="qok">Entrar</button><button class="btn-line" data-act="qback">Volver</button></div></div>`;
   }
-  return `<header><div><b>${esc(D.name)}</b><small>Protech Resto</small></div><nav></nav><button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header>
-  <main><h2>¿Quién eres?</h2><div class="grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${coc.length ? coc.map(x => opt('c:' + x.n, x.n, 'Cocina · comandas')).join('') : opt('cocina', 'Cocina', 'Comandas')}${opt('ing', 'Carlos Oporto', 'Ingeniero de Software')}</div>${sel}</main>`;
+  return `<header><div>${LOGO_TAZA}<div><b>${esc(D.name)}</b><small>Protech Resto</small></div></div><nav></nav><button class="btn-line" style="padding:6px 12px" data-act="logout">Salir</button></header>
+  <main><div class="quien-top"><div class="saludo">${saludo} ☕</div><h2>¿Quién eres?</h2><div class="mut">Elige tu nombre para empezar el turno</div></div><div class="grid quien-grid">${opt('admin', 'Administradora', 'Todo el local')}${g.map(x => opt('g:' + x.n, x.n, 'Mesas y cobros')).join('')}${coc.length ? coc.map(x => opt('c:' + x.n, x.n, 'Cocina · comandas')).join('') : opt('cocina', 'Cocina', 'Comandas')}${opt('ing', 'Carlos Oporto', 'Ingeniero de Software')}</div>${sel}</main>`;
 }
 
 const chipsOpc = sel => { const o = [...new Set(sel.flatMap(i => (i.o || '').split(',').map(x => x.trim()).filter(Boolean)))]; return o.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${o.map(x => `<button class="btn-line" style="padding:4px 10px" data-act="opc" data-o="${esc(x)}">+ ${esc(x)}</button>`).join('')}</div>` : ''; };
@@ -427,36 +430,43 @@ async function inicio() {
 }
 
 /* ---------- Vistas ---------- */
+/* Fachada estilo cafetería: toldo, letrero, vitrina con taza humeante y la carta para entrar */
+const TAZA_SVG = `<svg viewBox="0 0 240 220" aria-hidden="true"><g class="taza-vapor" fill="none" stroke="#a0632f" stroke-width="5" stroke-linecap="round" stroke-opacity=".55"><path d="M92 62q-12-14 0-28t0-28"/><path d="M120 66q-12-14 0-28t0-28"/><path d="M148 62q-12-14 0-28t0-28"/></g><ellipse cx="120" cy="196" rx="98" ry="16" fill="#e8d6b5"/><ellipse cx="120" cy="192" rx="84" ry="12" fill="#fffaf0" stroke="#d8c29a" stroke-width="2"/><path d="M52 90h136v18c0 44-30 78-68 78s-68-34-68-78z" fill="#fffaf0" stroke="#5a3516" stroke-width="4"/><path d="M188 104c26 0 30 34 4 40" fill="none" stroke="#5a3516" stroke-width="8" stroke-linecap="round"/><ellipse cx="120" cy="90" rx="68" ry="13" fill="#6b3f1d" stroke="#5a3516" stroke-width="4"/><ellipse cx="120" cy="90" rx="56" ry="8" fill="#a0632f"/><path d="M106 89q14-9 28 0q-14 7-28 0z" fill="#f4e1bb"/><path d="M60 128q60 14 120 0" fill="none" stroke="#c9a24a" stroke-width="5"/></svg>`;
+const LOGO_TAZA = `<span class="logo-taza" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13v3a6.5 6.5 0 0 1-13 0z" fill="#2b1b10"/><path d="M17 10.5c2.6 0 2.6 4-.3 4" fill="none" stroke="#2b1b10" stroke-width="1.8"/><path d="M8 3.5q-1.2 1.5 0 3M11.5 3.5q-1.2 1.5 0 3" fill="none" stroke="#2b1b10" stroke-width="1.5" stroke-linecap="round"/><rect x="3" y="19" width="15" height="1.8" rx=".9" fill="#2b1b10"/></svg></span>`;
+function fachadaHTML(titulo, sub, cuerpo) {
+  return `<div class="fachada"><div class="toldo"></div>
+    <div class="letrero"><div class="marca">PROTECH <span>Resto</span></div><div class="lema">Café · Pastelería · Cocina</div></div>
+    <div class="vitrina"><div class="vitrina-arte">${TAZA_SVG}<p>Pedidos, comandas y caja de tu cafetería, recién hechos.</p></div>
+    <div class="login"><div class="card"><div><div class="carta-t">${titulo}</div>${sub ? `<div class="carta-s">${sub}</div>` : ''}</div>${cuerpo}</div></div></div>
+    <div class="fachada-pie">Protech · Carlos Oporto, Ingeniero de Software · Melipilla</div></div>`;
+}
 function loginHTML() {
-  if (S.loading) return `<div class="login"><div class="card"><div class="mut">Cargando…</div></div></div>`;
-  if (S.setpass) return `<div class="login"><div class="card">
-    <div><b style="font-size:1.4rem">PROTECH <span style="color:var(--brand)">RESTO</span></b><div class="mut">Crea tu clave para entrar</div></div>
+  if (S.loading) return fachadaHTML('Abriendo el local…', 'Preparando la vitrina', '<div class="carta-sep">☕</div>');
+  if (S.setpass) return fachadaHTML('Bienvenida', 'Crea tu clave para entrar', `
     <label class="mut">Clave nueva (mínimo 8 caracteres)<input id="np1" type="password" autocomplete="new-password"></label>
     <label class="mut">Repite la clave<input id="np2" type="password" autocomplete="new-password"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
-    <button class="btn" data-act="guardarclave" ${S.busy ? 'disabled' : ''}>Guardar clave y entrar</button></div></div>`;
-  if (S.olvide) return `<div class="login"><div class="card">
-    <div><b style="font-size:1.4rem">PROTECH <span style="color:var(--brand)">RESTO</span></b><div class="mut">Crear o recuperar mi clave</div></div>
+    <button class="btn" data-act="guardarclave" ${S.busy ? 'disabled' : ''}>Guardar clave y entrar</button>`);
+  if (S.olvide) return fachadaHTML('Recuperar clave', 'Crear o recuperar mi clave', `
     <label class="mut">Correo del local<input id="rmail" type="email" autocomplete="username" placeholder="local@correo.cl"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
     ${S.ok ? `<div style="color:var(--ok);font-size:.9rem">${esc(S.ok)}</div>` : ''}
     <button class="btn" data-act="enviarlink" ${S.busy ? 'disabled' : ''}>Enviarme un enlace al correo</button>
-    <button class="btn-line" data-act="volverlogin">Volver</button></div></div>`;
-  return `<div class="login"><div class="card">
-    <div><b style="font-size:1.4rem">PROTECH <span style="color:var(--brand)">RESTO</span></b><div class="mut">Pedidos y comandas para restaurantes y cafeterías</div></div>
+    <button class="btn-line" data-act="volverlogin">Volver</button>`);
+  return fachadaHTML('Abrir el local', 'Pedidos y comandas para restaurantes y cafeterías', `
+    <div class="carta-sep">✦</div>
     <label class="mut">Correo del local<input id="lmail" type="email" autocomplete="username" placeholder="local@correo.cl"></label>
     <label class="mut">Clave<input id="lpass" type="password" autocomplete="current-password" placeholder="••••••••"></label>
     ${S.err ? `<div style="color:var(--bad);font-size:.9rem">${esc(S.err)}</div>` : ''}
     <button class="btn" data-act="login" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Entrando…' : 'Entrar'}</button>
     <button class="btn-line" data-act="olvide">Primera vez o olvidé mi clave</button>
-    <div class="hint">¿No tienes cuenta? Pídela a Protech: <a href="https://wa.me/56939473588" target="_blank" rel="noopener">WhatsApp +56 9 3947 3588</a>. Cada local ve solo sus propios datos.</div>
-  </div></div>`;
+    <div class="hint">¿No tienes cuenta? Pídela a Protech: <a href="https://wa.me/56939473588" target="_blank" rel="noopener">WhatsApp +56 9 3947 3588</a>. Cada local ve solo sus propios datos.</div>`);
 }
 function shell(inner) {
   const todas = [['mesas', 'Mesas'], ['cocina', 'Cocina'], ['cafe', 'Cafetería'], ['resv', 'Reservas'], ['turno', 'Caja'], ['caja', 'Ventas'], ['tortas', 'Ventas de tortas'], ['resumen', 'Resumen'], ['inv', 'Inventario' + (bajoStock().length ? ' ⚠' + bajoStock().length : '')], ['prod', 'Inventario de producción' + (bajoIns().length ? ' ⚠' + bajoIns().length : '')], ['abast', 'Compras y recetas' + (vencen().length ? ' ⚠' : '')], ['garz', 'Garzones'], ['coms', 'Comandas'], ['carta', 'Carta y mesas'], ['bit', 'Registro de cambios']];
   const tabs = todas.filter(t => misTabs().includes(t[0])).map(([k, n]) => tabBloqueada(k) ? [k, '🔒 ' + n] : [k, n]);
   if (S.admin) tabs.push(['admin', 'Admin Protech']);
-  return `<header><div><b>${esc(L().name)}</b><small>Protech Resto</small></div>
+  return `<header><div>${LOGO_TAZA}<div><b>${esc(L().name)}</b><small>Protech Resto</small></div></div>
     <nav>${tabs.map(([k, n]) => `<button class="${S.view === k ? 'on' : ''}" data-act="tab" data-v="${k}">${n}</button>`).join('')}</nav>
     <button class="btn-line" style="padding:6px 12px" data-act="sonido">Sonido: ${SNDL[SND]}${SND !== 'off' && !(AC && AC.state === 'running') ? ' (toca para activar)' : ''}</button>
     ${rolesOn() ? `<button class="btn-line" style="padding:6px 12px" data-act="cambiar">${esc(S.rol === 'ingeniero' ? 'Carlos Oporto · Ingeniero' : S.rol === 'admin' ? 'Administradora' : S.rol === 'cocina' ? (S.quien && S.quien !== 'Cocina' ? 'Cocina · ' + S.quien : 'Cocina') : S.quien)} · cambiar</button>` : ''}
