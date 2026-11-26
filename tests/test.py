@@ -12,6 +12,10 @@ stub=open(os.path.join(HERE,'stub.js')).read()
 now=datetime.datetime.utcnow()
 iso=lambda m: (now-datetime.timedelta(minutes=m)).isoformat()+'Z'
 today=datetime.date.today().isoformat()
+def ver(pg):
+    # Conteo ciego: toca "Ya conté: ver cuadre" si el botón está a la vista
+    pg.evaluate("(()=>{const b=document.querySelector('[data-act=cvercuadre]'); if(b) b.click();})()"); pg.wait_for_timeout(250)
+
 def base_db(chat=True):
     db={
      'resto_miembros':[{'local_id':'L1'}],
@@ -152,13 +156,19 @@ def E(pg):
     t=pg.inner_text('#app')
     check('E: con caja abierta aparece el cierre con conteo', 'Cerrar caja' in t and 'Efectivo contado' in t)
     pg.fill('#dnc-20000','40000'); pg.fill('#dnc-10000','40000'); pg.fill('#dnc-500','2000'); pg.fill('#ctarj','5000'); pg.fill('#ctrans','0'); pg.wait_for_timeout(200)
-    c=pg.inner_text('#cuadre'); print('DBG',repr(c),dialogs,pg.evaluate('JSON.stringify([D.turno,D.cuentas.map(x=>[x.t,x.metodo,x.total])])'))
+    c0=pg.inner_text('#cuadre'); a0=pg.inner_text('#app')
+    check('E: conteo ciego: antes de "Ya conté" no muestra el esperado', 'Cuadra' not in c0 and 'Ya conté' in c0 and 'Debe haber' not in a0)
+    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(300)
+    check('E: conteo ciego: no deja cerrar sin ver el cuadre', pg.evaluate('window.__DB.resto_turnos')[0].get('cerrado_at') is None)
+    ver(pg)
+    ver(pg); c=pg.inner_text('#cuadre'); print('DBG',repr(c),dialogs,pg.evaluate('JSON.stringify([D.turno,D.cuentas.map(x=>[x.t,x.metodo,x.total])])'))
     check('E: cuadre en vivo: efectivo, tarjetas y transferencias cuadran', c.count('Cuadra')==3)
-    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(800)
+    ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(800)
     tu=pg.evaluate('window.__DB.resto_turnos')[0]
     check('E: caja cerrada', tu.get('cerrado_at') is not None)
     check('E: efectivo contado y diferencia 0', tu['contado_efectivo']==82000 and tu['diferencia']==0 and tu['esperado_efectivo']==82000)
     dc=tu.get('desglose_cierre') or {}
+    check('E: guarda el primer conteo ciego', (dc.get('conteo_ciego') or {}).get('ef')==82000 and dc['conteo_ciego'].get('recontado') is False)
     check('E: desglose de cierre guardado', dc.get('efectivo')=={'20000':2,'10000':4,'500':4} and dc.get('tarjeta')==5000 and dc.get('transferencia')==0)
     check('E: vuelve a mostrar apertura de caja', 'Abrir caja' in pg.inner_text('#app'))
 e=run({'email':'u','role':'','db':db_roles()},E,LS_ANA); print('ERR E',e)
@@ -168,20 +178,22 @@ def F(pg):
     pg.on('dialog',lambda x:(d.append(x.message),x.accept()))
     nav_caja(pg); pg.fill('#dna-10000','10000'); pg.click('[data-act="tabrir"]'); pg.wait_for_timeout(600)
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(400)
-    pg.fill('#dnc-10000','20000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); pg.wait_for_timeout(200)
+    pg.fill('#dnc-10000','20000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); pg.wait_for_timeout(200); ver(pg)
     check('F: el cuadre muestra lo que sobra', 'Sobra $10.000' in pg.inner_text('#cuadre'))
-    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(500)
+    ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(500)
     check('F: sin observación no deja cerrar si hay diferencia', any('no cuadra' in m for m in d) and pg.evaluate('window.__DB.resto_turnos')[0].get('cerrado_at') is None)
-    pg.fill('#tnota','Sobró por un vuelto mal dado'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
+    pg.fill('#dnc-10000','30000'); pg.wait_for_timeout(150)
+    pg.fill('#tnota','Sobró por un vuelto mal dado'); ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
     tu=pg.evaluate('window.__DB.resto_turnos')[0]
-    check('F: con observación cierra y registra la diferencia', tu.get('cerrado_at') and tu['diferencia']==10000 and 'vuelto' in tu['nota'])
+    check('F: si recuenta después de ver el cuadre queda marcado', (tu.get('desglose_cierre') or {}).get('conteo_ciego',{}).get('recontado') is True and tu['desglose_cierre']['conteo_ciego']['ef']==20000)
+    check('F: con observación cierra y registra la diferencia', tu.get('cerrado_at') and tu['diferencia']==20000 and 'vuelto' in tu['nota'])
 e=run({'email':'u','role':'','db':db_roles()},F,LS_ANA); print('ERR F',e)
 
 def F2(pg):
     d=[]; pg.on('dialog',lambda x:(d.append(x.message),x.accept()))
     nav_caja(pg); pg.fill('#dna-5000','5000'); pg.click('[data-act="tabrir"]'); pg.wait_for_timeout(600)
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(400)
-    pg.fill('#dnc-5000','5000'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(400)
+    pg.fill('#dnc-5000','5000'); ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(400)
     check('F2: exige total de tarjetas y transferencias', any('tarjetas' in m for m in d) and pg.evaluate('window.__DB.resto_turnos')[0].get('cerrado_at') is None)
 e=run({'email':'u','role':'','db':db_roles()},F2,LS_ANA); print('ERR F2',e)
 
@@ -192,7 +204,7 @@ def G(pg):
     check('G: sin columnas nuevas igual abre la caja', len(tu)==1 and tu[0]['monto_inicial']==22000)
     check('G: el detalle queda en la nota', 'Sencillo inicial' in (tu[0].get('nota') or '') and '1×$20.000' in tu[0]['nota'])
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(400)
-    pg.fill('#dnc-20000','20000'); pg.fill('#dnc-1000','2000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
+    pg.fill('#dnc-20000','20000'); pg.fill('#dnc-1000','2000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
     tu=pg.evaluate('window.__DB.resto_turnos')[0]
     check('G: sin columnas nuevas igual cierra, con detalle en la nota', tu.get('cerrado_at') and 'Sencillo inicial' in tu['nota'] and 'Cierre:' in tu['nota'])
 e=run({'email':'u','role':'','db':db_roles(),'noDesglose':True},G,LS_ANA); print('ERR G',e)
@@ -232,10 +244,10 @@ def K(pg):
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(500)
     pg.fill('#dnc-20000','100000'); pg.fill('#dnc-10000','60000'); pg.fill('#dnc-5000','15000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0')
     pg.fill('#dnd-20000','80000'); pg.fill('#dnd-10000','60000'); pg.wait_for_timeout(300)
-    c=pg.inner_text('#cuadre')
+    ver(pg); c=pg.inner_text('#cuadre')
     check('K: el efectivo esperado descuenta el gasto y cuadra', 'Sistema $175.000' in c and 'descuenta $15.000' in c)
     check('K: el sencillo que se deja es libre (ya no hay sencillo fijo)', 'Anotado' in c and 'Falta $20.000' not in c and 'Efectivo de ventas a retirar' in c and '$35.000' in c)
-    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(800)
+    ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(800)
     tu=pg.evaluate('window.__DB.resto_turnos')[0]
     check('K: cierre guarda retiro, sencillo dejado y gastos', tu.get('cerrado_at') and tu['retiro_efectivo']==35000 and tu['desglose_deja']=={'20000':4,'10000':6} and tu['gastos_total']==15000 and tu['diferencia']==0)
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(500)
@@ -361,11 +373,11 @@ def L_(pg):
     check('L: las propinas sin garzón no se pagan', '$800' in t and 'No se pagan a ningún garzón' in t)
     pg.fill('#dnc-20000','100000'); pg.fill('#dnc-5000','5000'); pg.fill('#dnc-2000','2000'); pg.fill('#dnc-500','500'); pg.fill('#ctarj','31300'); pg.fill('#ctrans','0')
     pg.fill('#dnd-20000','100000'); pg.wait_for_timeout(300)
-    c=pg.inner_text('#cuadre')
+    ver(pg); c=pg.inner_text('#cuadre')
     # esperado: 100000 inicial + efectivo 11000 (10000+1000) - propinas pagadas 3500 = 107500; contado 107500
     check('L: el efectivo esperado descuenta las propinas pagadas', 'Sistema $107.500' in c and 'propinas pagadas' in c)
     check('L: el efectivo cuadra', c.count('Cuadra')>=1 and 'Falta' not in c.split('Sencillo que queda')[0])
-    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
+    ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
     tu=pg.evaluate('window.__DB.resto_turnos')[0]
     check('L: el cierre pide confirmar la entrega de propinas', any('Propinas a pagar en efectivo' in m and 'Ana: $2.500' in m for m in d))
     pp=tu.get('pago_propinas') or []
@@ -390,9 +402,9 @@ def L2_(pg):
     check('L2: no cuenta como gasto de caja', 'Aún no hay gastos en este turno' in t)
     pg.fill('#dnc-20000','100000'); pg.fill('#dnc-5000','5000'); pg.fill('#dnc-2000','2000'); pg.fill('#dnc-500','500'); pg.fill('#ctarj','31300'); pg.fill('#ctrans','0')
     pg.fill('#dnd-20000','100000'); pg.wait_for_timeout(300)
-    c=pg.inner_text('#cuadre')
+    ver(pg); c=pg.inner_text('#cuadre')
     check('L2: el efectivo esperado sigue siendo el mismo (no se descuenta dos veces)', 'Sistema $107.500' in c and c.count('Cuadra')>=1)
-    pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
+    ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
     tu=pg.evaluate('window.__DB.resto_turnos')[0]
     check('L2: al cerrar solo se pide pagar lo que falta', any('Propinas a pagar en efectivo desde la caja: $2.000' in m and 'Ana: $1.000 (ya recibió $1.500 antes)' in m and 'Luis: $1.000' in m for m in d))
     pp={x['n']:x for x in (tu.get('pago_propinas') or [])}
@@ -466,7 +478,7 @@ def I(pg):
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(400)
     t=pg.inner_text('#app')
     check('I: administradora ve el detalle de apertura y el cierre con conteo', '1×$20.000' in t and 'Cerrar caja' in t and 'Efectivo contado' in t)
-    pg.fill('#dnc-20000','20000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
+    pg.fill('#dnc-20000','20000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
     pg.evaluate("(async()=>{await cargar();render();})()"); pg.wait_for_timeout(600)
     check('I: historial muestra sencillo inicial y efectivo contado', 'Sencillo inicial: 1×$20.000' in pg.inner_text('#app') and 'Efectivo contado: 1×$20.000' in pg.inner_text('#app'))
 e=run({'email':'u','role':'','db':db_roles()},I,LS_ADM); print('ERR I',e)
@@ -668,7 +680,7 @@ def R1(pg):
     check('R1: el efectivo esperado descuenta el retiro', 'Retiros de la administradora' in t and 'Sistema $70.000' not in t and '$70.000' in t)
     check('R1: el retiro no aparece como gasto con boleta', 'Total gastos del turno' not in t)
     pg.fill('#dnc-20000','60000'); pg.fill('#dnc-10000','10000'); pg.wait_for_timeout(300)
-    c=pg.inner_text('#cuadre')
+    pg.evaluate("S.cVer=D.turno.id; dnActualiza()"); pg.wait_for_timeout(200); c=pg.inner_text('#cuadre')
     check('R1: el cuadre avisa que la caja cuadra', '¡La caja cuadra!' in c and 'de retiros' in c)
     pg.fill('#dnc-10000','20000'); pg.wait_for_timeout(300)
     check('R1: el cuadre avisa si hay diferencias', 'tiene diferencias' in pg.inner_text('#cuadre'))
@@ -713,7 +725,7 @@ def CORTE(pg):
     check('CORTE: efectivo esperado hasta el corte = 100.000 + 10.000 - 2.000', 'Debe haber $108.000' in t or '$108.000' in t)
     check('CORTE: el retiro de hoy no aparece en el cierre de ayer', 'Retiro de efectivo' not in pg.inner_text('#app').split('Retiros de efectivo de la caja')[1].split('Propinas de los garzones')[0] or '$50.000' not in pg.inner_text('#app').split('Retiros de efectivo de la caja')[1].split('Propinas de los garzones')[0])
     pg.fill('#dnc-20000','100000'); pg.fill('#dnc-5000','5000'); pg.fill('#dnc-2000','2000'); pg.fill('#dnc-1000','1000'); pg.fill('#ctarj','20000'); pg.fill('#ctrans','0')
-    pg.fill('#dnd-20000','100000'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
+    pg.fill('#dnd-20000','100000'); ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(900)
     T=pg.evaluate('window.__DB.resto_turnos'); old=[x for x in T if x['id']=='T1'][0]; new=[x for x in T if x['id']!='T1']
     check('CORTE: el turno viejo queda cerrado en el corte', old['cerrado_at'] is not None and old['ventas_total']==30000 and old['cuentas']==2 and old['esperado_efectivo']==108000)
     check('CORTE: se abre un turno nuevo con el sencillo que quedó', len(new)==1 and new[0]['cerrado_at'] is None and new[0]['monto_inicial']==100000 and new[0]['abierto_at']==old['cerrado_at'])
@@ -727,7 +739,7 @@ e=run({'email':'u','role':'','db':corte_db()},CORTE,LS_ADM); print('ERR CORTE',e
 def CORTE2(pg):
     pg.on('dialog',lambda x:x.accept()); nav_caja(pg)
     opts=pg.eval_on_selector_all('#c-corte option','o=>o.map(x=>x.value)'); pg.select_option('#c-corte',opts[1]); pg.wait_for_timeout(200)
-    pg.fill('#dnc-20000','100000'); pg.fill('#dnd-20000','100000'); pg.fill('#ctarj','20000'); pg.fill('#ctrans','0'); pg.fill('#tnota','prueba'); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
+    pg.fill('#dnc-20000','100000'); pg.fill('#dnd-20000','100000'); pg.fill('#ctarj','20000'); pg.fill('#ctrans','0'); pg.fill('#tnota','prueba'); ver(pg); pg.click('[data-act="tcerrar"]'); pg.wait_for_timeout(700)
     T=pg.evaluate('window.__DB.resto_turnos')
     check('CORTE2: sin la migración 025 no se cierra nada y avisa', len(T)==1 and T[0]['cerrado_at'] is None)
 e=run({'email':'u','role':'','db':corte_db(),'sinCorte':True},CORTE2,LS_ADM); print('ERR CORTE2',e)
@@ -814,6 +826,10 @@ def RB3(pg):
     check('ROBI: con la caja abierta explica que guiará el cierre', 'Turno de la' in pg.inner_text('#robi'))
     pg.fill('#dnc-20000','100000'); pg.wait_for_timeout(200)
     t=pg.inner_text('#robi')
+    check('ROBI: con conteo ciego no revela el esperado', 'Debe haber' not in t and 'En efectivo' not in t)
+    pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); pg.wait_for_timeout(150)
+    check('ROBI: con todo anotado invita a tocar "Ya conté"', 'Ya conté' in pg.inner_text('#robi'))
+    ver(pg); t=pg.inner_text('#robi')
     check('ROBI: en el cierre avisa la diferencia de efectivo', 'En efectivo' in t and pg.locator('#robi.mal').count()==1)
     pg.fill('#dnc-20000','160000'); pg.fill('#ctarj','0'); pg.fill('#ctrans','0'); pg.fill('#dnd-20000','160000'); pg.wait_for_timeout(250)
     check('ROBI: cuando todo cuadra dice que puede cerrar', 'Todo cuadra' in pg.inner_text('#robi') and pg.locator('#robi.ok').count()==1)

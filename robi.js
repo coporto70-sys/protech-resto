@@ -71,6 +71,10 @@
     }
 
     // Cierre en curso: revisa en este orden y dice lo primero que no cuadra
+    if (k.ciego) {
+      const falta = !k.escribio ? 'los billetes y monedas' : k.tj == null ? 'el total del terminal de tarjetas (0 si no hubo)' : k.tr == null ? 'las transferencias (0 si no hubo)' : '';
+      return { tono: 'aviso', paso: 'Cierre de caja', txt: falta ? 'Cuenta sin mirar el sistema. Ahora anota ' + falta + '.' : 'Listo el conteo. Toca "Ya conté: ver cuadre" para compararlo con el sistema.' };
+    }
     const pasos = [];
     if (k.escribio && r.esp != null && k.ef !== r.esp) pasos.push({ tono: 'mal', txt: 'En efectivo ' + dif(k.ef - r.esp) + '. Recuenta los billetes y las monedas. Recuerda que el sistema ya descontó gastos, retiros y propinas pagadas.' });
     if (k.tj != null && k.tj !== r.tj) pasos.push({ tono: 'mal', txt: 'Las tarjetas no cuadran: ' + dif(k.tj - r.tj) + '. Mira el comprobante de la máquina y confirma que sea solo de este turno.' });

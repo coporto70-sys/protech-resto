@@ -990,7 +990,11 @@ function contadorHTML(p) {
     <div class="total"><span>Total en billetes y monedas</span><span id="dnt-${p}">${money(dnTotal(p))}</span></div></div>`;
 }
 /* Resultado del cuadre: compara lo que se contó con lo que el sistema registró como vendido en el turno */
+/* Conteo ciego: el cierre no muestra cuánto debería haber hasta que se anotó todo lo contado y se tocó "Ya conté".
+   El primer conteo queda guardado en el cierre (desglose_cierre.conteo_ciego), aunque después se recuente. */
+const ciegoVisto = t => !!(t && S.cVer === t.id);
 function cuadreHTML(t) {
+  if (!ciegoVisto(t)) return `<p class="mut" style="margin:0 0 8px">Cuenta sin mirar el sistema: anota los billetes y monedas, el total del terminal de tarjetas y las transferencias. Recién entonces verás si la caja cuadra.</p><button class="btn-ok" data-act="cvercuadre" style="width:100%">Ya conté: ver cuadre</button>` + retiroHTML();
   const r = turnoRes(t), ec = dnTotal('c'), hayEf = DEN.some(([v]) => S.f[dnId('c', v)] !== undefined && S.f[dnId('c', v)] !== ''), tj = numF('ctarj'), tr = numF('ctrans');
   const fila = (n, esp, got, extra) => { const d = got - esp; return `<div class="row"><div>${n}<div class="mut">Sistema ${money(esp)} · contado ${money(got)}${extra || ''}</div></div><b style="color:${d === 0 ? 'var(--ok)' : 'var(--bad)'}">${d === 0 ? 'Cuadra' : (d > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(d))}</b></div>`; };
   const out = [];
@@ -1047,7 +1051,7 @@ function cerrarCajaHTML(t) {
   const r = turnoRes(t);
   return `<div class="card" style="margin-top:12px;display:grid;gap:10px"><b style="font-size:1.1rem">Cerrar caja (cuadre del día)</b>${corteHTML(t)}
     <div class="paso"><span class="num">1</span><div><b>Entrega las propinas</b><p class="mut" style="margin:2px 0 0">${r.pend ? 'Paga ' + money(r.pend) + ' en efectivo a los garzones (detalle arriba) antes de contar.' + (r.adT ? ' Ya pagaste ' + money(r.adT) + ' durante el turno.' : '') : r.pp ? 'Las propinas ya están pagadas (' + money(r.pp) + '). No queda nada por pagar.' : 'No hay propinas por pagar en este turno.'}</p></div></div>
-    <div class="paso"><span class="num">2</span><div><b>Efectivo contado</b><p class="mut" style="margin:2px 0 0">Escribe en pesos cuánto hay de cada billete y moneda (ej.: 4 billetes de $20.000 = 80000). Debe haber <b>${money(r.esp)}</b>.</p></div></div>
+    <div class="paso"><span class="num">2</span><div><b>Efectivo contado</b><p class="mut" style="margin:2px 0 0">Escribe en pesos cuánto hay de cada billete y moneda (ej.: 4 billetes de $20.000 = 80000). Cuenta con calma: el monto que debería haber se muestra recién al final.</p></div></div>
     ${contadorHTML('c')}
     <div class="paso"><span class="num">3</span><div><b>Tarjetas y transferencias</b><p class="mut" style="margin:2px 0 0">Anota el total del terminal de tarjetas y lo recibido por transferencia (0 si no hubo).</p></div></div>
     <label class="mut">Tarjetas: total según el terminal<input id="ctarj" data-keep type="number" inputmode="numeric" min="0" placeholder="0 si no hubo" value="${fv('ctarj')}"></label>
@@ -1137,7 +1141,7 @@ function turnoHTML() {
   if (!esAdm()) return turnoCajeroHTML();
   const t = D.turno;
   if (S.th === null) { turnoCargar().then(render); }
-  const hist = (S.th || []).map(h => { const dc = h.desglose_cierre || {}; return `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${dc.tarjeta != null ? ' · tarjetas ' + money(dc.tarjeta) + ' · transf. ' + money(dc.transferencia || 0) : ''}${h.desglose_apertura && dnTxt(h.desglose_apertura) ? '<br>Sencillo inicial: ' + dnTxt(h.desglose_apertura) : ''}${dnTxt(dc.efectivo) ? '<br>Efectivo contado: ' + dnTxt(dc.efectivo) : ''}${h.retiro_efectivo != null ? '<br>Efectivo de ventas retirado ' + money(h.retiro_efectivo) + (dnTxt(h.desglose_deja) ? ' · quedó en caja: ' + dnTxt(h.desglose_deja) : '') : ''}${h.gastos_total ? '<br>Gastos pagados desde caja ' + money(h.gastos_total) : ''}${(h.pago_propinas || []).length ? '<br>Propinas pagadas: ' + h.pago_propinas.map(x => esc(x.n) + ' ' + money(x.m) + (x.ad ? ' (' + money(x.ad) + ' antes del cierre)' : '')).join(' · ') + ' (total ' + money(h.propinas_pagadas || 0) + ')' : ''}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
+  const hist = (S.th || []).map(h => { const dc = h.desglose_cierre || {}; return `<div class="row"><div><b>${hora(h.abierto_at)}</b> → ${hora(h.cerrado_at)}<div class="mut">Abrió ${esc(h.abierto_por || '')} · cerró ${esc(h.cerrado_por || '')} · ${h.cuentas || 0} cuentas · ventas ${money(h.ventas_total || 0)}<br>Efectivo esperado ${money(h.esperado_efectivo || 0)} · contado ${money(h.contado_efectivo || 0)}${dc.conteo_ciego && dc.conteo_ciego.recontado ? ' · <b style="color:var(--warn)">recontó después de ver el cuadre (1er conteo ' + money(dc.conteo_ciego.ef || 0) + ')</b>' : ''}${dc.tarjeta != null ? ' · tarjetas ' + money(dc.tarjeta) + ' · transf. ' + money(dc.transferencia || 0) : ''}${h.desglose_apertura && dnTxt(h.desglose_apertura) ? '<br>Sencillo inicial: ' + dnTxt(h.desglose_apertura) : ''}${dnTxt(dc.efectivo) ? '<br>Efectivo contado: ' + dnTxt(dc.efectivo) : ''}${h.retiro_efectivo != null ? '<br>Efectivo de ventas retirado ' + money(h.retiro_efectivo) + (dnTxt(h.desglose_deja) ? ' · quedó en caja: ' + dnTxt(h.desglose_deja) : '') : ''}${h.gastos_total ? '<br>Gastos pagados desde caja ' + money(h.gastos_total) : ''}${(h.pago_propinas || []).length ? '<br>Propinas pagadas: ' + h.pago_propinas.map(x => esc(x.n) + ' ' + money(x.m) + (x.ad ? ' (' + money(x.ad) + ' antes del cierre)' : '')).join(' · ') + ' (total ' + money(h.propinas_pagadas || 0) + ')' : ''}${h.nota ? '<br>' + esc(h.nota) : ''}</div></div><b style="color:${h.diferencia === 0 ? 'var(--ok)' : 'var(--bad)'}">${h.diferencia === 0 ? 'Cuadra' : (h.diferencia > 0 ? 'Sobra ' : 'Falta ') + money(Math.abs(h.diferencia || 0))}</b></div>`; }).join('') || '<p class="mut" style="margin-top:8px">Aún no hay cierres.</p>';
   if (!t) return `<h2>Caja</h2>${fondoHTML()}${abrirCajaHTML()}${gastosHistHTML()}
     <div class="card" style="margin-top:12px"><b>Cierres anteriores</b>${hist}</div>`;
   const r = turnoRes(t);
@@ -1165,7 +1169,8 @@ function robiCtx() {
     const r = turnoRes(t);
     c.turno = { monto_inicial: t.monto_inicial || 0, nombre: turnoNom(t.abierto_at), abierto_h: (Date.now() - +new Date(t.abierto_at)) / 3600000 };
     c.res = { cuentas: r.cuentas, vt: r.vt, esp: r.esp, tj: r.tj, tr: r.tr, pp: r.pend };
-    c.cierre = { escribio: hayEf, ef: ec, tj: numF('ctarj'), tr: numF('ctrans'), dj: dnTotal('d'), hayD };
+    c.cierre = { escribio: hayEf, ef: ec, tj: numF('ctarj'), tr: numF('ctrans'), dj: dnTotal('d'), hayD, ciego: !ciegoVisto(t) };
+    if (c.cierre.ciego) c.res.esp = null;
   }
   return c;
 }
@@ -2354,12 +2359,20 @@ document.addEventListener('click', async e => {
           if (!fallo(r)) { ['r-monto', 'r-mot'].forEach(k => delete S.f[k]); toast('Retiro registrado · ' + money(m), 'tk-l'); }
         }
       }
+      else if (a === 'cvercuadre' && D.turno) {
+        const t = D.turno, hayEf = DEN.some(([v]) => S.f[dnId('c', v)] !== undefined && S.f[dnId('c', v)] !== ''), tj = numF('ctarj'), tr = numF('ctrans'), mal = dnBad('c');
+        if (!hayEf) alert('Primero anota los billetes y monedas que contaste.');
+        else if (mal.length) alert('Revisa estos montos, no corresponden a billetes o monedas completos: ' + mal.map(([v, n]) => n).join(', ') + '.');
+        else if (tj === null || tr === null) alert('Escribe el total de tarjetas del terminal y el de transferencias (0 si no hubo).');
+        else { S.cVer = t.id; S.cPrimer = { ef: dnTotal('c'), tj, tr, esp: turnoRes(t).esp, at: new Date().toISOString() }; render(); }
+      }
       else if (a === 'tcerrar' && D.turno) {
         const t = D.turno, r = turnoRes(t), open = D.comandas.filter(x => !x.cerrada).length;
         const ec = dnTotal('c'), tj = numF('ctarj'), tr = numF('ctrans'), nota = (S.f.tnota || '').trim(), mal = dnBad('c').concat(dnBad('d')), dj = dnTotal('d'), retiro = ec - dj;
         const dEf = ec - r.esp, dTj = tj === null ? 0 : tj - r.tj, dTr = tr === null ? 0 : tr - r.tr;
         if (mal.length) alert('Revisa estos montos, no corresponden a billetes o monedas completos: ' + mal.map(([v, n]) => n).join(', ') + '.');
         else if (tj === null || tr === null) alert('Escribe el total de tarjetas y el de transferencias (0 si no hubo).');
+        else if (!ciegoVisto(t)) alert('Primero toca "Ya conté: ver cuadre" para comparar lo contado con el sistema.');
         else if (dj > ec) alert('El sencillo que dejas en caja (' + money(dj) + ') es mayor que el efectivo contado (' + money(ec) + '). Revisa los montos.');
         else if (!dj && !confirm('No anotaste el sencillo que queda en caja. ¿Cerrar sin dejar sencillo?')) { /* cancelado */ }
         else if ((dEf || dTj || dTr) && !nota) alert('La caja no cuadra. Escribe una observación que explique la diferencia antes de cerrar.');
@@ -2368,7 +2381,7 @@ document.addEventListener('click', async e => {
         else if (!open || confirm('Hay ' + open + ' pedido(s) todavía abiertos en mesas. ¿Cerrar la caja igual?')) {
           const hasta = corteDe(t);
           const base = { cerrado_at: new Date(hasta || Date.now()).toISOString(), cerrado_por: S.quien || 'Administradora', esperado_efectivo: r.esp, contado_efectivo: ec, diferencia: dEf, ventas_total: r.vt, ventas_efectivo: r.ef, ventas_tarjeta: r.tj, ventas_transf: r.tr, propinas: r.pr, cuentas: r.cuentas };
-          const des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr }, deja = dnObj('d'), pagoProp = r.propGar.map(o => ({ n: o.n, m: o.tot, c: o.c, ...(o.ad ? { ad: o.ad } : {}) }));
+          const p1 = S.cPrimer || {}, des = { efectivo: dnObj('c'), tarjeta: tj, transferencia: tr, dif_tarjeta: dTj, dif_transferencia: dTr, conteo_ciego: { ef: p1.ef, tj: p1.tj, tr: p1.tr, esp: p1.esp, at: p1.at, recontado: p1.ef !== ec || p1.tj !== tj || p1.tr !== tr } }, deja = dnObj('d'), pagoProp = r.propGar.map(o => ({ n: o.n, m: o.tot, c: o.c, ...(o.ad ? { ad: o.ad } : {}) }));
           if (hasta) {
             /* Cierre con fecha de corte: una sola operación en la base (cierra el turno, abre el nuevo y traslada lo posterior) */
             const rr = await sb.rpc('resto_cerrar_turno_corte', { p_turno: t.id, p_corte: base.cerrado_at, p_cierre: { ...base, nota: nota || null, desglose_cierre: des, desglose_deja: deja, retiro_efectivo: retiro, gastos_total: r.gt, propinas_pagadas: r.pp, pago_propinas: pagoProp, monto_nuevo: dj } });
