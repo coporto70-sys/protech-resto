@@ -65,7 +65,7 @@ def main():
             f'<td {td}>{dif(x["dif_efectivo"])}'
             + (f'<br><span style="color:#b45309">recontó después de ver el cuadre (1er conteo {m(x["primer_conteo"])})</span>' if x.get("recontado") else '')
             + f'</td><td {td}>{dif(x["dif_tarjeta"]) if x["dif_tarjeta"] else "—"}</td>'
-            f'<td {td} style="color:#555">{e(x.get("nota")) or "—"}</td></tr>'
+            f'<td {td[:-1]};color:#555">{e(x.get("nota")) or "—"}</td></tr>'
             for x in con_dif)
         tabla_dif = (f'<table cellspacing="0" style="width:100%;border-collapse:collapse"><tr><th {th}>Día</th><th {th}>Cerró</th>'
                      f'<th {th}>Efectivo</th><th {th}>Tarjetas</th><th {th}>Observación</th></tr>{filas}</table>')
@@ -87,7 +87,7 @@ def main():
         f'<tr><td {td}>{e(g["garzon"])}</td><td {td} align="right">{g["cobros"]}</td><td {td} align="right">{m(g["ventas"])}</td>'
         f'<td {td} align="right">{g["anulaciones"]}{" (" + m(g["anul_monto"]) + ")" if g["anulaciones"] else ""}</td>'
         f'<td {td} align="right">{g["con_descuento"] or "—"}</td>'
-        f'<td {td} align="right" style="{"color:#b91c1c;font-weight:bold" if g["efectivo_a_otro"] else ""}">{g["pago_corregido"] or "—"}{" (" + str(g["efectivo_a_otro"]) + " de efectivo a otro)" if g["efectivo_a_otro"] else ""}</td></tr>'
+        f'<td {td[:-1] + (";color:#b91c1c;font-weight:bold" if g["efectivo_a_otro"] else "")}" align="right">{g["pago_corregido"] or "—"}{" (" + str(g["efectivo_a_otro"]) + " de efectivo a otro)" if g["efectivo_a_otro"] else ""}</td></tr>'
         for g in r.get("por_garzon") or [])
     garz = (f"<h3 style='color:#6b4f2a;margin:18px 0 6px'>Por garzón</h3><table cellspacing='0' style='width:100%;border-collapse:collapse'>"
             f"<tr><th {th}>Garzón</th><th {th}>Cobros</th><th {th}>Vendido</th><th {th}>Anulaciones</th><th {th}>Descuentos</th><th {th}>Pago corregido</th></tr>{g_filas}</table>"
